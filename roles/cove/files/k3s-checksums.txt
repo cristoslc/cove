@@ -1,0 +1,1 @@
+# Placeholder — update with actual SHA256 checksums when version is pinned

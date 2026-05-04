@@ -1,0 +1,12 @@
+# Binaries
+/cove
+/cove-*
+
+# Build artifacts
+/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
