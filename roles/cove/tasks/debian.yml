@@ -1,0 +1,9 @@
+---
+- name: Verify k3s prerequisites (Debian/Ubuntu)
+  when: ansible_os_family == "Debian"
+  ansible.builtin.apt:
+    name:
+      - iptables
+      - socat
+      - conntrack
+    state: present

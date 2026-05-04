@@ -1,0 +1,7 @@
+---
+- hosts: localhost
+  gather_facts: yes
+  tasks:
+    - name: Stop cove platform
+      ansible.builtin.command: kubectl delete namespace {{ cove_namespace }}
+      ignore_errors: yes

@@ -1,0 +1,25 @@
+# Lima VM template for running k3s on macOS
+images:
+  - location: "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-{{ ansible_architecture | replace('aarch64', 'arm64') | replace('x86_64', 'amd64') }}.img"
+    arch: "{{ ansible_architecture }}"
+
+cpus: {{ lima_vm_cpus }}
+memory: "{{ lima_vm_memory }}MiB"
+disk: "{{ lima_vm_disk }}GiB"
+
+mounts:
+  - location: "{{ cove_data_dir }}"
+    writable: true
+  - location: "{{ cove_projects_dir }}"
+    writable: true
+
+networks:
+  - lima: shared
+
+provision:
+  - mode: system
+    script: |
+      #!/bin/bash
+      set -eux
+      curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION={{ k3s_version }} sh -
+      mkdir -p /opt/kata
