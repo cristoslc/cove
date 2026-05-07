@@ -1,0 +1,33 @@
+services:
+  forgejo:
+    image: ${FORGEJO_IMAGE}
+    container_name: ${FORGEJO_CONTAINER_NAME:-cove-forgejo}
+    restart: unless-stopped
+    environment:
+      USER_UID: "${FORGEJO_UID:-501}"
+      USER_GID: "${FORGEJO_GID:-20}"
+      FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN}
+      FORGEJO__server__ROOT_URL: ${FORGEJO_ROOT_URL}
+      FORGEJO__server__SSH_DOMAIN: ${FORGEJO_SSH_DOMAIN}
+      FORGEJO__server__SSH_PORT: "${FORGEJO_SSH_PORT:-2222}"
+      FORGEJO__server__START_SSH_SERVER: "false"
+      FORGEJO__security__INSTALL_LOCK: "true"
+      FORGEJO__service__DISABLE_REGISTRATION: "true"
+      FORGEJO__service__REQUIRE_SIGNIN_VIEW: "true"
+      FORGEJO__database__DB_TYPE: sqlite3
+      FORGEJO__log__LEVEL: warn
+      FORGEJO__server__PROTOCOL: https
+      FORGEJO__server__CERT_FILE: /certs/fullchain.pem
+      FORGEJO__server__KEY_FILE: /certs/privkey.pem
+      FORGEJO__server__HTTP_PORT: "3000"
+      FORGEJO__server__REDIRECT_OTHER_PORT: "false"
+    volumes:
+      - ${FORGEJO_DATA_ROOT}/forgejo/gitea:/data/gitea
+      - ${FORGEJO_DATA_ROOT}/forgejo/git:/data/git
+      - ${FORGEJO_DATA_ROOT}/forgejo/ssh:/etc/ssh
+      - ${FORGEJO_DATA_ROOT}/certs:/certs:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "${FORGEJO_HTTP_BIND:-127.0.0.1}:${FORGEJO_HTTP_PORT:-3000}:3000"
+      - "${FORGEJO_SSH_BIND:-127.0.0.1}:${FORGEJO_SSH_PORT:-2222}:22"

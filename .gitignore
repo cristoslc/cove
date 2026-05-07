@@ -10,3 +10,8 @@
 .vscode/
 *.swp
 *.swo
+
+# Compose runtime data (git repos, DB, SSH keys, TLS certs)
+/compose/data/
+/compose/.env
+/compose/logs/
