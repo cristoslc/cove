@@ -295,11 +295,11 @@ Standard containers share the host kernel. A kernel exploit in a CI job (running
 
 | Component | Status | Location |
 |---|---|---|
-| Forgejo container | Running | Docker Compose, `infrastructure/local-pod/docker-compose.yml` |
-| Vault container | Running | Docker Compose, same file |
+| Forgejo container | Running | Docker Compose, `~/Documents/code/cove/compose/docker-compose.yml` (migrated from Homelab local-pod) |
+| Vault container | Running | Docker Compose, `infrastructure/local-pod/docker-compose.yml` |
 | Ansible bringup | Working | `infrastructure/local-pod/bringup.yml` |
 | Vault bootstrap | Working | `infrastructure/local-pod/bootstrap_vault.yml` |
-| Forgejo provisioning | Working | `infrastructure/local-pod/provision_forgejo.yml` |
+| Forgejo provisioning | Migrated | `infrastructure/local-pod/provision_forgejo.yml` — no longer needed; Forgejo runs in cove compose |
 | Tailscale serve | Working | Managed by Ansible playbook |
 | CLI creds integration | Working | `cli/lab/creds.py` (vault-put, vault-get) |
 | SSH key caching | Working | `scripts/cache-ssh-keys-in-vault.sh` |
@@ -313,7 +313,7 @@ Standard containers share the host kernel. A kernel exploit in a CI job (running
 | **k3s install** | Build new | No equivalent. Download + verify + install inside VM (macOS) or on host (Linux). |
 | **Kata Containers install** | Build new | No equivalent. Download + verify + containerd drop-in + RuntimeClass registration. |
 | **Host resolver config** | Build new | Ansible task. No new daemon. |
-| **Forgejo StatefulSet** | Migrate from Compose | Convert `docker-compose.yml` service to k8s StatefulSet. Add `hostPath` for data. |
+| **Forgejo StatefulSet** | Migrate from Compose | Convert `compose/docker-compose.yml` to k8s StatefulSet. Add `hostPath` for data. Forgejo v15 already migrated from Homelab local-pod into cove compose. |
 | **Vault StatefulSet** | Migrate from Compose | Convert to StatefulSet. Add init container for unseal. Add auto-snapshot CronJob. |
 | **Runner Deployment (Kata)** | Build new | No equivalent. Kata RuntimeClass + restricted NetworkPolicy. |
 | **Registry Deployment** | Build new | No equivalent. Needed for offline image caching. |
@@ -322,7 +322,7 @@ Standard containers share the host kernel. A kernel exploit in a CI job (running
 | **CoreDNS custom config** | Build new | Add `.cove.local` zone to k3s CoreDNS. |
 | **Workstation CLI** | Build new | `cove build`, `cove tryup`. Replaces `lab` CLI for local operations. |
 | **Ansible role (`cove`)** | Build new | In workstation repo. Lima + k3s + Kata + network + platform deploy + CLI install. |
-| **Data migration** | Migrate | Move `local-pod` data dirs to `~/Documents/cove/`. |
+| **Data migration** | Done | Forgejo data already migrated from local-pod to `~/Documents/code/cove/compose/data/`. |
 | **Tailscale serve removal** | Deprecate | Replaced by Traefik ingress. Tailscale still provides overlay. |
 
 ### What Can Be Reused
@@ -330,9 +330,9 @@ Standard containers share the host kernel. A kernel exploit in a CI job (running
 | Component | Reuse | Notes |
 |---|---|---|
 | Vault bootstrap logic | Adapt | `bootstrap_vault.yml` logic → init container or Job. Unseal keys stay in `~/Documents/`. |
-| Forgejo provisioning | Adapt | `provision_forgejo.yml` → post-install Job or init container. API calls via `kubectl exec`. |
+| Forgejo provisioning | N/A | Already provisioned. `provision_forgejo.yml` no longer needed. Forgejo runs in cove compose with `INSTALL_LOCK=true`. |
 | SSH key caching script | Reuse | `cache-ssh-keys-in-vault.sh` still valid. Target Vault moves to cluster DNS. |
-| Seeds (`seeds/forgejo-creds.yaml`) | Reuse | Same format, applied from a k8s Job instead of Ansible. |
+| Seeds (`seeds/forgejo-creds.yaml`) | N/A | Config lives in compose-mounted `data/forgejo/gitea/conf/app.ini`, not via seed files. |
 | Download-and-verify pattern | Reuse | `shared/tasks/download-and-verify.yml` for k3s, Kata, Lima binaries. |
 
 ### Key Gaps to Address

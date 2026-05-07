@@ -10,7 +10,7 @@ Cove gives you a full local dev stack on a single-node k3s cluster. See [docs/vi
 
 | Service | Purpose | Notes |
 |---------|---------|-------|
-| **Forgejo** | Self-hosted Git forge with CI | Runs inside k3s |
+| **Forgejo** | Self-hosted Git forge with CI | Docker Compose (`compose/docker-compose.yml`) |
 | **HashiCorp Vault** | Secrets management | age-encrypted, auto-unseal |
 | **CI runners** | Sandboxed build execution | Kata Containers (VM-level isolation) |
 | **Local image registry** | Cache images for offline work | `localhost:5000` |
