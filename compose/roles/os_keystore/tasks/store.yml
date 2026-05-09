@@ -1,0 +1,30 @@
+---
+- name: Store in macOS Keychain
+  ansible.builtin.command:
+    argv:
+      - security
+      - add-generic-password
+      - -a
+      - "{{ keystore_account | default(ansible_user_id) }}"
+      - -s
+      - "{{ keystore_service }}"
+      - -w
+      - "{{ keystore_value }}"
+      - -U
+  when: ansible_system == 'Darwin'
+  no_log: true
+
+- name: Store in libsecret (Linux)
+  ansible.builtin.command:
+    argv:
+      - secret-tool
+      - store
+      - --label="{{ keystore_service }}"
+      - service
+      - "{{ keystore_service }}"
+      - account
+      - "{{ keystore_account | default(ansible_user_id) }}"
+  vars:
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
+  when: ansible_system == 'Linux'
+  no_log: true

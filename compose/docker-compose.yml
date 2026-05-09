@@ -1,14 +1,16 @@
+name: cove
+
 services:
   forgejo:
-    image: ${FORGEJO_IMAGE}
+    image: ${FORGEJO_IMAGE:-codeberg.org/forgejo/forgejo:15}
     container_name: ${FORGEJO_CONTAINER_NAME:-cove-forgejo}
     restart: unless-stopped
     environment:
       USER_UID: "${FORGEJO_UID:-501}"
       USER_GID: "${FORGEJO_GID:-20}"
-      FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN}
-      FORGEJO__server__ROOT_URL: ${FORGEJO_ROOT_URL}
-      FORGEJO__server__SSH_DOMAIN: ${FORGEJO_SSH_DOMAIN}
+      FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN:-localhost}
+      FORGEJO__server__ROOT_URL: ${FORGEJO_ROOT_URL:-http://localhost:3000/}
+      FORGEJO__server__SSH_DOMAIN: ${FORGEJO_SSH_DOMAIN:-localhost}
       FORGEJO__server__SSH_PORT: "${FORGEJO_SSH_PORT:-2222}"
       FORGEJO__server__START_SSH_SERVER: "false"
       FORGEJO__security__INSTALL_LOCK: "true"
@@ -31,3 +33,27 @@ services:
     ports:
       - "${FORGEJO_HTTP_BIND:-127.0.0.1}:${FORGEJO_HTTP_PORT:-3000}:3000"
       - "${FORGEJO_SSH_BIND:-127.0.0.1}:${FORGEJO_SSH_PORT:-2222}:22"
+
+  vault:
+    image: ${VAULT_IMAGE:-hashicorp/vault:1.20}
+    container_name: ${VAULT_CONTAINER_NAME:-cove-vault}
+    restart: unless-stopped
+    # IPC_LOCK added even though disable_mlock=true to maintain the
+    # capability in case mlock is re-enabled on this single-node setup.
+    cap_add:
+      - IPC_LOCK
+    environment:
+      VAULT_ADDR: "http://127.0.0.1:8200"
+      VAULT_API_ADDR: "http://127.0.0.1:8200"
+    command: ["server"]
+    volumes:
+      - ${COVE_DATA_ROOT}/vault/data:/vault/data
+      - ${COVE_DATA_ROOT}/vault/logs:/vault/logs
+      - ./vault/vault.hcl:/vault/config/vault.hcl:ro
+    ports:
+      - "${VAULT_BIND:-127.0.0.1}:${VAULT_PORT:-8200}:8200"
+    healthcheck:
+      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      interval: 10s
+      start_period: 15s
+      retries: 5
