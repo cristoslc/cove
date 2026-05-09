@@ -1,0 +1,7 @@
+---
+- name: Fail if no keystore CLI
+  ansible.builtin.fail:
+    msg: "No supported keystore CLI found (security on macOS, secret-tool on Linux)"
+  when: >
+    ansible_system == 'Darwin' and (lookup('ansible.builtin.pipe', 'command -v security') | length == 0)
+    or ansible_system == 'Linux' and (lookup('ansible.builtin.pipe', 'command -v secret-tool') | length == 0)
