@@ -2,7 +2,7 @@
 set -euo pipefail
 
 FQDN="mbpbk-202602.taila90e7.ts.net"
-CERTS_DIR="${FORGEJO_DATA_ROOT:-$HOME/Documents/cove-forgejo}/certs"
+CERTS_DIR="${FORGEJO_DATA_ROOT:-$HOME/Documents/cove-data}/certs"
 CONTAINER="cove-forgejo"
 
 echo "Renewing TLS certificate for $FQDN..."

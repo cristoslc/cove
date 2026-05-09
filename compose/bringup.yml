@@ -1,0 +1,141 @@
+- name: Bring up cove containers (forgejo + vault)
+  hosts: localhost
+  gather_facts: true
+  vars:
+    compose_dir: "{{ playbook_dir }}"
+
+  tasks:
+    # TAILSCALE SERVE OVERLAY -------------------------------------------------
+    - name: Set Forgejo URLs to localhost
+      ansible.builtin.set_fact:
+        forgejo_domain: localhost
+        forgejo_root_url: "http://localhost:{{ forgejo_http_port }}/"
+        forgejo_ssh_domain: localhost
+
+    - name: Check if tailscale is up
+      ansible.builtin.command: tailscale status --json
+      register: ts_status
+      changed_when: false
+      failed_when: false
+      no_log: true
+
+    - name: Set up tailscale serve
+      when: ts_status.rc == 0
+      block:
+        - name: Get tailscale DNS name
+          ansible.builtin.set_fact:
+            ts_dns_name: "{{ (ts_status.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
+
+        - name: Use tailscale DNS name for Forgejo URLs
+          ansible.builtin.set_fact:
+            forgejo_domain: "{{ ts_dns_name }}"
+            forgejo_root_url: "http://{{ ts_dns_name }}:{{ forgejo_http_port }}/"
+            forgejo_ssh_domain: "{{ ts_dns_name }}"
+
+        - name: Point tailscale name to localhost in hosts file
+          become: true
+          ansible.builtin.lineinfile:
+            path: /etc/hosts
+            regexp: '^127\.0\.0\.1\s+{{ ts_dns_name | regex_escape }}(\s+.*)?$'
+            line: "127.0.0.1 {{ ts_dns_name }}"
+            state: present
+
+        - name: Set up tailscale serve for HTTP 3000
+          ansible.builtin.shell: |
+            set -eo pipefail
+            PORT="{{ forgejo_http_port | string }}"
+            JSON=$(tailscale serve status --json 2>/dev/null || echo '{}')
+            if python3 -c "import json,sys,os; s=json.load(sys.stdin); exit(0 if s.get('TCP',{}).get(os.environ['PORT']) else 1)" <<< "$JSON"; then
+              echo "already configured"
+            else
+              tailscale serve --bg --tcp "$PORT" "tcp://127.0.0.1:$PORT"
+              echo "configured"
+            fi
+          register: ts_serve_http
+          changed_when: "'configured' in ts_serve_http.stdout and 'already' not in ts_serve_http.stdout"
+          environment:
+            PORT: "{{ forgejo_http_port | string }}"
+
+    # DATA DIRECTORIES -------------------------------------------------------
+    - name: Create cove data directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ cove_data_root }}/forgejo/gitea"
+        - "{{ cove_data_root }}/forgejo/git"
+        - "{{ cove_data_root }}/forgejo/ssh"
+        - "{{ cove_data_root }}/certs"
+        - "{{ cove_data_root }}/vault/data"
+        - "{{ cove_data_root }}/vault/logs"
+
+    # COMPOSE .env -----------------------------------------------------------
+    - name: Render compose .env from host vars
+      ansible.builtin.copy:
+        dest: "{{ compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          COVE_DATA_ROOT={{ cove_data_root }}
+          FORGEJO_IMAGE={{ forgejo_image }}
+          FORGEJO_CONTAINER_NAME={{ forgejo_container_name }}
+          FORGEJO_DATA_ROOT={{ cove_data_root }}
+          FORGEJO_UID={{ ansible_user_uid }}
+          FORGEJO_GID={{ ansible_user_gid }}
+          FORGEJO_DOMAIN={{ forgejo_domain }}
+          FORGEJO_ROOT_URL={{ forgejo_root_url }}
+          FORGEJO_SSH_DOMAIN={{ forgejo_ssh_domain }}
+          FORGEJO_SSH_PORT={{ forgejo_ssh_port }}
+          FORGEJO_HTTP_BIND={{ forgejo_http_bind }}
+          FORGEJO_HTTP_PORT={{ forgejo_http_port }}
+          FORGEJO_SSH_BIND={{ forgejo_ssh_bind }}
+          VAULT_IMAGE={{ vault_image }}
+          VAULT_CONTAINER_NAME={{ vault_container_name }}
+          VAULT_BIND={{ vault_bind }}
+          VAULT_PORT={{ vault_port }}
+
+    # CONTAINERS -------------------------------------------------------------
+    - name: Detect active docker context endpoint
+      ansible.builtin.command: docker context inspect --format '{{ "{{" }} .Endpoints.docker.Host {{ "}}" }}'
+      register: docker_host_detect
+      changed_when: false
+
+    - name: Bring up pod via docker compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ compose_dir }}"
+        state: present
+        pull: "{{ pod_pull_policy }}"
+        wait: true
+        docker_host: "{{ docker_host_detect.stdout }}"
+
+    - name: Wait for Forgejo health endpoint
+      ansible.builtin.uri:
+        url: "{{ forgejo_root_url }}api/healthz"
+        status_code: 200
+      register: forgejo_health
+      retries: 30
+      delay: 2
+      until: forgejo_health.status == 200
+
+    - name: Wait for Vault to respond
+      ansible.builtin.uri:
+        url: "{{ vault_addr }}/v1/sys/health"
+        status_code: [200, 429, 472, 473, 501, 503]
+      register: vault_health
+      retries: 30
+      delay: 2
+      until: vault_health.status in [200, 429, 472, 473, 501, 503]
+
+    - name: Print summary
+      ansible.builtin.debug:
+        msg: |
+          Containers are up.
+            Forgejo: {{ forgejo_root_url }} (bound to {{ forgejo_http_bind }}:{{ forgejo_http_port }})
+            SSH    : {{ forgejo_ssh_bind }}:{{ forgejo_ssh_port }}
+            {% if ts_status.rc == 0 %}Tailscale: {{ ts_dns_name }} (serve overlay active)
+            {% endif %}Vault  : {{ vault_addr }} (initialized={{ vault_health.json.initialized | default(false) }}, sealed={{ vault_health.json.sealed | default(true) }})
+
+          Next steps:
+            1. ansible-playbook -i inventory.yml bootstrap_vault.yml
+            2. ansible-playbook -i inventory.yml provision_vault_user.yml
+            3. ansible-playbook -i inventory.yml provision_forgejo.yml

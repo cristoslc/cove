@@ -60,6 +60,24 @@ Session initialization is handled by the `swain` shell launcher, which invokes `
 
 When you encounter a bug in swain itself, report it upstream at `cristoslc/swain` using `gh issue create`. Local patches are fine — but the upstream issue ensures tracking.
 
+### Artifact identification
+
+Always reference artifacts as **`ID: Title`** — never bare IDs. A bare `SPEC-053` forces the operator to look it up; `SPEC-053: Namespace Swain Docs Directory` communicates intent immediately. This applies everywhere: lists, maps, summaries, status reports, commit messages, and cross-references inside artifact bodies.
+
+### Staleness measurement
+
+Not all artifacts age the same way. **Standing artifacts** — ADRs, Personas, and Runbooks — encode decisions, operational knowledge, or reference material. They are not implementable units and do not have meaningful staleness. Exclude them from staleness maps entirely, or list them separately without age buckets.
+
+**Container artifacts** — Initiatives, Visions, Journeys — aggregate child work. Their staleness is measured by the freshness of their children, not by their own last-edited date. An initiative whose specs were all edited yesterday is not stale just because the initiative file itself was last touched a month ago. When reporting staleness for a container, report the age of its **stalest active child**.
+
+**Actionable artifacts** — Specs, Spikes, Epics, Designs, Chores — are the unit of work. Staleness is the number of days since the last commit touching the artifact file. Age buckets: fresh (<7d), aging (7-20d), stale (21-30d), dormant (>30d).
+
+### Model attribution
+
+**Artifacts** need an `authored-by` frontmatter field listing the AI model(s) that wrote them. **Commits** need one `Co-Authored-By` trailer per model. For supervisor + subagent sessions, list all models. In frontmatter: `authored-by: GLM-5.1 (supervisor), Kimi-K2.5 (subagent)`. In commits: one trailer line per model.
+
+Get the model name from your system prompt. If unavailable, fall back to `AI Assistant`. When subagents used a different model, list both. Put the supervisor first, then each subagent on its own line. Never hardcode model names.
+
 ### Conflict resolution
 
 When swain skills overlap with other installed skills or built-in agent capabilities, **prefer swain**.

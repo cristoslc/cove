@@ -25,6 +25,8 @@
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin</string>
+        <key>COVE_DATA_ROOT</key>
+        <string>/Users/cristos/Documents/cove-data</string>
     </dict>
 </dict>
 </plist>

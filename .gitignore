@@ -11,7 +11,14 @@
 *.swp
 *.swo
 
-# Compose runtime data (git repos, DB, SSH keys, TLS certs)
+# Compose runtime data (git repos, DB, SSH keys, TLS certs, Vault)
 /compose/data/
 /compose/.env
 /compose/logs/
+/compose/vault/raft/
+
+# Vendored swain skills (managed by swain-update)
+.claude/skills/swain/
+.claude/skills/swain-*/
+.agents/skills/swain/
+.agents/skills/swain-*/

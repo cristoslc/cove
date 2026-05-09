@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 COVE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_DIR="$COVE_DIR/compose"
-CERTS_DIR="$COMPOSE_DIR/certs"
+CERTS_DIR="$COMPOSE_DIR/../certs"
 SSH_DIR="$COMPOSE_DIR/data/forgejo/ssh"
 GITEA_DIR="$COMPOSE_DIR/data/forgejo/gitea"
 GIT_DIR="$COMPOSE_DIR/data/forgejo/git"
