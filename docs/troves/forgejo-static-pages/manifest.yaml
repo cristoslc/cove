@@ -1,0 +1,117 @@
+id: forgejo-static-pages
+created: 2026-05-09
+refreshed: 2026-05-09
+tags:
+  - forgejo
+  - static-site
+  - pages
+  - github-pages
+  - git-hosting
+  - self-hosting
+default-ttl:
+  web-page: 90d
+  documentation-site: 90d
+  repository: 180d
+referenced-by: []
+sources:
+  - id: forgejo-docs-static-pages
+    url: https://forgejo.org/docs/next/contributor/static-pages/
+    type: web-page
+    fetched: 2026-05-09
+    hash: 45ecba3cdb262bf415c29f0045c35978fecc7f067f68b082235b7f34a87d091f
+    title: Official Forgejo static pages infrastructure docs
+    highlights:
+      - Describes Forgejo project's own LXC + nginx + webhook infrastructure
+      - Confirms Forgejo has NO built-in Pages feature
+  - id: git-pages
+    url: https://codeberg.org/git-pages/git-pages
+    type: repository
+    fetched: 2026-05-09
+    hash: 167bc7701cdd58ded7d095aac7a01bdb847cc03434710102b584d6989e84a42c
+    title: git-pages — premier GitHub Pages replacement for Forgejo
+    highlights:
+      - Powers Codeberg Pages
+      - Go, filesystem/S3 backends, horizontal scaling
+      - Docker, Caddy TLS, Prometheus, syslog
+      - Netlify-compatible _redirects/_headers, Basic-Auth
+      - 0-clause BSD license
+      - Companion: CLI tool, Forgejo Action, Grebedoc
+  - id: ronmi-forgejo-pages
+    url: https://github.com/Ronmi/forgejo-pages
+    type: repository
+    fetched: 2026-05-09
+    hash: f5296f4a7424bfcc452ca1632b307f61035a1127206d377d28f146d0d7ffdc9a
+    title: Ronmi/forgejo-pages — simple lightweight alternative
+    highlights:
+      - Serve mode (API proxy) and webhook mode (git pull)
+      - Docker images available
+      - MPL-2.0 license
+      - Recommends Codeberg pages-server for all-in-one
+  - id: forge-pages-mexhigh
+    url: https://github.com/MexHigh/Forge-Pages
+    type: repository
+    fetched: 2026-05-09
+    hash: 5a4d1ab30e1f7c3a509bbfeb93315ad89da055b690c2d027416141146910f41f
+    title: MexHigh/Forge-Pages — CI/CD-driven with OAuth2
+    highlights:
+      - OAuth2 integration enforces repo permissions on pages
+      - Supports private pages with login
+      - CI/CD-driven (build in workflow, deploy to endpoint)
+      - Forgejo Action available
+      - GitHub Pages URL layout
+  - id: squarecows-pages-server
+    url: https://code.squarecows.com/SquareCows/pages-server
+    type: repository
+    fetched: 2026-05-09
+    hash: 050c051e7da9afd6db5ef157dc9adce26ab80ccc5cf7c9ac2d2bb368158851d0
+    title: SquareCows/pages-server — Traefik middleware plugin
+    highlights:
+      - Traefik middleware, auto-discovers repos with public/ folder
+      - In-memory and Redis caching
+      - .pages config file per repo
+      - Custom domains, branch subdomains
+      - forgejoToken for private repos
+  - id: forgejo-pages-diy
+    url: https://codeberg.org/coderofsalvation/forgejo-pages-diy
+    type: repository
+    fetched: 2026-05-09
+    hash: 806006d127301c646d25649c5974d9756d19135f202513c1ce6f636386676452
+    title: coderofsalvation/forgejo-pages-diy — git hook approach
+    highlights:
+      - Simplest method: install a git hook on Forgejo server
+      - No external service needed
+      - Tight coupling to server, manual setup per repo
+  - id: codeberg-pages-docs
+    url: https://docs.codeberg.org/codeberg-pages/
+    type: documentation-site
+    fetched: 2026-05-09
+    hash: 979d18be8a4a59d262de50460b0c4a053c61b0bdbb888d1d656f7186192a68bd
+    title: Codeberg Pages documentation
+    highlights:
+      - Reference implementation of git-pages on Forgejo
+      - Webhook and Forgejo Actions deployment methods
+      - Custom domains migrating from legacy v2 to git-pages
+  - id: grebedoc
+    url: https://grebedoc.dev
+    type: web-page
+    fetched: 2026-05-09
+    hash: 36acae4cb9f065b6d7bc308cd10c1a0cdf7f0ab8d3610234339a3bdf6e8429b2
+    title: Grebedoc — managed git-pages CDN
+    highlights:
+      - Managed git-pages instance with global CDN edge nodes
+      - Works with any forge (Forgejo, Gitea, Gogs, GitHub)
+      - Self-hostable via Nix
+  - id: forgejo-actions-diy
+    url: https://forgejo.org/docs/next/user/actions/
+    type: web-page
+    fetched: 2026-05-09
+    hash: 84dcff766b2d1d0ff16ec22f7127e5c48922e5ba544032932a2a7c4ab614546d
+    title: DIY — Forgejo Actions + any web server
+    highlights:
+      - Most flexible approach: CI/CD build → deploy to any server
+      - No extra dependencies but no automatic Pages-like url scheme
+history:
+  - event: created
+    date: 2026-05-09
+    commit: "--"
+    sources: 9
