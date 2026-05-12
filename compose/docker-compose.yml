@@ -19,9 +19,7 @@ services:
       FORGEJO__service__REQUIRE_SIGNIN_VIEW: "true"
       FORGEJO__database__DB_TYPE: sqlite3
       FORGEJO__log__LEVEL: warn
-      FORGEJO__server__PROTOCOL: https
-      FORGEJO__server__CERT_FILE: /certs/fullchain.pem
-      FORGEJO__server__KEY_FILE: /certs/privkey.pem
+      FORGEJO__server__PROTOCOL: http
       FORGEJO__server__HTTP_PORT: "3000"
       FORGEJO__server__REDIRECT_OTHER_PORT: "false"
       FORGEJO__repository__ENABLE_PUSH_CREATE_USER: "true"
@@ -37,13 +35,38 @@ services:
       - ${FORGEJO_DATA_ROOT}/forgejo/git:/data/git
       - ${FORGEJO_DATA_ROOT}/forgejo/ssh:/etc/ssh
       - ${FORGEJO_DATA_ROOT}/certs:/certs:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
     deploy:
       resources:
         limits:
           memory: 512M
     ports:
-      - "${FORGEJO_HTTP_BIND:-127.0.0.1}:${FORGEJO_HTTP_PORT:-3000}:3000"
       - "${FORGEJO_SSH_BIND:-127.0.0.1}:${FORGEJO_SSH_PORT:-2222}:22"
+
+  nginx:
+    image: ${NGINX_IMAGE:-nginx:1.27-alpine}
+    container_name: ${NGINX_CONTAINER_NAME:-cove-nginx}
+    restart: unless-stopped
+    depends_on:
+      forgejo:
+        condition: service_started
+    volumes:
+      - ${NGINX_CONF_DIR:-./nginx}/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${COVE_DATA_ROOT}/certs:/certs:ro
+      - ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites:ro
+    ports:
+      - "${NGINX_HTTP_BIND:-127.0.0.1}:${NGINX_HTTPS_PORT:-443}:443"
+      - "${NGINX_HTTP_BIND:-127.0.0.1}:${NGINX_HTTP_PORT:-80}:80"
+
+  dnsmasq:
+    build: ${DNSMASQ_CONF_DIR:-./dnsmasq}
+    container_name: ${DNSMASQ_CONTAINER_NAME:-cove-dnsmasq}
+    restart: unless-stopped
+    ports:
+      - "${DNSMASQ_BIND:-127.0.0.1}:${DNSMASQ_PORT:-5353}:5353"
+    cap_add:
+      - NET_BIND_SERVICE
 
   vault:
     image: ${VAULT_IMAGE:-hashicorp/vault:1.20}
