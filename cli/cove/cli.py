@@ -4,6 +4,7 @@ import click
 
 from cove import __version__
 from cove.creds import creds
+from cove.project import project
 
 
 @click.group()
@@ -13,6 +14,7 @@ def app():
 
 
 app.add_command(creds)
+app.add_command(project)
 
 
 @app.command()

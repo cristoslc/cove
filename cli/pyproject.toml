@@ -5,6 +5,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 
+[tool.setuptools.package-data]
+"cove.templates" = ["*.j2"]
+
 [project]
 name = "cove-cli"
 version = "0.1.0"
@@ -12,6 +15,7 @@ description = "Cove management CLI"
 requires-python = ">=3.11"
 dependencies = [
     "click",
+    "jinja2>=3.1",
     "pyyaml>=6.0.3",
     "requests>=2.33.0",
 ]

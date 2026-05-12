@@ -1,0 +1,26 @@
+## Cove
+
+This machine runs Cove — a local developer platform (forge, vault, CI, registry, pages).
+All services are offline-first. The same FQDN resolves locally and over Tailscale.
+
+### Forgejo
+
+- Web: `{{ forgejo_root_url }}`
+- SSH remote: `git@forgejo-localhost:{{ admin_username }}/repo.git`
+- CLI: `fjl` (alias for `fj -H {{ forgejo_root_url }}`) — requires interactive shell (`zsh -i -c 'fjl ...'`)
+- SSH host alias: `forgejo-localhost` → `{{ forgejo_ssh_domain }}` port {{ forgejo_ssh_port }}
+
+### Vault / Credentials
+
+Never hardcode secrets. Use:
+- `cove creds vault-get op://vault/item/field` — read a cached secret
+- `cove creds vault-put op://vault/item/field` — cache a 1Password secret into Vault
+
+Vault address: `{{ vault_addr }}`
+
+### Constraints
+
+- Do not add cloud dependencies.
+- Do not assume internet access during builds or CI.
+- All git remotes go to Forgejo at `{{ forgejo_domain }}`.
+
