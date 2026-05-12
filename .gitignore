@@ -17,6 +17,9 @@
 /compose/logs/
 /compose/vault/raft/
 
+# Worktrees
+/.worktrees/
+
 # Vendored swain skills (managed by swain-update)
 .claude/skills/swain/
 .claude/skills/swain-*/
