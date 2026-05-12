@@ -1,0 +1,158 @@
+- name: Provision Cove Pages (actions + artifact store)
+  hosts: localhost
+  gather_facts: true
+  vars:
+    actions_dir: "{{ playbook_dir }}/files/actions"
+
+  tasks:
+    - name: Check Forgejo is reachable
+      ansible.builtin.uri:
+        url: "{{ forgejo_root_url }}api/v1/version"
+        status_code: [200, 403]
+        validate_certs: false
+      register: forgejo_check
+
+    - name: Fail if Forgejo unreachable
+      ansible.builtin.fail:
+        msg: "Forgejo not responding at {{ forgejo_root_url }}. Run bringup.yml and provision_forgejo.yml first."
+      when: forgejo_check.status not in [200, 403]
+
+    - name: Delete stale cove-provision token
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - --user
+          - git
+          - "{{ forgejo_container_name }}"
+          - forgejo
+          - --config
+          - /data/gitea/conf/app.ini
+          - admin
+          - user
+          - delete-access-token
+          - --username
+          - "{{ admin_username }}"
+          - --token-name
+          - "cove-provision"
+      changed_when: true
+      failed_when: false
+
+    - name: Generate provisioning API token
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - --user
+          - git
+          - "{{ forgejo_container_name }}"
+          - forgejo
+          - --config
+          - /data/gitea/conf/app.ini
+          - admin
+          - user
+          - generate-access-token
+          - --username
+          - "{{ admin_username }}"
+          - --token-name
+          - "cove-provision"
+          - --scopes
+          - "write:user,write:repository,write:admin"
+      register: token_out
+      changed_when: true
+      no_log: true
+
+    - name: Extract API token
+      ansible.builtin.set_fact:
+        api_token: >-
+          {{ token_out.stdout
+             | regex_search('Access token was successfully created:\s*(\S+)', '\1')
+             | default([token_out.stdout | regex_search('([a-f0-9]{40})', '\1')])
+             | select('string')
+             | first }}
+      no_log: true
+
+    - name: Check for cove organization
+      ansible.builtin.uri:
+        url: "{{ forgejo_root_url }}api/v1/orgs/cove"
+        headers:
+          Authorization: "token {{ api_token }}"
+        status_code: [200, 404]
+        validate_certs: false
+      register: cove_org_check
+
+    - name: Create cove organization
+      ansible.builtin.uri:
+        url: "{{ forgejo_root_url }}api/v1/orgs"
+        method: POST
+        headers:
+          Authorization: "token {{ api_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          username: cove
+          full_name: "Cove Platform"
+          description: "Cove platform actions and artifacts"
+          visibility: "limited"
+        status_code: [201, 422]
+        validate_certs: false
+      when: cove_org_check.status == 404
+
+    - name: Create Cove Pages repositories
+      ansible.builtin.uri:
+        url: "{{ forgejo_root_url }}api/v1/orgs/cove/repos"
+        method: POST
+        headers:
+          Authorization: "token {{ api_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          name: "{{ item }}"
+          description: "Cove {{ item }}"
+          auto_init: true
+          default_branch: main
+        status_code: [201, 409]
+        validate_certs: false
+      loop:
+        - configure-pages
+        - upload-pages-artifact
+        - deploy-pages
+        - pages-artifacts
+
+    - name: Push action code via Forgejo API
+      ansible.builtin.uri:
+        url: "{{ forgejo_root_url }}api/v1/repos/cove/{{ item.repo }}/contents/{{ item.file }}"
+        method: PUT
+        headers:
+          Authorization: "token {{ api_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          content: "{{ lookup('file', actions_dir + '/' + item.repo + '/' + item.file) | b64encode }}"
+          message: "feat: provision {{ item.repo }} action"
+          branch: main
+        status_code: [200, 201]
+        validate_certs: false
+      loop:
+        - { repo: "configure-pages", file: "action.yml" }
+        - { repo: "upload-pages-artifact", file: "action.yml" }
+        - { repo: "deploy-pages", file: "action.yml" }
+
+    - name: Print provisioning summary
+      ansible.builtin.debug:
+        msg: |
+          Cove Pages provisioned.
+            Org: cove
+            Repos:
+              - cove/configure-pages (composite action)
+              - cove/upload-pages-artifact (composite action)
+              - cove/deploy-pages (composite action)
+              - cove/pages-artifacts (artifact store)
+
+          Action URLs for workflows:
+            http://forgejo:3000/cove/configure-pages@main
+            http://forgejo:3000/cove/upload-pages-artifact@main
+            http://forgejo:3000/cove/deploy-pages@main
+
+          Next: copy {{ actions_dir }}/pages-template.yml to any project's
+          .forgejo/workflows/pages.yml and push to the pages branch.
