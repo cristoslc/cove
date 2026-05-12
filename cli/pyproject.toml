@@ -1,6 +1,9 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
 
 [project]
 name = "cove-cli"
@@ -19,8 +22,6 @@ cove = "cove.cli:app"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
-[tool.hatch.build.targets.wheel]
-packages = ["cove"]
 
 [dependency-groups]
 dev = [
