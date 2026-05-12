@@ -23,6 +23,8 @@ services:
       FORGEJO__server__KEY_FILE: /certs/privkey.pem
       FORGEJO__server__HTTP_PORT: "3000"
       FORGEJO__server__REDIRECT_OTHER_PORT: "false"
+      FORGEJO__repository__ENABLE_PUSH_CREATE_USER: "true"
+      FORGEJO__repository__ENABLE_PUSH_CREATE_ORG: "true"
     volumes:
       - ${FORGEJO_DATA_ROOT}/forgejo/gitea:/data/gitea
       - ${FORGEJO_DATA_ROOT}/forgejo/git:/data/git
