@@ -10,7 +10,7 @@ import click
 
 from cove import __version__
 from cove.creds import creds
-from cove.project import project
+from cove.project import _inject, _strip, _container_env, _render_guidance
 
 def _find_compose_dir() -> Path:
     cwd = Path.cwd()
@@ -83,7 +83,23 @@ def up(no_provision, no_sudo):
 
 
 app.add_command(creds)
-app.add_command(project)
+
+
+@app.command()
+@click.option("-g", "--global", "global_", is_flag=True, help="Install to ~/.claude/CLAUDE.md")
+def install(global_):
+    """Inject cove service guidance into the project or global Claude config."""
+    forgejo = _container_env("cove-forgejo")
+    vault = _container_env("cove-vault")
+    rendered = _render_guidance(forgejo, vault)
+
+    if global_:
+        target = Path.home() / ".agents" / "AGENTS.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        target = Path.cwd() / "AGENTS.md"
+
+    _inject(target, rendered)
 
 
 @app.command()
@@ -147,6 +163,9 @@ def uninstall(yes):
                 ["security", "delete-generic-password", "-s", f"cove/vault/unseal-{i}"],
                 capture_output=True,
             )
+
+    for target in [Path.cwd() / "AGENTS.md", Path.home() / ".agents" / "AGENTS.md"]:
+        _strip(target)
 
     click.echo("Cove uninstalled.")
     click.echo("To remove the CLI: uv tool uninstall cove-cli")
