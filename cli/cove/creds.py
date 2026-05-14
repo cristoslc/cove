@@ -1,6 +1,8 @@
 """CLI commands for credential lifecycle management."""
 
 import os
+import platform
+import socket
 import stat
 import sys
 import tempfile
@@ -9,6 +11,14 @@ from pathlib import Path
 import click
 
 from cove import op_bulk_write, vault_cache
+
+
+OP_REFS = {
+    "forgejo_admin": "op://Private/Forgejo {hostname} Admin/password",
+    "vault_user": "op://Private/Vault {hostname} cristos/password",
+}
+
+HOSTNAME = platform.node().split(".")[0]
 
 
 @click.group()
@@ -35,16 +45,24 @@ def vault_put(op_ref: str, force_refresh: bool):
 @creds.command("vault-get")
 @click.argument("op_ref")
 def vault_get(op_ref: str):
-    """Read a cached op:// reference from Vault."""
+    """Read a cached op:// reference. Checks local cache first, then Vault."""
+    from cove import local_cache as lc
+
+    value = lc.get(op_ref)
+    if value is not None:
+        sys.stdout.write(value)
+        return
     try:
         value = vault_cache.vault_get_cached(op_ref)
     except (ValueError, RuntimeError) as e:
         raise click.ClickException(str(e))
-    if value is None:
-        raise click.ClickException(
-            f"{op_ref} is not cached in Vault. Run `cove creds vault-put {op_ref}` first."
-        )
-    sys.stdout.write(value)
+    if value is not None:
+        lc.put(op_ref, value)
+        sys.stdout.write(value)
+        return
+    raise click.ClickException(
+        f"{op_ref} is not cached. Run `cove creds batch-pull` first."
+    )
 
 
 @creds.command("1p-bulk-write")
@@ -88,3 +106,34 @@ def one_password_bulk_write(spec: Path, execute: bool):
         raise click.ClickException(
             f"Script exited with rc={result.returncode}; deleted"
         )
+
+
+@creds.command("batch-pull")
+@click.option(
+    "--force-refresh",
+    is_flag=True,
+    help="Ignore local cache and re-fetch from 1Password.",
+)
+def batch_pull_op(force_refresh: bool):
+    """Pull all known op:// refs in one batch (single biometric prompt)."""
+    from cove import local_cache as lc
+
+    if not force_refresh:
+        cached = 0
+        for ref_template in OP_REFS.values():
+            ref = ref_template.format(hostname=HOSTNAME)
+            if lc.get(ref) is not None:
+                cached += 1
+        if cached == len(OP_REFS):
+            click.echo("All refs already in local cache. Use --force-refresh to repull.")
+            return
+
+    refs = [t.format(hostname=HOSTNAME) for t in OP_REFS.values()]
+    try:
+        result = lc.batch_pull(refs)
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
+
+    for ref, value in result.items():
+        click.echo(f"  {ref}: {'*' * 16}")
+    click.echo(f"Pulled {len(result)} reference(s) into local cache.")

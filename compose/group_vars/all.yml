@@ -11,7 +11,7 @@ forgejo_http_port: 3000
 forgejo_ssh_bind: "127.0.0.1"
 forgejo_ssh_port: 2222
 forgejo_domain: localhost
-forgejo_root_url: "http://localhost:{{ forgejo_http_port }}/"
+forgejo_root_url: "https://localhost:{{ forgejo_http_port }}/"
 forgejo_ssh_domain: localhost
 
 # --- Vault ---

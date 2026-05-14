@@ -1,0 +1,122 @@
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-data
+  namespace: {{ cove_namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: forgejo-git
+  namespace: {{ cove_namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: forgejo
+  namespace: {{ cove_namespace }}
+spec:
+  serviceName: forgejo
+  replicas: 1
+  selector:
+    matchLabels:
+      app: forgejo
+  template:
+    metadata:
+      labels:
+        app: forgejo
+    spec:
+      containers:
+        - name: forgejo
+          image: codeberg.org/forgejo/forgejo:15
+          env:
+            - name: USER_UID
+              value: "1000"
+            - name: USER_GID
+              value: "1000"
+            - name: GITEA__server__DOMAIN
+              value: {{ cove_domain }}
+            - name: GITEA__server__ROOT_URL
+              value: https://{{ cove_domain }}/
+            - name: GITEA__server__SSH_DOMAIN
+              value: {{ cove_domain }}
+            - name: GITEA__server__SSH_PORT
+              value: "2222"
+            - name: GITEA__server__START_SSH_SERVER
+              value: "false"
+            - name: GITEA__security__INSTALL_LOCK
+              value: "true"
+            - name: GITEA__service__DISABLE_REGISTRATION
+              value: "true"
+            - name: GITEA__service__REQUIRE_SIGNIN_VIEW
+              value: "true"
+            - name: GITEA__database__DB_TYPE
+              value: sqlite3
+            - name: GITEA__log__LEVEL
+              value: warn
+            - name: GITEA__repository__ENABLE_PUSH_CREATE_USER
+              value: "true"
+            - name: GITEA__repository__ENABLE_PUSH_CREATE_ORG
+              value: "true"
+            - name: GITEA__repository.signing__SIGNING_KEY
+              value: default
+            - name: GITEA__repository.signing__SIGNING_NAME
+              value: Forgejo
+            - name: GITEA__repository.signing__SIGNING_EMAIL
+              value: forgejo@{{ cove_domain }}
+            - name: GITEA__repository.signing__INITIAL_COMMIT
+              value: always
+            - name: GITEA__repository.signing__DEFAULT_TRUST_MODEL
+              value: committer
+          volumeMounts:
+            - name: data
+              mountPath: /data/gitea
+            - name: git
+              mountPath: /data/git
+          ports:
+            - containerPort: 3000
+              name: http
+            - containerPort: 2222
+              name: ssh
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 3000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: forgejo-data
+        - name: git
+          persistentVolumeClaim:
+            claimName: forgejo-git
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: forgejo
+  namespace: {{ cove_namespace }}
+spec:
+  selector:
+    app: forgejo
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+    - name: ssh
+      port: 2222
+      targetPort: 2222
