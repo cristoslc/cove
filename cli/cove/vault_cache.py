@@ -9,6 +9,8 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
+from cove import local_cache
+
 
 VAULT_ADDR_DEFAULT = "http://127.0.0.1:8200"
 VAULT_KV_MOUNT = "secret"
@@ -151,9 +153,17 @@ def _op_read(op_ref: str) -> str:
 
 def vault_put_op_ref(op_ref: str, force_refresh: bool = False) -> str:
     if not force_refresh:
-        cached = vault_get_cached(op_ref)
-        if cached is not None:
-            return cached
-    value = _op_read(op_ref)
-    _vault_write(op_ref, value)
-    return value
+        local = local_cache.get(op_ref)
+        if local is not None:
+            return local
+        try:
+            cached = vault_get_cached(op_ref)
+            if cached is not None:
+                local_cache.put(op_ref, cached)
+                return cached
+        except RuntimeError:
+            pass
+    raise RuntimeError(
+        f"{op_ref} is not cached locally or in Vault.\n"
+        "Run 'cove creds batch-pull' first."
+    )

@@ -25,6 +25,11 @@ services:
       FORGEJO__server__REDIRECT_OTHER_PORT: "false"
       FORGEJO__repository__ENABLE_PUSH_CREATE_USER: "true"
       FORGEJO__repository__ENABLE_PUSH_CREATE_ORG: "true"
+      FORGEJO__repository.signing__SIGNING_KEY: "default"
+      FORGEJO__repository.signing__SIGNING_NAME: "Forgejo"
+      FORGEJO__repository.signing__SIGNING_EMAIL: "forgejo@${FORGEJO_DOMAIN:-localhost}"
+      FORGEJO__repository.signing__INITIAL_COMMIT: "always"
+      FORGEJO__repository.signing__DEFAULT_TRUST_MODEL: "committer"
     volumes:
       - ${FORGEJO_DATA_ROOT}/forgejo/gitea:/data/gitea
       - ${FORGEJO_DATA_ROOT}/forgejo/git:/data/git

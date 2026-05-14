@@ -43,7 +43,7 @@
         services: [vault]
         state: present
         pull: "{{ pod_pull_policy }}"
-        wait: true
+        wait: false
         docker_host: "{{ docker_host_detect.stdout }}"
 
     - name: Wait for Vault to respond on /v1/sys/health

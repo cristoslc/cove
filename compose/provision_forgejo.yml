@@ -21,15 +21,39 @@
             cd {{ playbook_dir }} && ansible-playbook -i inventory.yml bootstrap_vault.yml
       when: vault_health.json.sealed | default(true)
 
-    - name: Check if Forgejo admin item exists in 1Password
+    - name: Detect Tailscale and override Forgejo URLs
+      block:
+        - name: Check if tailscale is up
+          ansible.builtin.command: tailscale status --json
+          register: ts_status_prov
+          changed_when: false
+          failed_when: false
+          no_log: true
+
+        - name: Get tailscale DNS name
+          ansible.builtin.set_fact:
+            ts_dns_name_prov: "{{ (ts_status_prov.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
+          when: ts_status_prov.rc == 0
+
+        - name: Use tailscale DNS name for Forgejo URLs
+          ansible.builtin.set_fact:
+            forgejo_domain: "{{ ts_dns_name_prov }}"
+            forgejo_root_url: "https://{{ ts_dns_name_prov }}:{{ forgejo_http_port }}/"
+            forgejo_ssh_domain: "{{ ts_dns_name_prov }}"
+          when: ts_status_prov.rc == 0
+
+    - name: Check 1P forgejo admin item cached
       ansible.builtin.command:
         argv:
-          - op
-          - item
-          - get
-          - "Forgejo {{ ansible_hostname }} Admin"
-          - "--vault={{ op_vault }}"
-      register: op_admin_check
+          - uv
+          - run
+          - --directory
+          - "{{ cli_dir }}"
+          - cove
+          - creds
+          - vault-get
+          - "{{ forgejo_admin_op_ref }}"
+      register: pwd_check
       changed_when: false
       failed_when: false
 
@@ -45,7 +69,7 @@
           - 1p-bulk-write
           - "{{ playbook_dir }}/../seeds/forgejo-creds.yaml"
           - --execute
-      when: op_admin_check.rc != 0
+      when: pwd_check.rc != 0
 
     - name: Cache admin password in Vault (no-op if already cached)
       ansible.builtin.command:
@@ -131,53 +155,13 @@
       ansible.builtin.uri:
         url: "{{ forgejo_root_url }}api/v1/version"
         status_code: [200, 403]
+        validate_certs: false
       register: post_install_version
       retries: 30
       delay: 2
       until: post_install_version.status in [200, 403]
 
-    - name: Check if provisioning token already exists
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - --user
-          - git
-          - "{{ forgejo_container_name }}"
-          - forgejo
-          - --config
-          - /data/gitea/conf/app.ini
-          - admin
-          - user
-          - list-access-tokens
-          - --username
-          - "{{ admin_username }}"
-      register: token_list
-      changed_when: false
-      failed_when: false
-
-    - name: Delete stale provisioning tokens
-      ansible.builtin.command:
-        argv:
-          - docker
-          - exec
-          - --user
-          - git
-          - "{{ forgejo_container_name }}"
-          - forgejo
-          - --config
-          - /data/gitea/conf/app.ini
-          - admin
-          - user
-          - delete-access-token
-          - --username
-          - "{{ admin_username }}"
-          - --token-name
-          - "cove-provision"
-      changed_when: true
-      when: token_list.rc == 0 and token_list.stdout_lines | select('search', '^cove-provision') | list | length > 0
-
-    - name: Generate provisioning API token
+    - name: Generate provisioning API token (unique name avoids collisions)
       ansible.builtin.command:
         argv:
           - docker
@@ -194,24 +178,17 @@
           - --username
           - "{{ admin_username }}"
           - --token-name
-          - "cove-provision"
+          - "cove-provision-{{ ansible_date_time.epoch }}"
           - --scopes
           - "write:user,write:repository,write:admin"
+          - --raw
       register: token_out
-      retries: 3
-      delay: 2
-      until: token_out.rc == 0
       changed_when: true
       no_log: true
 
     - name: Extract API token
       ansible.builtin.set_fact:
-        api_token: >-
-          {{ token_out.stdout
-             | regex_search('Access token was successfully created:\s*(\S+)', '\1')
-             | default([token_out.stdout | regex_search('([a-f0-9]{40})', '\1')])  # fallback: raw SHA
-             | select('string')
-             | first }}
+        api_token: "{{ token_out.stdout | trim }}"
       no_log: true
 
     - name: Check whether repo exists
@@ -219,6 +196,7 @@
         url: "{{ forgejo_root_url }}api/v1/repos/{{ repo_owner }}/{{ repo_name }}"
         headers:
           Authorization: "token {{ api_token }}"
+        validate_certs: false
         status_code: [200, 404]
       register: repo_check
       no_log: true
@@ -230,6 +208,7 @@
         headers:
           Authorization: "token {{ api_token }}"
           Content-Type: application/json
+        validate_certs: false
         body_format: json
         body:
           name: "{{ repo_name }}"
@@ -241,11 +220,26 @@
       when: repo_check.status == 404
       no_log: true
 
+    - name: Enable autodetect manual merge on repo
+      ansible.builtin.uri:
+        url: "{{ forgejo_root_url }}api/v1/repos/{{ repo_owner }}/{{ repo_name }}"
+        method: PATCH
+        headers:
+          Authorization: "token {{ api_token }}"
+          Content-Type: application/json
+        validate_certs: false
+        body_format: json
+        body:
+          autodetect_manual_merge: true
+        status_code: 200
+      no_log: true
+
     - name: List existing SSH keys on Forgejo user
       ansible.builtin.uri:
         url: "{{ forgejo_root_url }}api/v1/user/keys"
         headers:
           Authorization: "token {{ api_token }}"
+        validate_certs: false
         return_content: true
       register: keys_resp
       no_log: true
@@ -257,6 +251,7 @@
         headers:
           Authorization: "token {{ api_token }}"
           Content-Type: application/json
+        validate_certs: false
         body_format: json
         body:
           title: "forgejo-{{ computer_name | lower }}"
@@ -264,18 +259,6 @@
         status_code: 201
       when: keys_resp.json | selectattr('title', 'equalto', 'forgejo-' + (computer_name | lower)) | list | length == 0
       no_log: true
-
-    - name: Check if tailscale is available
-      ansible.builtin.command: tailscale status --json
-      register: ts_status_prov
-      changed_when: false
-      failed_when: false
-      no_log: true
-
-    - name: Resolve tailscale DNS name
-      when: ts_status_prov.rc == 0
-      ansible.builtin.set_fact:
-        ts_dns_name_prov: "{{ (ts_status_prov.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
 
     - name: Add localhost host key
       ansible.builtin.shell: |

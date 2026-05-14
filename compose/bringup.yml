@@ -29,7 +29,7 @@
         - name: Use tailscale DNS name for Forgejo URLs
           ansible.builtin.set_fact:
             forgejo_domain: "{{ ts_dns_name }}"
-            forgejo_root_url: "http://{{ ts_dns_name }}:{{ forgejo_http_port }}/"
+            forgejo_root_url: "https://{{ ts_dns_name }}:{{ forgejo_http_port }}/"
             forgejo_ssh_domain: "{{ ts_dns_name }}"
 
         - name: Point tailscale name to localhost in hosts file
@@ -105,13 +105,15 @@
         project_src: "{{ compose_dir }}"
         state: present
         pull: "{{ pod_pull_policy }}"
-        wait: true
+        wait: false
+        recreate: always
         docker_host: "{{ docker_host_detect.stdout }}"
 
     - name: Wait for Forgejo health endpoint
       ansible.builtin.uri:
         url: "{{ forgejo_root_url }}api/healthz"
         status_code: 200
+        validate_certs: false
       register: forgejo_health
       retries: 30
       delay: 2
