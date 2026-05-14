@@ -1,4 +1,4 @@
-"""CLI commands for project integration."""
+"""Project integration: inject/strip cove guidance in AGENTS.md or CLAUDE.md."""
 
 import json
 import os
@@ -60,23 +60,20 @@ def _inject(target: Path, rendered: str) -> None:
     click.echo(f"Installed cove guidance in {target}")
 
 
-@click.group()
-def project():
-    """Manage cove project integration."""
-
-
-@project.command()
-@click.option("-g", "--global", "global_", is_flag=True, help="Install to ~/.claude/CLAUDE.md")
-def install(global_: bool):
-    """Inject cove service guidance into the project or global Claude config."""
-    forgejo = _container_env("cove-forgejo")
-    vault = _container_env("cove-vault")
-    rendered = _render_guidance(forgejo, vault)
-
-    if global_:
-        target = Path.home() / ".claude" / "CLAUDE.md"
-        target.parent.mkdir(parents=True, exist_ok=True)
+def _strip(target: Path) -> None:
+    if not target.exists():
+        click.echo(f"No cove guidance found (no {target}).")
+        return
+    text = target.read_text()
+    if SENTINEL_START not in text:
+        click.echo(f"No cove guidance block found in {target}.")
+        return
+    start = text.index(SENTINEL_START)
+    end = text.index(SENTINEL_END) + len(SENTINEL_END)
+    remaining = (text[:start] + text[end:]).strip()
+    if remaining:
+        target.write_text(remaining + "\n")
+        click.echo(f"Removed cove guidance from {target}.")
     else:
-        target = Path.cwd() / "AGENTS.md"
-
-    _inject(target, rendered)
+        target.unlink()
+        click.echo(f"Removed {target} (was only cove guidance).")
