@@ -15,6 +15,7 @@ node_modules/
 # Build artifacts
 /dist/
 /build/
+cli/build/
 *.egg-info/
 
 # IDE
