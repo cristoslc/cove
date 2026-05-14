@@ -1,5 +1,8 @@
 """Click entrypoint and group registration."""
 
+import os
+import platform
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -81,6 +84,72 @@ def up(no_provision, no_sudo):
 
 app.add_command(creds)
 app.add_command(project)
+
+
+@app.command()
+@click.option("--volumes", is_flag=True, help="Also remove named volumes (destroys container data).")
+def down(volumes):
+    """Stop cove containers."""
+    compose_dir = _find_compose_dir()
+    cmd = [
+        "docker", "compose",
+        "--project-directory", str(compose_dir),
+        "down",
+    ]
+    if volumes:
+        cmd.append("--volumes")
+
+    click.echo("Stopping containers...")
+    subprocess.run(cmd, check=True)
+    click.echo("Cove is down.")
+
+
+@app.command()
+@click.option("--yes", is_flag=True, help="Confirm destruction of all cove data.")
+def uninstall(yes):
+    """Destroy all cove containers, data, and credentials."""
+    if not yes:
+        raise click.ClickException(
+            "This will destroy all cove containers, data, and credentials.\n"
+            "Run again with --yes to confirm."
+        )
+
+    compose_dir = _find_compose_dir()
+
+    click.echo("Destroying containers and volumes...")
+    subprocess.run(
+        [
+            "docker", "compose",
+            "--project-directory", str(compose_dir),
+            "down", "--volumes", "--remove-orphans",
+        ],
+        check=True,
+    )
+
+    home = Path.home()
+    data_dir = home / "Documents" / "cove-data"
+    if data_dir.exists():
+        click.echo(f"Removing {data_dir}...")
+        shutil.rmtree(str(data_dir))
+
+    cache_dir = Path(os.environ.get("XDG_CACHE_HOME", home / ".cache")) / "cove"
+    if cache_dir.exists():
+        click.echo(f"Removing {cache_dir}...")
+        shutil.rmtree(str(cache_dir))
+
+    if platform.system() == "Darwin":
+        subprocess.run(
+            ["security", "delete-generic-password", "-s", "cove/vault/root-token"],
+            capture_output=True,
+        )
+        for i in range(1, 6):
+            subprocess.run(
+                ["security", "delete-generic-password", "-s", f"cove/vault/unseal-{i}"],
+                capture_output=True,
+            )
+
+    click.echo("Cove uninstalled.")
+    click.echo("To remove the CLI: uv tool uninstall cove-cli")
 
 
 @app.command()

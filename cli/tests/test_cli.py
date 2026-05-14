@@ -4,7 +4,9 @@ import yaml
 from pathlib import Path
 from unittest.mock import patch
 
+import click
 import pytest
+from click.testing import CliRunner
 
 def _project_root() -> Path:
     start = Path(__file__).resolve().parent
@@ -262,5 +264,92 @@ class TestCoveUpCommand:
 
             call_4_args = [str(a) for a in all_args[4]]
             assert any("provision_forgejo.yml" in p for p in call_4_args), (
-                "fifth call must be provision_forgejo.yml"
+                 "fifth call must be provision_forgejo.yml"
             )
+
+
+class TestCoveDownCommand:
+    def test_down_runs_docker_compose(self, tmp_path, monkeypatch):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run:
+            mock_run.return_value.returncode = 0
+
+            cove.cli.down.callback(volumes=False)
+
+            assert mock_run.call_count == 1
+            args = [str(a) for a in mock_run.call_args[0][0]]
+            assert args[0] == "docker"
+            assert "down" in args
+
+    def test_down_with_volumes(self, tmp_path, monkeypatch):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run:
+            mock_run.return_value.returncode = 0
+
+            cove.cli.down.callback(volumes=True)
+
+            args = [str(a) for a in mock_run.call_args[0][0]]
+            assert "--volumes" in args, "cove down --volumes must pass --volumes to docker compose"
+
+
+class TestCoveUninstallCommand:
+    def test_uninstall_refuses_without_yes(self, tmp_path, monkeypatch):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["uninstall"])
+            assert result.exit_code != 0, "uninstall without --yes must fail"
+            assert "--yes" in result.output
+
+    def test_uninstall_yes_destroys_everything(self, tmp_path, monkeypatch):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        cove_data = tmp_path / "Documents" / "cove-data"
+        cove_data.mkdir(parents=True)
+        cache_dir = tmp_path / ".cache" / "cove"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "op-cache.json").write_text("{}")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.Path.home", return_value=tmp_path
+        ), patch("subprocess.run") as mock_run, patch(
+            "shutil.rmtree"
+        ) as mock_rmtree:
+            mock_run.return_value.returncode = 0
+
+            cove.cli.uninstall.callback(yes=True)
+
+            compose_down_calls = [
+                c for c in mock_run.call_args_list
+                if "compose" in str(c[0][0][:3])
+            ]
+            assert len(compose_down_calls) >= 1, (
+                "uninstall must run docker compose down --volumes"
+            )
+
+            removed_paths = [str(ca[0][0]) for ca in mock_rmtree.call_args_list]
+            data_removed = any("cove-data" in p for p in removed_paths), (
+                f"expected cove-data removal in {removed_paths}"
+            )
+            assert data_removed, "uninstall must remove cove-data"
+
+    def test_uninstall_no_project_dir_exits_cleanly(self, tmp_path, monkeypatch):
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
+            runner = CliRunner()
+            with patch("cove.cli._find_compose_dir", side_effect=click.ClickException("no project")):
+                result = runner.invoke(cove.cli.app, ["uninstall", "--yes"])
+            assert result.exit_code != 0, "uninstall with no compose dir should fail"

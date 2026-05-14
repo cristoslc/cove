@@ -24,9 +24,10 @@ uv tool install cove
 ```bash
 cove up --no-sudo        # Bring up containers, bootstrap Vault, provision Forgejo
 cove up --no-provision   # Bring up containers only (skip Forgejo setup)
+cove down                # Stop containers, keep data
+cove down --volumes      # Stop containers and remove volumes
+cove uninstall --yes     # Destroy everything: containers, data, keychain, cache
 ```
-
-On first run, `cove up` does a single biometric 1Password prompt (`cove creds batch-pull`), then auto-unseals Vault from OS keychain keys and provisions Forgejo with admin user, SSH key, repo, and manual merge detection.
 
 ## Commands
 
@@ -35,10 +36,14 @@ On first run, `cove up` does a single biometric 1Password prompt (`cove creds ba
 | `cove up` | Full pipeline: batch-pull → bringup → bootstrap Vault → provision Forgejo |
 | `cove up --no-sudo` | Same as above, skips `/etc/hosts` elevation |
 | `cove up --no-provision` | Bring up containers only |
+| `cove down` | Stop containers (data preserved) |
+| `cove down --volumes` | Stop containers and remove volumes |
+| `cove uninstall --yes` | Destroy all cove containers, data, keychain entries, and cache |
 | `cove creds batch-pull` | Pull all 1Password refs in one biometric prompt (cached to disk) |
 | `cove creds vault-get <ref>` | Read a cached op:// reference |
 | `cove creds 1p-bulk-write <spec> --execute` | Seed 1Password items from a YAML spec |
 | `cove project install` | Inject cove service guidance into AGENTS.md |
+| `cove project install -g` | Same, but into global `~/.claude/CLAUDE.md` |
 
 ## Architecture
 
