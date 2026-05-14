@@ -8,6 +8,8 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from cove.project import _inject, _strip, SENTINEL_START, SENTINEL_END
+
 def _project_root() -> Path:
     start = Path(__file__).resolve().parent
     for _ in range(6):
@@ -353,3 +355,93 @@ class TestCoveUninstallCommand:
             with patch("cove.cli._find_compose_dir", side_effect=click.ClickException("no project")):
                 result = runner.invoke(cove.cli.app, ["uninstall", "--yes"])
             assert result.exit_code != 0, "uninstall with no compose dir should fail"
+
+    def test_uninstall_strips_cove_guidance_from_agents_md(self, tmp_path, monkeypatch):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text(
+            "# My Project\n\n"
+            "<!-- cove-guidance start -->\n"
+            "## Cove\n\nsome guidance\n"
+            "<!-- cove-guidance end -->\n"
+        )
+
+        with patch("cove.cli.Path.home", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
+            mock_run.return_value.returncode = 0
+
+            cove.cli.uninstall.callback(yes=True)
+
+        remaining = agents_md.read_text()
+        assert "cove-guidance" not in remaining
+        assert "# My Project" in remaining
+
+    def test_uninstall_removes_agents_md_if_only_guidance(self, tmp_path, monkeypatch):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text(
+            "<!-- cove-guidance start -->\n"
+            "## Cove\n\nsome guidance\n"
+            "<!-- cove-guidance end -->\n"
+        )
+
+        with patch("cove.cli.Path.home", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
+            mock_run.return_value.returncode = 0
+
+            cove.cli.uninstall.callback(yes=True)
+
+        assert not agents_md.exists(), "AGENTS.md with only guidance should be deleted"
+
+
+class TestProjectUninstall:
+    def test_strip_removes_guidance_block(self, tmp_path):
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text(
+            "# My Project\n\n"
+            "<!-- cove-guidance start -->\n"
+            "## Cove\n\nsome guidance\n"
+            "<!-- cove-guidance end -->\n"
+        )
+        _strip(agents_md)
+        remaining = agents_md.read_text()
+        assert "cove-guidance" not in remaining
+        assert "# My Project" in remaining
+
+    def test_strip_deletes_file_if_only_guidance(self, tmp_path):
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text(
+            "<!-- cove-guidance start -->\n"
+            "## Cove\n\nsome guidance\n"
+            "<!-- cove-guidance end -->\n"
+        )
+        _strip(agents_md)
+        assert not agents_md.exists()
+
+    def test_strip_noop_if_no_guidance(self, tmp_path):
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text("# Just project notes\n")
+        _strip(agents_md)
+        assert agents_md.read_text() == "# Just project notes\n"
+
+    def test_strip_noop_if_file_missing(self, tmp_path):
+        agents_md = tmp_path / "AGENTS.md"
+        _strip(agents_md)
+        assert not agents_md.exists()
+
+    def test_inject_then_strip_roundtrip(self, tmp_path):
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text("# My Project\n")
+        rendered = "## Cove\n\nForgejo at localhost\n"
+        _inject(agents_md, rendered)
+        assert SENTINEL_START in agents_md.read_text()
+        _strip(agents_md)
+        assert agents_md.read_text().strip() == "# My Project"
