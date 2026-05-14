@@ -1,58 +1,62 @@
 # Cove
 
-A portable, offline-capable local developer platform running on k3s — a sheltered harbor where code gets built, tested, and deployed before going to sea.
-
-## Vision
-
-Cove gives you a full local dev stack on a single-node k3s cluster. See [docs/vision/](docs/vision/) for the full product vision.
+A local development platform running on Docker Compose — a sheltered harbor where code gets hosted, provisioned, and pushed before going to sea.
 
 ## Services
 
-| Service | Purpose | Notes |
-|---------|---------|-------|
-| **Forgejo** | Self-hosted Git forge with CI | Docker Compose (`compose/docker-compose.yml`) |
-| **HashiCorp Vault** | Secrets management | age-encrypted, auto-unseal |
-| **CI runners** | Sandboxed build execution | Kata Containers (VM-level isolation) |
-| **Local image registry** | Cache images for offline work | `localhost:5000` |
-| **Kaniko** | Daemonless container builds | Builds from source without internet |
+| Service | Purpose | Access |
+|---------|---------|--------|
+| **Forgejo** | Self-hosted Git forge with commit signing | `https://{machine}.taila90e7.ts.net:3000` (Tailscale) or `https://localhost:3000` |
+| **HashiCorp Vault** | Secrets store with Shamir auto-unseal | `http://127.0.0.1:8200` |
 
-All services run inside k3s. Nothing new runs on the host.
+Both run in Docker Compose with `recreate: always` so configuration changes (env vars, volumes) take effect on every `cove up`.
 
 ## Install
 
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/). Install via:
+Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv tool install cove
 ```
 
-Or install via the Ansible role in the [workstation repo](https://github.com/cristoslc/202604-workstation).
-
 ## Quick Start
 
 ```bash
-cove up           # Start the k3s cluster and deploy platform services
-cove down         # Stop the platform
-cove build .      # Build a container image from source
-cove tryup .      # Try out a docker-compose.yml project on k3s
+cove up --no-sudo        # Bring up containers, bootstrap Vault, provision Forgejo
+cove up --no-provision   # Bring up containers only (skip Forgejo setup)
 ```
 
-## Platform Requirements
+On first run, `cove up` does a single biometric 1Password prompt (`cove creds batch-pull`), then auto-unseals Vault from OS keychain keys and provisions Forgejo with admin user, SSH key, repo, and manual merge detection.
 
-| OS | Runtime |
-|---|---|
-| macOS | Lima VM (managed automatically) |
-| Linux | Native k3s |
+## Commands
+
+| Command | Purpose |
+|---------|---------|
+| `cove up` | Full pipeline: batch-pull → bringup → bootstrap Vault → provision Forgejo |
+| `cove up --no-sudo` | Same as above, skips `/etc/hosts` elevation |
+| `cove up --no-provision` | Bring up containers only |
+| `cove creds batch-pull` | Pull all 1Password refs in one biometric prompt (cached to disk) |
+| `cove creds vault-get <ref>` | Read a cached op:// reference |
+| `cove creds 1p-bulk-write <spec> --execute` | Seed 1Password items from a YAML spec |
+| `cove project install` | Inject cove service guidance into AGENTS.md |
 
 ## Architecture
 
-All persistent state lives in `~/Documents/cove/`, so existing backup tools capture it automatically.
+```
+cove up
+  ├─ batch-pull           # One biometric prompt for all 1Password refs
+  ├─ bringup              # docker compose up (Forgejo + Vault)
+  ├─ bootstrap_vault.yml  # Initialize/unseal Vault from OS keychain
+  ├─ provision_vault.yml  # Userpass user + admin policy
+  └─ provision_forgejo.yml # Admin user, SSH key, repo, manual merge
+```
+
+All data lives in `~/Documents/cove-data/`. Tailscale MagicDNS provides HTTPS access from any device on your tailnet.
 
 ## Project Artifacts
 
 | Artifact | Status | Description |
 |----------|--------|-------------|
 | [VISION-001](docs/vision/Proposed/(VISION-001)-Cove-Developer-Platform/(VISION-001)-Cove-Developer-Platform.md) | Active | Cove Developer Platform — full local dev stack vision |
-| [EPIC-001](docs/epic/Proposed/(EPIC-001)-Cove-Platform-Core/(EPIC-001)-Cove-Platform-Core.md) | Proposed | Platform Core — cove Python package, k3s, services |
-| [SPEC-001](docs/spec/Proposed/(SPEC-001)-Cove-Binary-CLI/(SPEC-001)-Cove-Binary-CLI.md) | Proposed | Cove Binary CLI — up, down, build, tryup commands |
-| [ADR-001](docs/adr/Active/(ADR-001)-Python-over-Go-for-Cove-CLI.md) | Active | Decision: Python/uv over Go binary |
+
+(End of file - total 54 lines)
