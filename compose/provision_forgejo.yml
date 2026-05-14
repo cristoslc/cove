@@ -191,6 +191,48 @@
         api_token: "{{ token_out.stdout | trim }}"
       no_log: true
 
+    - name: Generate persistent cove-push token (for git HTTPS pushes)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - --user
+          - git
+          - "{{ forgejo_container_name }}"
+          - forgejo
+          - --config
+          - /data/gitea/conf/app.ini
+          - admin
+          - user
+          - generate-access-token
+          - --username
+          - "{{ admin_username }}"
+          - --token-name
+          - "cove-push"
+          - --scopes
+          - "write:repository,write:issue"
+          - --raw
+      register: push_token_out
+      changed_when: push_token_out.rc == 0
+      failed_when: false
+      no_log: true
+
+    - name: Update git credential store for fjl remote
+      ansible.builtin.command:
+        stdin: |
+          protocol=https
+          host={{ forgejo_domain }}:{{ forgejo_http_port }}
+          username={{ admin_username }}
+          password={{ push_token_out.stdout | trim }}
+      args:
+        argv:
+          - git
+          - credential
+          - approve
+      when: push_token_out.rc == 0
+      changed_when: true
+      no_log: true
+
     - name: Check whether repo exists
       ansible.builtin.uri:
         url: "{{ forgejo_root_url }}api/v1/repos/{{ repo_owner }}/{{ repo_name }}"
