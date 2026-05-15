@@ -163,7 +163,7 @@ def vault_put_op_ref(op_ref: str, force_refresh: bool = False) -> str:
                 return cached
         except RuntimeError:
             pass
-    raise RuntimeError(
-        f"{op_ref} is not cached locally or in Vault.\n"
-        "Run 'cove creds batch-pull' first."
-    )
+    value = _op_read(op_ref)
+    _vault_write(op_ref, value)
+    local_cache.put(op_ref, value)
+    return value
