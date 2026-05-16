@@ -8,7 +8,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from cove.project import _inject, _strip, SENTINEL_START, SENTINEL_END
+from cove.project import _inject, _strip, _write_detail_cove, _remove_detail_cove, SENTINEL_START, SENTINEL_END
 
 def _project_root() -> Path:
     start = Path(__file__).resolve().parent
@@ -445,3 +445,100 @@ class TestProjectUninstall:
         assert SENTINEL_START in agents_md.read_text()
         _strip(agents_md)
         assert agents_md.read_text().strip() == "# My Project"
+
+
+class TestProgressiveDisclosure:
+    def test_write_detail_cove_creates_file_with_content(self, tmp_path):
+        detail = tmp_path / "agents-md-details" / "cove.md"
+        _write_detail_cove(detail, "## Cove\n\nForgejo info here")
+        assert detail.exists()
+        content = detail.read_text()
+        assert "Forgejo info here" in content
+
+    def test_write_detail_cove_no_trailing_blank_line(self, tmp_path):
+        detail = tmp_path / "cove.md"
+        _write_detail_cove(detail, "some content\n")
+        assert detail.read_text() == "some content\n"
+
+    def test_remove_detail_cove_deletes_existing_file(self, tmp_path):
+        detail = tmp_path / "cove.md"
+        detail.write_text("content")
+        _remove_detail_cove(detail)
+        assert not detail.exists()
+
+    def test_remove_detail_cove_noop_when_missing(self, tmp_path):
+        detail = tmp_path / "nonexistent.md"
+        _remove_detail_cove(detail)
+        assert not detail.exists()
+
+    def test_inject_short_guidance_block(self, tmp_path):
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text("# Project\n")
+        short = "\n## Cove\n\nCritical instructions in `.agents/agents-md-details/cove.md`."
+        _inject(agents_md, short)
+        content = agents_md.read_text()
+        assert SENTINEL_START in content
+        assert "`.agents/agents-md-details/cove.md`" in content
+        assert "Forgejo" not in content
+
+    def test_uninstall_strips_short_guidance_block(self, tmp_path):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text(
+            "# My Project\n\n"
+            "<!-- cove-guidance start -->\n"
+            "\n## Cove\n\n"
+            "Critical instructions in `.agents/agents-md-details/cove.md`.\n"
+            "<!-- cove-guidance end -->\n"
+        )
+        detail = tmp_path / ".agents" / "agents-md-details" / "cove.md"
+        detail.parent.mkdir(parents=True)
+        detail.write_text("full guidance content")
+
+        with patch("cove.cli.Path.home", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
+            mock_run.return_value.returncode = 0
+
+            cove.cli.uninstall.callback(yes=True)
+
+        remaining = agents_md.read_text()
+        assert "cove-guidance" not in remaining
+        assert "# My Project" in remaining
+        assert not detail.exists(), "detail cove.md should be removed during uninstall"
+
+    def test_full_roundtrip_progressive_disclosure(self, tmp_path):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text("# Existing Project\n")
+        detail = tmp_path / ".agents" / "agents-md-details" / "cove.md"
+
+        with patch("cove.cli._container_env") as mock_env, patch.object(
+            cove.cli.Path, "cwd", return_value=tmp_path
+        ):
+            mock_env.side_effect = [
+                {"FORGEJO__server__ROOT_URL": "https://example.com:3000/",
+                 "FORGEJO__server__DOMAIN": "example.com",
+                 "FORGEJO__server__SSH_DOMAIN": "example.com",
+                 "FORGEJO__server__SSH_PORT": "2222"},
+                {"VAULT_ADDR": "http://127.0.0.1:8200"},
+            ]
+
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["install"])
+            assert result.exit_code == 0
+
+        assert detail.exists()
+        detail_text = detail.read_text()
+        assert "example.com" in detail_text
+
+        agents_text = agents_md.read_text()
+        assert "`.agents/agents-md-details/cove.md`" in agents_text
+        assert "example.com" not in agents_text
+        assert "# Existing Project" in agents_text
