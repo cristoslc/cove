@@ -1,4 +1,4 @@
-"""Project integration: inject/strip cove guidance in AGENTS.md or CLAUDE.md."""
+"""Project integration: inject/strip cove guidance in AGENTS.md."""
 
 import json
 import os
@@ -44,6 +44,12 @@ def _render_guidance(forgejo: dict, vault: dict) -> str:
     )
 
 
+def _write_detail_cove(detail_path: Path, rendered: str) -> None:
+    detail_path.parent.mkdir(parents=True, exist_ok=True)
+    detail_path.write_text(rendered.strip() + "\n")
+    click.echo(f"Wrote cove details to {detail_path}")
+
+
 def _inject(target: Path, rendered: str) -> None:
     block = f"{SENTINEL_START}\n{rendered.strip()}\n{SENTINEL_END}\n"
     if target.exists():
@@ -77,3 +83,9 @@ def _strip(target: Path) -> None:
     else:
         target.unlink()
         click.echo(f"Removed {target} (was only cove guidance).")
+
+
+def _remove_detail_cove(detail_path: Path) -> None:
+    if detail_path.exists():
+        detail_path.unlink()
+        click.echo(f"Removed {detail_path}")

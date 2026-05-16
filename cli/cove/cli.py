@@ -10,7 +10,7 @@ import click
 
 from cove import __version__
 from cove.creds import creds
-from cove.project import _inject, _strip, _container_env, _render_guidance
+from cove.project import _inject, _strip, _container_env, _render_guidance, _write_detail_cove, _remove_detail_cove
 
 def _find_compose_dir() -> Path:
     cwd = Path.cwd()
@@ -86,7 +86,7 @@ app.add_command(creds)
 
 
 @app.command()
-@click.option("-g", "--global", "global_", is_flag=True, help="Install to ~/.claude/CLAUDE.md")
+@click.option("-g", "--global", "global_", is_flag=True, help="Install to ~/.agents/AGENTS.md")
 def install(global_):
     """Inject cove service guidance into the project or global Claude config."""
     forgejo = _container_env("cove-forgejo")
@@ -96,10 +96,16 @@ def install(global_):
     if global_:
         target = Path.home() / ".agents" / "AGENTS.md"
         target.parent.mkdir(parents=True, exist_ok=True)
+        detail_path = Path.home() / ".agents" / "agents-md-details" / "cove.md"
+        detail_ref = "~/.agents/agents-md-details/cove.md"
     else:
         target = Path.cwd() / "AGENTS.md"
+        detail_path = Path.cwd() / ".agents" / "agents-md-details" / "cove.md"
+        detail_ref = ".agents/agents-md-details/cove.md"
 
-    _inject(target, rendered)
+    _write_detail_cove(detail_path, rendered)
+    short_guidance = f"\n## Cove\n\nCritical instructions in `{detail_ref}`."
+    _inject(target, short_guidance)
 
 
 @app.command()
@@ -166,6 +172,10 @@ def uninstall(yes):
 
     for target in [Path.cwd() / "AGENTS.md", Path.home() / ".agents" / "AGENTS.md"]:
         _strip(target)
+
+    for detail in [Path.cwd() / ".agents" / "agents-md-details" / "cove.md",
+                   Path.home() / ".agents" / "agents-md-details" / "cove.md"]:
+        _remove_detail_cove(detail)
 
     click.echo("Cove uninstalled.")
     click.echo("To remove the CLI: uv tool uninstall cove-cli")

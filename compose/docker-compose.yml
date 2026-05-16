@@ -30,6 +30,7 @@ services:
       FORGEJO__repository.signing__SIGNING_EMAIL: "forgejo@${FORGEJO_DOMAIN:-localhost}"
       FORGEJO__repository.signing__INITIAL_COMMIT: "always"
       FORGEJO__repository.signing__DEFAULT_TRUST_MODEL: "committer"
+      FORGEJO__server__LFS_START_SERVER: "true"
     volumes:
       - ${FORGEJO_DATA_ROOT}/forgejo/gitea:/data/gitea
       - ${FORGEJO_DATA_ROOT}/forgejo/git:/data/git
