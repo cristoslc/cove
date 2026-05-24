@@ -38,6 +38,10 @@ services:
       - ${FORGEJO_DATA_ROOT}/certs:/certs:ro
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     ports:
       - "${FORGEJO_HTTP_BIND:-127.0.0.1}:${FORGEJO_HTTP_PORT:-3000}:3000"
       - "${FORGEJO_SSH_BIND:-127.0.0.1}:${FORGEJO_SSH_PORT:-2222}:22"
@@ -60,6 +64,10 @@ services:
       - ./vault/vault.hcl:/vault/config/vault.hcl:ro
     ports:
       - "${VAULT_BIND:-127.0.0.1}:${VAULT_PORT:-8200}:8200"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
     healthcheck:
       test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
       interval: 10s
