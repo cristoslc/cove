@@ -38,3 +38,7 @@ cli/build/
 .claude/skills/swain-*/
 .agents/skills/swain/
 .agents/skills/swain-*/
+
+# Cove-generated speak docs (created by cove install)
+.agents/agents-md-detail/
+.agents/cove/
