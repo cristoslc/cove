@@ -10,7 +10,11 @@ import click
 
 from cove import __version__
 from cove.creds import creds
-from cove.project import _inject, _strip, _container_env, _render_guidance, _write_detail_cove, _remove_detail_cove
+from cove.project import (
+    _inject, _strip, _container_env, _render_context, _render_guidance,
+    _render_agents_block, _write_detail_cove, _write_project_override,
+    _remove_detail_cove, _remove_project_override,
+)
 
 def _find_compose_dir() -> Path:
     cwd = Path.cwd()
@@ -91,21 +95,26 @@ def install(global_):
     """Inject cove service guidance into the project or global Claude config."""
     forgejo = _container_env("cove-forgejo")
     vault = _container_env("cove-vault")
+    ctx = _render_context(forgejo, vault)
     rendered = _render_guidance(forgejo, vault)
 
     if global_:
         target = Path.home() / ".agents" / "AGENTS.md"
         target.parent.mkdir(parents=True, exist_ok=True)
-        detail_path = Path.home() / ".agents" / "agents-md-details" / "cove.md"
-        detail_ref = "~/.agents/agents-md-details/cove.md"
+        detail_path = Path.home() / ".agents" / "agents-md-detail" / "cove.md"
+        detail_ref = "~/.agents/agents-md-detail/cove.md"
+        override = None
     else:
         target = Path.cwd() / "AGENTS.md"
-        detail_path = Path.cwd() / ".agents" / "agents-md-details" / "cove.md"
-        detail_ref = ".agents/agents-md-details/cove.md"
+        detail_path = Path.cwd() / ".agents" / "agents-md-detail" / "cove.md"
+        detail_ref = ".agents/agents-md-detail/cove.md"
+        override = Path.cwd()
 
     _write_detail_cove(detail_path, rendered)
-    short_guidance = f"\n## Cove\n\nCritical instructions in `{detail_ref}`."
-    _inject(target, short_guidance)
+    if override:
+        _write_project_override(override, ctx)
+    agents_block = _render_agents_block(ctx, detail_ref)
+    _inject(target, agents_block)
 
 
 @app.command()
@@ -173,9 +182,11 @@ def uninstall(yes):
     for target in [Path.cwd() / "AGENTS.md", Path.home() / ".agents" / "AGENTS.md"]:
         _strip(target)
 
-    for detail in [Path.cwd() / ".agents" / "agents-md-details" / "cove.md",
-                   Path.home() / ".agents" / "agents-md-details" / "cove.md"]:
+    for detail in [Path.cwd() / ".agents" / "agents-md-detail" / "cove.md",
+                   Path.home() / ".agents" / "agents-md-detail" / "cove.md"]:
         _remove_detail_cove(detail)
+
+    _remove_project_override(Path.cwd())
 
     click.echo("Cove uninstalled.")
     click.echo("To remove the CLI: uv tool uninstall cove-cli")

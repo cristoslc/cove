@@ -84,3 +84,30 @@ When swain skills overlap with other installed skills or built-in agent capabili
 
 <!-- end swain governance -->
 
+<!-- cove-guidance start -->
+## Cove
+
+This machine runs Cove — a local developer platform (forge, vault, CI, registry, pages).
+
+**Full reference:** `.agents/agents-md-detail/cove.md`
+**Project override:** `.agents/cove/agents-md/cove.md` (if it exists, it augments/overrides the global doc for that repo)
+
+### Quick facts
+
+- **Forgejo** at `https://mbpbk-202602.taila90e7.ts.net:3000/`. CLI: `fjl` (via `zsh -i -c`). SSH: `git@forgejo-localhost:cristos/repo.git` (port 2222).
+- **Vault** at `http://127.0.0.1:8200`. Use `cove creds vault-get` / `cove creds vault-put` — never hardcode secrets.
+- **Constraints:** No cloud dependencies. No internet during builds/CI. All git remotes go to Forgejo.
+
+### Triggers
+
+Load and follow the spoke doc when the conversation involves:
+
+| Trigger | Examples |
+|---------|----------|
+| Credential management | `vault://`, `op://`, `cove creds`, `cove install`, `cove up/down` |
+| Forgejo / git remotes | `forgejo`, `forge`, `fjl`, `fj`, `git remote`, pushing/pulling non-GitHub |
+| Pages / hosting | `cove pages`, static hosting, site deployment |
+| Services / infra | `cove`, `woodpecker`, `registry`, `down`, `uninstall`, service health |
+
+When triggered, consult `.agents/agents-md-detail/cove.md` first. If a project-level `.agents/cove/agents-md/cove.md` exists, consult it second — it may override or extend.
+<!-- cove-guidance end -->
