@@ -8,7 +8,12 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from cove.project import _inject, _strip, _write_detail_cove, _remove_detail_cove, SENTINEL_START, SENTINEL_END
+from cove.project import (
+    _inject, _strip, _render_agents_block, _render_context,
+    _write_detail_cove, _write_project_override,
+    _remove_detail_cove, _remove_project_override,
+    SENTINEL_START, SENTINEL_END,
+)
 
 def _project_root() -> Path:
     start = Path(__file__).resolve().parent
@@ -449,7 +454,7 @@ class TestProjectUninstall:
 
 class TestProgressiveDisclosure:
     def test_write_detail_cove_creates_file_with_content(self, tmp_path):
-        detail = tmp_path / "agents-md-details" / "cove.md"
+        detail = tmp_path / "agents-md-detail" / "cove.md"
         _write_detail_cove(detail, "## Cove\n\nForgejo info here")
         assert detail.exists()
         content = detail.read_text()
@@ -471,17 +476,30 @@ class TestProgressiveDisclosure:
         _remove_detail_cove(detail)
         assert not detail.exists()
 
-    def test_inject_short_guidance_block(self, tmp_path):
+    def test_inject_agents_block_contains_quick_facts_and_triggers(self, tmp_path):
         agents_md = tmp_path / "AGENTS.md"
         agents_md.write_text("# Project\n")
-        short = "\n## Cove\n\nCritical instructions in `.agents/agents-md-details/cove.md`."
-        _inject(agents_md, short)
+        ctx = {
+            "forgejo_root_url": "https://example.com:3000/",
+            "vault_addr": "http://127.0.0.1:8200",
+            "admin_username": "testuser",
+            "forgejo_domain": "example.com",
+            "forgejo_ssh_domain": "example.com",
+            "forgejo_ssh_port": "2222",
+        }
+        block = _render_agents_block(ctx, ".agents/agents-md-detail/cove.md")
+        _inject(agents_md, block)
         content = agents_md.read_text()
         assert SENTINEL_START in content
-        assert "`.agents/agents-md-details/cove.md`" in content
-        assert "Forgejo" not in content
+        assert "Quick facts" in content
+        assert "example.com" in content
+        assert "Triggers" in content
+        assert "vault://" in content
+        assert "forgejo" in content
+        assert "agents-md-detail/cove.md" in content
+        assert "Project override" in content
 
-    def test_uninstall_strips_short_guidance_block(self, tmp_path):
+    def test_uninstall_strips_guidance_block(self, tmp_path):
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -490,13 +508,16 @@ class TestProgressiveDisclosure:
         agents_md.write_text(
             "# My Project\n\n"
             "<!-- cove-guidance start -->\n"
-            "\n## Cove\n\n"
-            "Critical instructions in `.agents/agents-md-details/cove.md`.\n"
+            "## Cove\n\n"
+            "Full reference in `.agents/agents-md-detail/cove.md`.\n"
             "<!-- cove-guidance end -->\n"
         )
-        detail = tmp_path / ".agents" / "agents-md-details" / "cove.md"
+        detail = tmp_path / ".agents" / "agents-md-detail" / "cove.md"
         detail.parent.mkdir(parents=True)
         detail.write_text("full guidance content")
+        override = tmp_path / ".agents" / "cove" / "agents-md" / "cove.md"
+        override.parent.mkdir(parents=True)
+        override.write_text("project-level override")
 
         with patch("cove.cli.Path.home", return_value=tmp_path), patch(
             "subprocess.run"
@@ -509,6 +530,7 @@ class TestProgressiveDisclosure:
         assert "cove-guidance" not in remaining
         assert "# My Project" in remaining
         assert not detail.exists(), "detail cove.md should be removed during uninstall"
+        assert not override.exists(), "project override should be removed during uninstall"
 
     def test_full_roundtrip_progressive_disclosure(self, tmp_path):
         compose_sub = tmp_path / "compose"
@@ -517,7 +539,8 @@ class TestProgressiveDisclosure:
 
         agents_md = tmp_path / "AGENTS.md"
         agents_md.write_text("# Existing Project\n")
-        detail = tmp_path / ".agents" / "agents-md-details" / "cove.md"
+        detail = tmp_path / ".agents" / "agents-md-detail" / "cove.md"
+        override = tmp_path / ".agents" / "cove" / "agents-md" / "cove.md"
 
         with patch("cove.cli._container_env") as mock_env, patch.object(
             cove.cli.Path, "cwd", return_value=tmp_path
@@ -538,7 +561,16 @@ class TestProgressiveDisclosure:
         detail_text = detail.read_text()
         assert "example.com" in detail_text
 
+        assert override.exists()
+        override_text = override.read_text()
+        assert "example.com" in override_text
+        assert "project-level override" in override_text
+
         agents_text = agents_md.read_text()
-        assert "`.agents/agents-md-details/cove.md`" in agents_text
-        assert "example.com" not in agents_text
+        assert "agents-md-detail/cove.md" in agents_text
+        assert "Quick facts" in agents_text
+        assert "Triggers" in agents_text
+        assert "vault://" in agents_text
+        assert "forgejo" in agents_text
+        assert "Project override" in agents_text
         assert "# Existing Project" in agents_text
