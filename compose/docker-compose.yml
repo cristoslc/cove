@@ -6,6 +6,7 @@ services:
     container_name: ${FORGEJO_CONTAINER_NAME:-cove-forgejo}
     restart: unless-stopped
     environment:
+      TZ: "${FORGEJO_TZ:-America/New_York}"
       USER_UID: "${FORGEJO_UID:-501}"
       USER_GID: "${FORGEJO_GID:-20}"
       FORGEJO__server__DOMAIN: ${FORGEJO_DOMAIN:-localhost}
@@ -36,8 +37,6 @@ services:
       - ${FORGEJO_DATA_ROOT}/forgejo/git:/data/git
       - ${FORGEJO_DATA_ROOT}/forgejo/ssh:/etc/ssh
       - ${FORGEJO_DATA_ROOT}/certs:/certs:ro
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
     deploy:
       resources:
         limits:
