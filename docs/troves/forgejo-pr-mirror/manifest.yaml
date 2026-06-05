@@ -1,0 +1,75 @@
+id: forgejo-pr-mirror
+created: 2026-06-04
+refreshed: 2026-06-04
+tags:
+  - forgejo
+  - github
+  - pr-mirror
+  - mirroring
+  - git-migration
+  - pull-requests
+default-ttl:
+  web-page: 90d
+  documentation-site: 90d
+  repository: 180d
+referenced-by: []
+sources:
+  - id: forgesync
+    url: https://codeberg.org/helvetica/forgesync
+    type: repository
+    fetched: 2026-06-04
+    hash: 9b63a57b07513576015ea431fbeb6d5a90406219d33f7a7b9b0d25a696dc046a
+    title: Forgesync — mirror Forgejo repos to GitHub with PR/issue metadata
+    highlights:
+      - Forgejo → GitHub one-way sync with --feature pull-requests flag
+      - Supports issues, PR metadata, repo descriptions, topics
+      - Nix/NixOS module, container, CLI deployment
+      - Only syncs Forgejo → GitHub direction
+  - id: gitea-mirror
+    url: https://github.com/RayLabsHQ/gitea-mirror
+    type: repository
+    fetched: 2026-06-04
+    hash: a0359205d0b1a9fe140f12fda4025d2162519d2a69cf310ffe0737cf31d59bc1
+    title: Gitea Mirror — auto-sync GitHub repos to Forgejo with metadata
+    highlights:
+      - GitHub → Forgejo one-way sync with web UI
+      - PRs mirrored as enriched issues (not native PR objects) due to API limits
+      - Docker Compose, Nix, Proxmox deployment
+      - Also syncs issues, labels, milestones, wiki, releases
+  - id: forgejo-mirror-docs
+    url: https://forgejo.org/docs/latest/user/repo-mirror/
+    type: documentation-site
+    fetched: 2026-06-04
+    hash: e2258cf1e9c9277f730afa84f0cfc6337d2f038993892e48fc67ba5c861c11bb
+    title: Official Forgejo repository mirror docs
+    highlights:
+      - Built-in push/pull mirrors are Git-level only (branches, tags, commits)
+      - No issue/PR/label/milestone metadata sync
+      - Push mirror force-pushes to remote
+      - SSH authentication supported for push mirrors
+  - id: chameth-migration-blog
+    url: https://chameth.com/migrating-from-github-to-forgejo/
+    type: web-page
+    fetched: 2026-06-04
+    hash: fa888230bed95fc2291fc39bad5d704f2269e2dd1a629f23487c24db41eca43f
+    title: Real-world Forgejo migration with custom PR import tool
+    highlights:
+      - Custom private tool imports GitHub PRs into Forgejo as real PRs
+      - Workflow: GitHub PR → custom import → Forgejo review/CI → merge → mirror back
+      - Push mirror code to GitHub, GitHub auto-marks PR as merged
+      - Tool is private, not published
+  - id: forgejo-issue-7556
+    url: https://codeberg.org/forgejo/forgejo/issues/7556
+    type: web-page
+    fetched: 2026-06-04
+    hash: 542943978c1e858afa49034a5ef42c27324a14e79f4fc0d46e0b8a79be877a9e
+    title: Forgejo issue — full two-way mirroring feature request
+    highlights:
+      - Feature request for full bidirectional mirror (repo + issues + PRs + contributors)
+      - Not on roadmap, no assignee, no milestone
+      - Related issue #5367 (issue sync on mirrors) closed as "not on roadmap"
+history:
+  - event: created
+    date: 2026-06-04
+    commit: "--"
+    sources: 5
