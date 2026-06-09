@@ -40,7 +40,7 @@ The CLI is installed via `uv tool install` which produces a standalone binary sh
 **`cove up`** — Start the k3s cluster and deploy platform services.
 
 - If no cluster exists, provision one (Lima on macOS, native k3s on Linux).
-- Deploy platform services: Forgejo, Vault, CI runners, local image registry.
+- Deploy platform services: Forgejo (including OCI registry), Vault, CI runners.
 - Wait for all services to be healthy before returning.
 - Exit code 0 on success, non-zero on failure.
 
@@ -55,7 +55,7 @@ The CLI is installed via `uv tool install` which produces a standalone binary sh
 - Path defaults to `.` (current directory).
 - Reads `Dockerfile` from the path (must exist).
 - Builds image using Kaniko in the cluster (daemonless).
-- Pushes image to local registry (`localhost:5000/<name>:<tag>`).
+- Pushes image to Forgejo's OCI registry (`forgejo.cove.local/v2/<owner>/<name>:<tag>`).
 - Returns image reference on success.
 - Exit code 0 on success, non-zero on failure.
 
@@ -79,9 +79,9 @@ All persistent state lives in `~/Documents/cove/`. This directory is never creat
 ## Acceptance Criteria
 
 1. `cove --help` displays usage information for all subcommands.
-2. `cove up` on a fresh machine provisions a Lima VM (macOS) or starts k3s (Linux), deploys Forgejo, Vault, CI, and local registry, and reports healthy within 10 minutes.
+2. `cove up` on a fresh machine provisions a Lima VM (macOS) or starts k3s (Linux), deploys Forgejo (including OCI registry), Vault, and CI, and reports healthy within 10 minutes.
 3. `cove down` cleanly stops all services and optionally destroys the cluster.
-4. `cove build .` builds a Dockerfile in the current directory via Kaniko and pushes to the local registry.
+4. `cove build .` builds a Dockerfile in the current directory via Kaniko and pushes to Forgejo's OCI registry.
 5. `cove tryup .` deploys a docker-compose.yml to the local cluster and streams pod logs.
 6. All commands work fully offline after initial `cove up` has completed successfully.
 7. Package installs via `uv tool install cove` with no host dependencies beyond uv.
@@ -93,7 +93,7 @@ All persistent state lives in `~/Documents/cove/`. This directory is never creat
 | Help displays | `cove --help` shows subcommands | Pass |
 | Up provisions cluster | Fresh install: `cove up` creates Lima/k3s + deploys services | Pass |
 | Down stops cleanly | `cove down` exits 0, services stopped | Pass |
-| Build via Kaniko | `cove build .` produces image in local registry | Pass |
+| Build via Kaniko | `cove build .` produces image in Forgejo registry | Pass |
 | Tryup deploys compose | `cove tryup .` deploys and streams logs | Pass |
 | Offline works | `cove up` then disconnect network; build and tryup still work | Pass |
 | uv tool install | `uv tool install cove` produces working `cove` binary | Pass |

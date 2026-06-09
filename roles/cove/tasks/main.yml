@@ -9,7 +9,6 @@
     - "{{ cove_data_dir }}/forgejo/data"
     - "{{ cove_data_dir }}/vault/data"
     - "{{ cove_data_dir }}/vault/secrets"
-    - "{{ cove_data_dir }}/registry/data"
     - "{{ cove_data_dir }}/backups/auto-dumps"
 
 - name: Install cove CLI
