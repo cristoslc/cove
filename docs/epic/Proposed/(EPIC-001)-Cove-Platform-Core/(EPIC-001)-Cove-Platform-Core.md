@@ -36,7 +36,7 @@ A developer can check out any project, run `cove up`, and have a working local p
 - Lima VM management (macOS)
 - k3s single-node cluster provisioning
 - Platform services: Forgejo (Git), Vault (secrets), CI runners (Kata Containers)
-- Local image registry (Harbor-like via Docker Registry)
+- Local image registry (Forgejo built-in OCI registry)
 - Kaniko integration for daemonless container builds
 
 **Out of scope:**

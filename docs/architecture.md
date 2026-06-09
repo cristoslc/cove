@@ -104,9 +104,9 @@ Stores build outputs. Owns container images and their lifecycle — pull, cache,
 | Aspect | Detail |
 |--------|--------|
 | Language | image, tag, layer, pull, push, cache |
-| Storage | Docker Registry (on-disk, `~/Documents/cove-data/registry/`) |
-| Entry point | `registry.cove.local` |
-| Implementation | Docker Registry Deployment (future) |
+| Storage | Forgejo data directory (`~/Documents/cove-data/forgejo/`) |
+| Entry point | `forgejo.cove.local/v2/` |
+| Implementation | Forgejo built-in OCI registry |
 
 ### Pages Context
 
@@ -178,7 +178,7 @@ Forgejo's built-in runner dispatches CI jobs to Docker containers on the same ne
 
 ### Container Registry (future)
 
-A local Docker Registry deployment caching pulled images and Kaniko build outputs, configured as a containerd mirror for fully offline operation.
+The Registry context is implemented by Forgejo's built-in OCI-compatible container registry at the `/v2/` path. Woodpecker pipelines push images using `GITHUB_TOKEN` scoped to the project. Remote deploy targets authenticate with Forgejo PATs. A standalone `registry:2` container is not needed within Cove's scope — consumer projects (e.g., Homelab) deploy their own registries if required.
 
 ## DNS Strategy
 
@@ -300,10 +300,9 @@ Host (macOS/Linux)
 ├── Lima VM (macOS only)
 │   └── k3s single-node cluster
 │       ├── namespace: cove
-│       │   ├── forgejo (StatefulSet)
+│       │   ├── forgejo (StatefulSet)          # Git + CI + OCI registry
 │       │   ├── vault (StatefulSet + init-container unseal)
 │       │   ├── runner (Deployment, Kata RuntimeClass)
-│       │   ├── registry (Deployment)
 │       │   └── traefik (Ingress Controller)
 │       └── namespace: cove-draft-* (ephemeral)
 └── ~/Documents/cove/ ← hostPath mounts

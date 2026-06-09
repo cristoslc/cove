@@ -9,7 +9,7 @@ state: draft
 
 ## Purpose
 
-Cove is a portable, offline-capable local developer platform running on k3s — a sheltered harbor where code gets built, tested, and deployed before going to sea. It provides Forgejo, Vault, CI runners, a local image registry, and tools for building source. All services run inside containers or VMs. Nothing new runs on the host.
+Cove is a portable, offline-capable local developer platform running on k3s — a sheltered harbor where code gets built, tested, and deployed before going to sea. It provides Forgejo, Vault, CI runners, Forgejo's built-in OCI registry, and tools for building source. All services run inside containers or VMs. Nothing new runs on the host.
 
 It replaces the `infrastructure/local-pod/` Docker Compose stack in the Homelab repo. Cove is a **local developer platform**, not shared infrastructure. It must work on any machine with no external dependencies, and must back up all data to `~/Documents/` for automated backup capture.
 
@@ -35,10 +35,9 @@ Host (macOS/Linux/SteamOS)
 │   │ On Linux: native k3s on host
 │   │
 │   └── namespace: cove
-│       ├── forgejo (StatefulSet)          # Git + CI
+│       ├── forgejo (StatefulSet)          # Git + CI + OCI registry
 │       ├── vault (StatefulSet)            # Secrets cache
 │       ├── runner (Deployment)            # CI runners (sandboxed)
-│       ├── registry (Deployment)          # Image cache (offline)
 │       ├── traefik (Ingress)             # HTTP only; SSH blocked
 │       └── kaniko (Job templates)        # Build source offline
 │
@@ -52,7 +51,7 @@ Host (macOS/Linux/SteamOS)
 | Principle | Rule |
 |-----------|------|
 | **No host services** | All network-listening services run in k3s. Host only provides filesystem and resolver config. |
-| **Fully offline** | All images pre-cached in local registry. Builder images cached. No external pulls during normal use. |
+| **Fully offline** | All images stored in Forgejo's OCI registry. Builder images cached. No external pulls during normal use. |
 | **Data in Documents** | All persistent state is on host filesystem under `~/Documents/` via `hostPath` or bind mounts. Backed up by existing tools (Syncthing, Time Machine, etc.). |
 | **Untrusted CI** | CI runners use Kata Containers (VM per pod) for isolation from the host kernel. |
 | **Cloud patterns** | CI runners, NetworkPolicy, StatefulSets, sidecars, init containers. All standard k8s. |
@@ -78,28 +77,20 @@ Host (macOS/Linux/SteamOS)
 - Forgejo runner agents as a `Deployment` with `replicas: 1` default
 - **Uses Kata Containers RuntimeClass** (`katacontainers.io/kata-runtime`). Each runner pod gets its own lightweight VM.
 - Mounts `~/Documents/projects/` as `hostPath` for access to project source during builds
-- `NetworkPolicy`: egress allowed only to Forgejo, Vault, and registry. No general internet access.
+- `NetworkPolicy`: egress allowed only to Forgejo and Vault. No general internet access.
 - Scale via `kubectl scale` for parallel CI
-
-### Registry (Deployment + hostPath)
-
-- Stores pulled images and Kaniko build outputs
-- `hostPath` at `~/Documents/cove/registry/`
-- Used by Kaniko to push build outputs
-- Used by k3s to pull images when offline (configured as `mirror` in containerd)
 
 ### Traefik (Ingress Controller)
 
 - Only handles HTTP/HTTPS
 - No TCP route for SSH (enforces the "HTTP on Tailscale, SSH blocked" policy)
 - Forgejo web UI: `https://git.cove.local`
-- Registry UI: `https://registry.cove.local`
 
 ### Kaniko (Job Templates)
 
 - Builds from source without a Docker daemon
 - Job mounts `~/Documents/projects/<project>` as `hostPath`
-- Pushes output to `registry.cove.local`
+- Pushes output to Forgejo's OCI registry (`git.cove.local/v2/` with GITHUB_TOKEN auth)
 - Triggered via cove CLI: `cove build <project-path>`
 
 ## VM Layer (macOS Only)
@@ -134,7 +125,7 @@ The VM is created by the `shared/roles/cove/tasks/darwin.yml` task file. It uses
 
 ### Kata Containers in the VM
 
-Kata Containers 3.x requires a Linux kernel with KVM. The Lima VM provides this. The cove role installs Kata alongside k3s and registers the `kata` RuntimeClass. Only runner pods use this RuntimeClass. Platform pods (Forgejo, Vault, registry, Traefik) use the default `runc` runtime for performance.
+Kata Containers 3.x requires a Linux kernel with KVM. The Lima VM provides this. The cove role installs Kata alongside k3s and registers the `kata` RuntimeClass. Only runner pods use this RuntimeClass. Platform pods (Forgejo, Vault, Traefik) use the default `runc` runtime for performance.
 
 ## DNS Strategy
 
@@ -165,8 +156,6 @@ All state lives under `~/Documents/cove/`:
 │   └── secrets/
 │       ├── unseal-keys.age      # Age-encrypted unseal shards
 │       └── root-token.age       # Age-encrypted root token
-├── registry/
-│   └── data/                     # Cached Docker images
 └── backups/
     └── auto-dumps/              # Periodic Vault snapshots, Forgejo dumps
 ```
@@ -266,7 +255,6 @@ Standard containers share the host kernel. A kernel exploit in a CI job (running
 | Forgejo | runc | Trusted code. Performance matters. |
 | Vault | runc | Trusted code. No user input. |
 | Traefik | runc | Trusted code. Edge proxy. |
-| Registry | runc | Trusted code. Image cache. |
 | **Runner** | **kata** | **Untrusted code. LLM output. Needs kernel isolation.** |
 | Kaniko Job | kata | Builds arbitrary source. Same threat model as runner. |
 | Tryout pods | kata | Unknown code from the internet. |
@@ -285,9 +273,8 @@ Standard containers share the host kernel. A kernel exploit in a CI job (running
 | Forgejo HTTP | Traefik | Yes | Yes | Via HTTPS on tailnet domain |
 | Forgejo SSH | None | No | No | Only cluster-internal if needed |
 | Vault | None | No | No | `kubectl port-forward` or NodePort on loopback only |
-| Registry | Traefik (optional) | Yes | Yes | For pulling images from other machines |
 | Tryouts | Traefik | Yes | Yes | Per-namespace ingress |
-| Runner egress | — | No | No | NetworkPolicy: only to Forgejo, Vault, registry |
+| Runner egress | — | No | No | NetworkPolicy: only to Forgejo, Vault |
 
 ## Gap Analysis: Current (local-pod) vs Target (cove)
 
@@ -316,7 +303,7 @@ Standard containers share the host kernel. A kernel exploit in a CI job (running
 | **Forgejo StatefulSet** | Migrate from Compose | Convert `compose/docker-compose.yml` to k8s StatefulSet. Add `hostPath` for data. Forgejo v15 already migrated from Homelab local-pod into cove compose. |
 | **Vault StatefulSet** | Migrate from Compose | Convert to StatefulSet. Add init container for unseal. Add auto-snapshot CronJob. |
 | **Runner Deployment (Kata)** | Build new | No equivalent. Kata RuntimeClass + restricted NetworkPolicy. |
-| **Registry Deployment** | Build new | No equivalent. Needed for offline image caching. |
+| **Registry Deployment** | N/A | Superseded by Forgejo's built-in OCI registry — no standalone registry needed. |
 | **Traefik Ingress** | Build new | No equivalent. Replaces Tailscale serve for HTTP routing. NetworkPolicy blocks SSH. |
 | **Kaniko Job template** | Build new | No equivalent. Enables offline source builds. |
 | **CoreDNS custom config** | Build new | Add `.cove.local` zone to k3s CoreDNS. |
@@ -340,12 +327,12 @@ Standard containers share the host kernel. A kernel exploit in a CI job (running
 | Gap | Risk | Mitigation |
 |---|---|---|
 | **Kata overhead** | ~128MB memory and ~1s cold start per CI job. | Acceptable for untrusted code isolation. Only runners use Kata; platform services use runc. |
-| **Lima VM disk space** | VM disk grows with images and registry cache. | Start with 60GiB. Expand via Lima disk resize. Data in `~/Documents/` (outside VM). |
-| **Offline image caching** | First run needs internet to pull base images. | Pre-pull script during setup. Registry caches everything. Builder images (kaniko, distroless, Kata guest kernel) pre-cached. |
+| **Lima VM disk space** | VM disk grows with images and Forgejo registry data. | Start with 60GiB. Expand via Lima disk resize. Data in `~/Documents/` (outside VM). |
+| **Offline image caching** | First run needs internet to pull base images. | Pre-pull script during setup. Forgejo registry stores everything. Builder images (kaniko, distroless, Kata guest kernel) pre-cached in Forgejo. |
 | **Compose-to-k8s conversion** | May not handle all Compose features. | Document limitations. Use `kompose` as base, extend for common patterns. |
 | **Vault unseal on restart** | k3s node reboot seals Vault. | Init container reads unseal keys from `~/Documents/` (age-encrypted). Auto-unseal on pod restart. |
-| **Runner image size and caching** | Runner needs git, languages, tools. Custom image. | Build runner image once, push to local registry, cache forever. |
-| **Kata guest kernel images** | Kata needs guest kernel + initrd images. | Pre-pull during setup. Store in local registry or VM disk. |
+| **Runner image size and caching** | Runner needs git, languages, tools. Custom image. | Build runner image once, push to Forgejo registry, cache forever. |
+| **Kata guest kernel images** | Kata needs guest kernel + initrd images. | Pre-pull during setup. Store in Forgejo registry or VM disk. |
 
 ## Decision: Name
 

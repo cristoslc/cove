@@ -33,7 +33,7 @@ A piece of information a pipeline or service needs that must not live in source 
 
 ### Image
 
-A built container, stored as an OCI artifact in the local registry. Images are what pipelines produce when the build target is a Dockerfile. They are identified by `<name>:<tag>` and serve as the input to container deployments. The registry caches both locally built and externally pulled images, making them available offline.
+A built container, stored as an OCI artifact in Forgejo's container registry. Images are what pipelines produce when the build target is a Dockerfile. They are identified by `<owner>/<name>:<tag>` and pushed to `forgejo.cove.local/v2/`. They serve as the input to container deployments. Forgejo's registry stores both locally built and externally pulled images, making them available to authenticated consumers.
 
 ## Pages Context
 
