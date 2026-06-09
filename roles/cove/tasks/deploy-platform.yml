@@ -8,6 +8,5 @@
     - forgejo-statefulset.yml.j2
     - vault-statefulset.yml.j2
     - runner-deployment.yml.j2
-    - registry-deployment.yml.j2
     - traefik-values.yml.j2
     - network-policies.yml.j2
