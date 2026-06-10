@@ -41,8 +41,8 @@ A TUI at `cove status` is the sweet spot for a solo dev: zero persistent UI, `co
 | Docker daemon not reachable | Cannot self-heal | Critical notification |
 | Container repeatedly crash-looping | Stop restarting, surface logs | Escalated notification |
 
-## Not Now, But Tracked
+## Priority: Worth Building Soon
 
-This is a quality-of-life improvement. The pod is 4 services, all stable, run infrequently. A health daemon adds value when Cove grows (CI runners, Kaniko, Pages) or when it runs continuously as a dev server rather than on-demand.
+Cove runs constantly. The pod is 4 stable services, but "stable" doesn't mean "never crashes" — Docker Desktop updates, macOS restarts, Tailscale hiccups, and OOM kills all take down individual containers. Currently the only recovery path is noticing something broke and running `cove down && cove up` yourself. A health daemon closes that gap.
 
-If/when implemented: `cli/cove/health.py` with a lightweight async loop (httpx + docker SDK), no heavy dependencies.
+When implemented: `cli/cove/health.py` with a lightweight async loop (httpx + docker SDK), no heavy dependencies.
