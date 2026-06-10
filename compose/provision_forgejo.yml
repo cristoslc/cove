@@ -21,7 +21,7 @@
             cd {{ playbook_dir }} && ansible-playbook -i inventory.yml bootstrap_vault.yml
       when: vault_health.json.sealed | default(true)
 
-    - name: Detect Tailscale and override Forgejo URLs
+    - name: Detect Tailscale and set Forgejo URLs
       block:
         - name: Check if tailscale is up
           ansible.builtin.command: tailscale status --json
@@ -35,11 +35,19 @@
             ts_dns_name_prov: "{{ (ts_status_prov.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
           when: ts_status_prov.rc == 0
 
-        - name: Use tailscale DNS name for Forgejo URLs
-          ansible.builtin.set_fact:
-            forgejo_domain: "{{ ts_dns_name_prov }}"
-            forgejo_root_url: "https://{{ ts_dns_name_prov }}:{{ forgejo_http_port }}/"
-            forgejo_ssh_domain: "{{ ts_dns_name_prov }}"
+        - name: Add tailscale SSH host key
+          ansible.builtin.shell: |
+            set -euo pipefail
+            PORT="{{ forgejo_ssh_port }}"
+            DNS="{{ ts_dns_name_prov }}"
+            ssh-keygen -R '['"$DNS"']:'"$PORT" >/dev/null 2>&1 || true
+            KEY=$(ssh-keyscan -p "$PORT" -t ed25519 127.0.0.1 2>/dev/null | grep -v '^#' | head -1)
+            if [ -z "$KEY" ]; then
+              echo "ssh-keyscan returned no host key for 127.0.0.1:$PORT" >&2
+              exit 1
+            fi
+            printf '%s\n' "$KEY" | sed 's/^\[127\.0\.0\.1\]:/['"$DNS"']:/' >> {{ ansible_env.HOME }}/.ssh/known_hosts
+          changed_when: true
           when: ts_status_prov.rc == 0
 
     - name: Check 1P forgejo admin item cached
@@ -316,21 +324,6 @@
         printf '%s\n' "$KEY" >> {{ ansible_env.HOME }}/.ssh/known_hosts
         printf '%s\n' "$KEY" | sed 's/^\[127\.0\.0\.1\]:/[localhost]:/' >> {{ ansible_env.HOME }}/.ssh/known_hosts
       changed_when: true
-
-    - name: Add tailscale SSH host key
-      ansible.builtin.shell: |
-        set -euo pipefail
-        PORT="{{ forgejo_ssh_port }}"
-        DNS="{{ ts_dns_name_prov }}"
-        ssh-keygen -R '['"$DNS"']:'"$PORT" >/dev/null 2>&1 || true
-        KEY=$(ssh-keyscan -p "$PORT" -t ed25519 127.0.0.1 2>/dev/null | grep -v '^#' | head -1)
-        if [ -z "$KEY" ]; then
-          echo "ssh-keyscan returned no host key for 127.0.0.1:$PORT" >&2
-          exit 1
-        fi
-        printf '%s\n' "$KEY" | sed 's/^\[127\.0\.0\.1\]:/['"$DNS"']:/' >> {{ ansible_env.HOME }}/.ssh/known_hosts
-      changed_when: true
-      when: ts_status_prov.rc == 0
 
     - name: Print ready summary
       ansible.builtin.debug:
