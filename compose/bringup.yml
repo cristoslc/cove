@@ -76,10 +76,17 @@
         mode: "0644"
       when: ts_dns_name is defined
 
+    - name: Ensure dnsmasq data directory exists
+      ansible.builtin.file:
+        path: "{{ cove_data_root }}/dnsmasq"
+        state: directory
+        mode: "0755"
+      when: ts_dns_name is defined
+
     - name: Render dnsmasq config from template
       ansible.builtin.template:
         src: "{{ dnsmasq_conf_dir }}/cove.conf.j2"
-        dest: "{{ dnsmasq_conf_dir }}/cove.conf"
+        dest: "{{ cove_data_root }}/dnsmasq/cove.conf"
         mode: "0644"
       when: ts_dns_name is defined
 

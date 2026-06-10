@@ -66,6 +66,8 @@ services:
     build: ${DNSMASQ_CONF_DIR:-./dnsmasq}
     container_name: ${DNSMASQ_CONTAINER_NAME:-cove-dnsmasq}
     restart: unless-stopped
+    volumes:
+      - ${COVE_DATA_ROOT}/dnsmasq/cove.conf:/etc/dnsmasq.d/cove.conf:ro
     ports:
       - "${DNSMASQ_BIND:-127.0.0.1}:${DNSMASQ_PORT:-5353}:5353"
     cap_add:

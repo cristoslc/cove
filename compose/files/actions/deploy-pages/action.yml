@@ -40,9 +40,17 @@ runs:
         TMPDIR="$(mktemp -d)"
         trap 'rm -rf "$TMPDIR"' EXIT
 
-        git clone --depth 1 --branch main --quiet \
-          "http://oauth2:${GITHUB_TOKEN}@forgejo:3000/cove/pages-artifacts.git" \
-          "$TMPDIR"
+        for _attempt in 1 2 3; do
+          if git clone --depth 1 --branch main --quiet \
+            "http://oauth2:${GITHUB_TOKEN}@forgejo:3000/cove/pages-artifacts.git" \
+            "$TMPDIR"; then
+            break
+          fi
+          echo "deploy-pages: clone failed (attempt $_attempt/3), retrying..."
+          rm -rf "$TMPDIR"
+          TMPDIR="$(mktemp -d)"
+          trap 'rm -rf "$TMPDIR"' EXIT
+        done
 
         [ -f "$TMPDIR/$REMOTE_PATH" ] || { echo "::error::Artifact not found: ${REMOTE_PATH}"; exit 1; }
 
