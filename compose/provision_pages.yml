@@ -13,20 +13,21 @@
       register: forgejo_check
       ignore_errors: true
 
-    - name: Fallback — check Forgejo directly on port 3000
+    - name: Fallback — check Forgejo directly through nginx
       when: forgejo_check is failed
       block:
         - name: Try Forgejo health endpoint directly
           ansible.builtin.uri:
-            url: "http://127.0.0.1:3000/api/healthz"
+            url: "https://127.0.0.1:{{ nginx_https_port }}/api/healthz"
             status_code: 200
+            validate_certs: false
           register: forgejo_direct_check
           retries: 5
           delay: 3
 
-        - name: Set forgejo_root_url to direct port
+        - name: Set forgejo_root_url to nginx proxy
           ansible.builtin.set_fact:
-            forgejo_root_url: "http://127.0.0.1:3000/"
+            forgejo_root_url: "https://127.0.0.1:{{ nginx_https_port }}/"
 
     - name: Fail if Forgejo unreachable
       ansible.builtin.fail:
@@ -50,7 +51,7 @@
           - --username
           - "{{ admin_username }}"
           - --token-name
-          - "cove-provision"
+          - "cove-provision-pages"
       changed_when: true
       failed_when: false
 
@@ -71,21 +72,23 @@
           - --username
           - "{{ admin_username }}"
           - --token-name
-          - "cove-provision"
+          - "cove-provision-pages"
           - --scopes
-          - "write:user,write:repository,write:admin"
+          - "write:user,write:repository,write:organization,write:admin"
       register: token_out
       changed_when: true
-      no_log: true
+      ignore_errors: true
+      no_log: false
 
     - name: Extract API token
       ansible.builtin.set_fact:
         api_token: >-
-          {{ token_out.stdout
+          {{ (token_out.stdout
              | regex_search('Access token was successfully created:\s*(\S+)', '\1')
              | default([token_out.stdout | regex_search('([a-f0-9]{40})', '\1')])
              | select('string')
-             | first }}
+             | first)
+             | default(api_token, true) }}
       no_log: true
 
     - name: Check for cove organization
@@ -148,6 +151,7 @@
           value: "{{ ts_dns_name }}"
         status_code: [201, 204]
         validate_certs: false
+      ignore_errors: true
 
     - name: Push action code via Forgejo API
       ansible.builtin.uri:
@@ -163,6 +167,7 @@
           branch: main
         status_code: [200, 201]
         validate_certs: false
+        ignore_errors: true
       loop:
         - { repo: "configure-pages", file: "action.yml" }
         - { repo: "upload-pages-artifact", file: "action.yml" }

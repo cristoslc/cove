@@ -33,6 +33,7 @@
 
         - name: Point tailscale FQDN to localhost in hosts file
           become: true
+          ignore_errors: true
           ansible.builtin.lineinfile:
             path: /etc/hosts
             regexp: '^127\.0\.0\.1\s+{{ ts_dns_name | regex_escape }}(\s+.*)?$'
@@ -46,7 +47,7 @@
             if echo "$JSON" | python3 -c "import json,sys; s=json.load(sys.stdin); exit(0 if s.get('Web',{}).get('443') else 1)"; then
               echo "already configured"
             else
-              tailscale serve --bg --https "443" "https://127.0.0.1:443"
+              tailscale serve --bg --https "443" "https://127.0.0.1:8443"
               echo "configured"
             fi
           register: ts_serve_https
