@@ -47,11 +47,16 @@ runs:
         [ -f "$TMPDIR/$REMOTE_PATH" ] || { echo "::error::Artifact not found: ${REMOTE_PATH}"; exit 1; }
 
         PAGES_ROOT="${PAGES_DATA_ROOT:-/data/pages}"
+        # NOTE: The runner container must mount the pages volume read-write at
+        # the same path nginx serves from (e.g. /data/pages/sites). The nginx
+        # container mounts this volume read-only; the runner needs write access
+        # so that deploy-pages can write site files that nginx then serves.
         [ "$REPO" = "pages" ] && SITE_PATH="sites/${OWNER}/.index" || SITE_PATH="sites/${OWNER}/${REPO}"
         DEST="${PAGES_ROOT}/${SITE_PATH}"
 
-        [ "$REPO" = "pages" ] && PAGE_URL="https://${OWNER}.pages.cove.mbpbk-202602.taila90e7.ts.net" || \
-          PAGE_URL="https://${OWNER}.pages.cove.mbpbk-202602.taila90e7.ts.net/${REPO}"
+        COVE_FQDN="${COVE_FQDN:-mbpbk-202602.taila90e7.ts.net}"
+        [ "$REPO" = "pages" ] && PAGE_URL="https://${OWNER}.pages.cove.${COVE_FQDN}" || \
+          PAGE_URL="https://${OWNER}.pages.cove.${COVE_FQDN}/${REPO}"
 
         mkdir -p "$(dirname "$DEST")"
         rm -rf "${DEST}.new" 2>/dev/null || true

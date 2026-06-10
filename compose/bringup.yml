@@ -68,6 +68,21 @@
         - "{{ cove_data_root }}/pages/sites"
         - "{{ cove_data_root }}/nginx"
 
+    # TEMPLATES ----------------------------------------------------------------
+    - name: Render nginx config from template
+      ansible.builtin.template:
+        src: "{{ nginx_conf_dir }}/default.conf.j2"
+        dest: "{{ nginx_conf_dir }}/default.conf"
+        mode: "0644"
+      when: ts_dns_name is defined
+
+    - name: Render dnsmasq config from template
+      ansible.builtin.template:
+        src: "{{ dnsmasq_conf_dir }}/cove.conf.j2"
+        dest: "{{ dnsmasq_conf_dir }}/cove.conf"
+        mode: "0644"
+      when: ts_dns_name is defined
+
     # COMPOSE .env -----------------------------------------------------------
     - name: Render compose .env from host vars
       ansible.builtin.copy:
@@ -97,6 +112,7 @@
           NGINX_HTTP_BIND={{ nginx_http_bind }}
           NGINX_HTTP_PORT={{ nginx_http_port }}
           NGINX_HTTPS_PORT={{ nginx_https_port }}
+          COVE_FQDN={{ ts_dns_name | default('localhost') }}
           DNSMASQ_CONF_DIR={{ dnsmasq_conf_dir }}
           DNSMASQ_CONTAINER_NAME={{ dnsmasq_container_name }}
           DNSMASQ_BIND={{ dnsmasq_bind }}

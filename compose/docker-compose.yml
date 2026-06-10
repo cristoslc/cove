@@ -55,6 +55,9 @@ services:
       - ${NGINX_CONF_DIR:-./nginx}/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ${COVE_DATA_ROOT}/certs:/certs:ro
       - ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites:ro
+      # NOTE: Forgejo Actions runners that use deploy-pages must also mount
+      # ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites (read-write) so the
+      # action can write site files that nginx serves read-only here.
     ports:
       - "${NGINX_HTTP_BIND:-127.0.0.1}:${NGINX_HTTPS_PORT:-443}:443"
       - "${NGINX_HTTP_BIND:-127.0.0.1}:${NGINX_HTTP_PORT:-80}:80"

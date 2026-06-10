@@ -11,11 +11,27 @@
         status_code: [200, 403]
         validate_certs: false
       register: forgejo_check
+      ignore_errors: true
+
+    - name: Fallback — check Forgejo directly on port 3000
+      when: forgejo_check is failed
+      block:
+        - name: Try Forgejo health endpoint directly
+          ansible.builtin.uri:
+            url: "http://127.0.0.1:3000/api/healthz"
+            status_code: 200
+          register: forgejo_direct_check
+          retries: 5
+          delay: 3
+
+        - name: Set forgejo_root_url to direct port
+          ansible.builtin.set_fact:
+            forgejo_root_url: "http://127.0.0.1:3000/"
 
     - name: Fail if Forgejo unreachable
       ansible.builtin.fail:
-        msg: "Forgejo not responding at {{ forgejo_root_url }}. Run bringup.yml and provision_forgejo.yml first."
-      when: forgejo_check.status not in [200, 403]
+        msg: "Forgejo not responding at {{ forgejo_root_url }} or directly on port 3000. Run bringup.yml and provision_forgejo.yml first."
+      when: forgejo_check is failed and forgejo_direct_check is defined and forgejo_direct_check is failed
 
     - name: Delete stale cove-provision token
       ansible.builtin.command:
@@ -118,6 +134,20 @@
         - upload-pages-artifact
         - deploy-pages
         - pages-artifacts
+
+    - name: Set COVE_FQDN org-level variable for Actions
+      ansible.builtin.uri:
+        url: "{{ forgejo_root_url }}api/v1/orgs/cove/actions/variables"
+        method: POST
+        headers:
+          Authorization: "token {{ api_token }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          name: COVE_FQDN
+          value: "{{ ts_dns_name }}"
+        status_code: [201, 204]
+        validate_certs: false
 
     - name: Push action code via Forgejo API
       ansible.builtin.uri:

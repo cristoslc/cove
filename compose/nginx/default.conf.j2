@@ -1,12 +1,12 @@
 server {
     listen 80;
-    server_name git.cove.mbpbk-202602.taila90e7.ts.net ~^.+\.pages\.cove\..+$;
+    server_name git.cove.{{ ts_dns_name }} ~^[a-zA-Z0-9-]+\.pages\.cove\.{{ ts_dns_name | regex_escape }}$;
     return 301 https://$host$request_uri;
 }
 
 server {
     listen 443 ssl;
-    server_name git.cove.mbpbk-202602.taila90e7.ts.net;
+    server_name git.cove.{{ ts_dns_name }};
 
     ssl_certificate     /certs/fullchain.pem;
     ssl_certificate_key /certs/privkey.pem;
@@ -22,7 +22,7 @@ server {
 
 server {
     listen 443 ssl;
-    server_name ~^.+\.pages\.cove\..+$;
+    server_name ~^[a-zA-Z0-9-]+\.pages\.cove\.{{ ts_dns_name | regex_escape }}$;
 
     ssl_certificate     /certs/fullchain.pem;
     ssl_certificate_key /certs/privkey.pem;

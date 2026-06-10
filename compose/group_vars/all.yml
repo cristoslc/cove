@@ -41,6 +41,10 @@ repo_name: "cove"
 
 pod_pull_policy: missing
 
+# --- Tailscale ---
+# Overridden at runtime by bringup.yml when tailscale is active.
+ts_dns_name: "localhost"
+
 # --- Pages ---
 pages_data_root: "{{ cove_data_root }}/pages"
 

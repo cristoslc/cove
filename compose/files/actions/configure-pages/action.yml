@@ -48,7 +48,8 @@ runs:
           SSG="${SSG:-none}"
         fi
 
-        HOST="${OWNER}.pages.cove.mbpbk-202602.taila90e7.ts.net"
+        COVE_FQDN="${COVE_FQDN:-mbpbk-202602.taila90e7.ts.net}"
+        HOST="${OWNER}.pages.cove.${COVE_FQDN}"
         ORIGIN="https://${HOST}"
         BASE_PATH="/"
         [ "$REPO" != "pages" ] && BASE_PATH="/${REPO}"
