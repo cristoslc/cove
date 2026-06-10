@@ -5,11 +5,40 @@
     compose_dir: "{{ playbook_dir }}"
 
   tasks:
-    - name: Set Forgejo URLs (localhost fallback)
+    - name: Set Forgejo URLs for cove.local
       ansible.builtin.set_fact:
-        forgejo_domain: localhost
-        forgejo_root_url: "http://localhost:{{ forgejo_http_port }}/"
-        forgejo_ssh_domain: localhost
+        forgejo_domain: "git.cove.{{ cove_domain }}"
+        forgejo_root_url: "https://git.cove.{{ cove_domain }}/"
+        forgejo_ssh_domain: "{{ cove_domain }}"
+
+    - name: Check if mkcert is installed
+      ansible.builtin.command: which mkcert
+      register: mkcert_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install mkcert via Homebrew
+      community.general.homebrew:
+        name: mkcert
+        state: present
+      when: mkcert_check.rc != 0
+
+    - name: Install mkcert local CA
+      ansible.builtin.command: mkcert -install
+      become: true
+      register: mkcert_install
+      changed_when: "'created' in mkcert_install.stdout | default('')"
+
+    - name: Generate wildcard TLS certificate
+      ansible.builtin.command: >
+        mkcert
+        -key-file "{{ cert_dir }}/privkey.pem"
+        -cert-file "{{ cert_dir }}/fullchain.pem"
+        "*.{{ cove_domain }}"
+        "git.{{ cove_domain }}"
+      args:
+        chdir: "{{ cert_dir }}"
+        creates: "{{ cert_dir }}/fullchain.pem"
 
     - name: Check if tailscale is up
       ansible.builtin.command: tailscale status --json
@@ -18,27 +47,12 @@
       failed_when: false
       no_log: true
 
-    - name: Set up tailscale serve
+    - name: Set up tailscale serve (optional overlay)
       when: ts_status.rc == 0
       block:
         - name: Get tailscale DNS name
           ansible.builtin.set_fact:
             ts_dns_name: "{{ (ts_status.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
-
-        - name: Set forgejo URLs through nginx proxy
-          ansible.builtin.set_fact:
-            forgejo_domain: "git.cove.{{ ts_dns_name }}"
-            forgejo_root_url: "https://git.cove.{{ ts_dns_name }}/"
-            forgejo_ssh_domain: "{{ ts_dns_name }}"
-
-        - name: Point tailscale FQDN to localhost in hosts file
-          become: true
-          ignore_errors: true
-          ansible.builtin.lineinfile:
-            path: /etc/hosts
-            regexp: '^127\.0\.0\.1\s+{{ ts_dns_name | regex_escape }}(\s+.*)?$'
-            line: "127.0.0.1 {{ ts_dns_name }}"
-            state: present
 
         - name: Configure tailscale serve for HTTPS on port 443
           ansible.builtin.shell: |
@@ -52,6 +66,16 @@
             fi
           register: ts_serve_https
           changed_when: "'configured' in ts_serve_https.stdout and 'already' not in ts_serve_https.stdout"
+
+    - name: Create macOS resolver for cove.local
+      become: true
+      ignore_errors: true
+      ansible.builtin.copy:
+        dest: /etc/resolver/cove.local
+        content: |
+          nameserver 127.0.0.1
+          port 5353
+        mode: "0644"
 
     # DATA DIRECTORIES -------------------------------------------------------
     - name: Create cove data directories
@@ -75,21 +99,18 @@
         src: "{{ nginx_conf_dir }}/default.conf.j2"
         dest: "{{ nginx_conf_dir }}/default.conf"
         mode: "0644"
-      when: ts_dns_name is defined
 
     - name: Ensure dnsmasq data directory exists
       ansible.builtin.file:
         path: "{{ cove_data_root }}/dnsmasq"
         state: directory
         mode: "0755"
-      when: ts_dns_name is defined
 
     - name: Render dnsmasq config from template
       ansible.builtin.template:
         src: "{{ dnsmasq_conf_dir }}/cove.conf.j2"
         dest: "{{ cove_data_root }}/dnsmasq/cove.conf"
         mode: "0644"
-      when: ts_dns_name is defined
 
     # COMPOSE .env -----------------------------------------------------------
     - name: Render compose .env from host vars
@@ -120,7 +141,7 @@
           NGINX_HTTP_BIND={{ nginx_http_bind }}
           NGINX_HTTP_PORT={{ nginx_http_port }}
           NGINX_HTTPS_PORT={{ nginx_https_port }}
-          COVE_FQDN={{ ts_dns_name | default('localhost') }}
+          COVE_FQDN={{ cove_domain }}
           DNSMASQ_CONF_DIR={{ dnsmasq_conf_dir }}
           DNSMASQ_CONTAINER_NAME={{ dnsmasq_container_name }}
           DNSMASQ_BIND={{ dnsmasq_bind }}
@@ -174,12 +195,13 @@
         msg: |
           Containers are up.
             Nginx  : https://127.0.0.1:{{ nginx_https_port }} (reverse proxy)
-                     ├─ git.cove.{{ ts_dns_name | default('ts.net') }} → forgejo:3000
-                     └─ *.pages.cove.{{ ts_dns_name | default('ts.net') }} → /data/pages/sites/
+                     ├─ git.cove.{{ cove_domain }} → forgejo:3000
+                     └─ *.pages.cove.{{ cove_domain }} → /data/pages/sites/
             Forgejo: {{ forgejo_root_url }} (behind nginx)
             SSH    : {{ forgejo_ssh_bind }}:{{ forgejo_ssh_port }}
-            DNS    : dnsmasq on {{ dnsmasq_bind }}:{{ dnsmasq_port }} (offline wildcard)
-            {% if ts_status.rc == 0 %}Tailscale: {{ ts_dns_name }} (serve → localhost:443 → nginx)
+            DNS    : dnsmasq on {{ dnsmasq_bind }}:{{ dnsmasq_port }} (wildcard *.cove.{{ cove_domain }})
+            TLS    : mkcert wildcard cert for *.cove.{{ cove_domain }}
+            {% if ts_status.rc == 0 %}Tailscale: {{ ts_dns_name | default('(detected)') }} (serve → 443 → nginx:8443)
             {% endif %}Vault  : {{ vault_addr }} (initialized={{ vault_health.json.initialized | default(false) }}, sealed={{ vault_health.json.sealed | default(true) }})
 
           Next steps:

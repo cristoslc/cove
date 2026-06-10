@@ -148,7 +148,7 @@
         body_format: json
         body:
           name: COVE_FQDN
-          value: "{{ ts_dns_name }}"
+          value: "{{ cove_domain }}"
         status_code: [201, 204]
         validate_certs: false
       ignore_errors: true

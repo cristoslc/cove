@@ -62,7 +62,7 @@ runs:
         [ "$REPO" = "pages" ] && SITE_PATH="sites/${OWNER}/.index" || SITE_PATH="sites/${OWNER}/${REPO}"
         DEST="${PAGES_ROOT}/${SITE_PATH}"
 
-        COVE_FQDN="${COVE_FQDN:-mbpbk-202602.taila90e7.ts.net}"
+        COVE_FQDN="${COVE_FQDN:-cove.local}"
         [ "$REPO" = "pages" ] && PAGE_URL="https://${OWNER}.pages.cove.${COVE_FQDN}" || \
           PAGE_URL="https://${OWNER}.pages.cove.${COVE_FQDN}/${REPO}"
 
