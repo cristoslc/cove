@@ -42,15 +42,73 @@ It runs real Docker Engine + Compose under the hood, so compatibility is perfect
 
 On Linux, `docker-ce` + `docker compose` plugin is free, native, and perfect. No VM overhead, no licensing questions. The k3s future track will use containerd directly anyway. This is the reference implementation — all other options are trying to replicate this experience on macOS.
 
-### What Cove Should Use
+## Rethinking k3s: Is It Wrong for This Use Case?
 
-| Track | Recommended | Rationale |
-|-------|-------------|-----------|
-| **Current Docker Compose (macOS)** | Colima | Drop-in replacement. Free, FOSS, CLI-only, near-perfect Compose compat. |
-| **Current Docker Compose (macOS, premium)** | OrbStack | Best UX, free for personal use, but closed-source and macOS-only. |
-| **Current Docker Compose (Linux)** | Docker Engine | Native, free, perfect. No alternative needed. |
-| **Future k3s (macOS)** | Lima VM (Ansible-managed) | Already planned in the design. k3s + containerd native. |
+The k3s track was designed assuming Cove would need CI runners with Kata Containers, NetworkPolicies, Kaniko jobs, and containerd image mirroring. But that's a "maybe" — and the RAM cost of k3s is paid upfront regardless of whether you use those features.
 
-Colima is the pragmatic choice for the current track. It's FOSS, light, and changes nothing about how the pod is deployed. OrbStack is the nicer experience if you don't mind the macOS lock-in and closed source.
+### k3s + Lima RAM Budget (macOS)
 
-Rancher Desktop, Podman, and Finch are viable but add friction with no clear advantage over Colima for a 4-service compose stack. Raw Lima + nerdctl is the most authentic for the k3s future track but adds unnecessary complexity for the Compose present.
+| Layer | RAM | Notes |
+|-------|-----|-------|
+| Lima VM | 1-2GB | Linux VM needs baseline memory |
+| k3s control plane | 500MB-1GB | apiserver, scheduler, controller-manager, etcd |
+| CoreDNS + Traefik | ~150MB | Cluster infrastructure |
+| **Overhead subtotal** | **~1.5-3GB** | Before any actual services |
+| Forgejo + Vault + nginx + dnsmasq | ~300MB | The actual pod |
+| **Total** | **~1.8-3.3GB** | |
+
+### Lightweight Alternatives
+
+| Approach | macOS | Linux | RAM (idle) | CI Possible? | Complexity |
+|----------|-------|-------|------------|--------------|------------|
+| **Colima + docker compose** | Lima + dockerd | N/A | ~400MB | Yes (standalone runner container) | Low |
+| **OrbStack + docker compose** | Native | N/A | ~500MB | Yes (standalone runner container) | Low |
+| **Lima + containerd + nerdctl compose** | Lima VM | Native | ~300MB | Yes (standalone runner container) | Medium |
+| **k3s in Lima** | Lima VM | Native | ~1.5-3GB | Yes (native k8s runners, Kata, Kaniko) | High |
+| **Docker Engine** | N/A | Native | ~200MB | Yes (standalone runner container) | Low |
+
+### Rethinking the k3s Assumption
+
+k3s was designed into Cove's architecture based on an implicit assumption: "you need k8s to get CI runners." But Forgejo runners are **not k8s runners** — they're standalone Docker containers that register with Forgejo via a token. They don't need a Kubernetes cluster.
+
+You get CI by running:
+```
+docker run -d \
+  -e FORGEJO_RUNNER_TOKEN=$(cove creds vault-get FORGEJO_RUNNER_TOKEN) \
+  -e FORGEJO_INSTANCE_URL=https://git.cove.local \
+  codeberg.org/forgejo/runner:15
+```
+
+That's it. No k3s, no Kata, no NetworkPolicy. The runner container runs alongside Forgejo on the same Docker network. If you want VM-level isolation later, you could colima start --runtime=containerd + nerdctl with Kata — but you don't need it for day 1.
+
+### When Does k3s Actually Make Sense?
+
+| You want k3s when... | Lightweight alternative |
+|---------------------|------------------------|
+| CI with untrusted code (Kata) | Skip until you have untrusted CI. Runner containers share Docker socket trust by default. |
+| NetworkPolicies between services | Compose networks are isolated by default. Not needed. |
+| Kaniko daemonless builds | `docker build` works in Compose. Kaniko is only needed if you're building inside a CI container without a Docker socket. |
+| containerd image mirror (offline) | Useful but not critical. Pre-pull images explicitly. |
+| `cove tryup` (compose-to-k8s conversion) | Just use `docker compose up` directly. |
+| Composing two projects on different hosts | Not relevant for a single-user local platform. |
+
+### Pragmatic Path Forward
+
+| Phase | Stack | RAM | Rationale |
+|-------|-------|-----|-----------|
+| **Now** | Colima + docker compose + standalone runner container | ~400MB | Works today, minimal overhead, CI works |
+| **If offline caching needed** | Same + script to pre-pull images into Forgejo's OCI registry | ~400MB | No extra daemon |
+| **If VM isolation needed** | Colima with containerd runtime + Kata | ~500MB | Same VM, different runtime |
+| **If k8s becomes essential** | Lima + k3s | ~1.5-3GB | Migrate when the need is proven, not before |
+
+The k3s architecture doc should be reframed as an **escalation path**, not the default target. The default target should be the lightest thing that works — currently Colima + docker compose, eventually whatever comes after.
+
+### Absolute Lightest Option: Lima + nerdctl Compose
+
+If you don't even want `dockerd`'s overhead, Lima can run containerd natively with `nerdctl compose`. This is what Finch does under the hood. ~300MB idle. `nerdctl compose` handles basic compose files well, though it has rough edges with health checks, multi-file overrides, and some volume configurations. For Cove's 4-service stack (no health checks, single compose file, simple bind mounts), it would likely work fine.
+
+But Colima wraps this with a polished UX (`colima start`, `colima stop`) and runs standard `docker compose` — so the practical difference is negligible.
+
+### Recommendation
+
+**Default to Colima for macOS, Docker Engine for Linux.** Keep `docker compose up` as the deployment mechanism. Don't introduce k3s until a specific feature requires it (Kata isolation, Kaniko, etc.). The overhead isn't justified for a 4-service pod serving a solo developer.
