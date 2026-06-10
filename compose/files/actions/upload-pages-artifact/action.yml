@@ -1,0 +1,67 @@
+name: "Upload Pages Artifact"
+description: "Upload static site artifact to Cove pages artifact store"
+
+inputs:
+  path:
+    description: "Directory of static site output"
+    required: false
+    default: "_site/"
+  name:
+    description: "Artifact name (annotation only)"
+    required: false
+    default: "github-pages"
+
+outputs:
+  artifact_id:
+    description: "Identifier for the uploaded artifact"
+    value: "${{ steps.upload.outputs.artifact_id }}"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Upload
+      id: upload
+      shell: bash
+      run: |
+        set -euo pipefail
+        PATH_IN="${{ inputs.path }}"
+
+        [ -d "$PATH_IN" ] || { echo "::error::Directory '$PATH_IN' not found"; exit 1; }
+        [ -n "$(ls -A "$PATH_IN" 2>/dev/null)" ] || { echo "::error::Directory '$PATH_IN' empty"; exit 1; }
+
+        OWNER="${GITHUB_REPOSITORY%%/*}"
+        REPO="${GITHUB_REPOSITORY##*/}"
+        RUN_ID="${GITHUB_RUN_ID:-local}"
+        ARTIFACT_ID="${OWNER}/${REPO}/${RUN_ID}"
+        REMOTE_PATH="artifacts/${OWNER}/${REPO}/${RUN_ID}.tar.gz"
+
+        [ -n "${GITHUB_TOKEN:-}" ] || { echo "::error::GITHUB_TOKEN not set"; exit 1; }
+
+        TMPDIR="$(mktemp -d)"
+        trap 'rm -rf "$TMPDIR"' EXIT
+
+        git clone --depth 1 --quiet \
+          "http://oauth2:${GITHUB_TOKEN}@forgejo:3000/cove/pages-artifacts.git" \
+          "$TMPDIR"
+
+        cd "$TMPDIR"
+        mkdir -p "$(dirname "$REMOTE_PATH")"
+        tar -czf "$REMOTE_PATH" -C "$(dirname "$PATH_IN")" "$(basename "$PATH_IN")"
+
+        git config user.email "cove-pages@cove.local"
+        git config user.name "Cove Pages"
+        git add "$REMOTE_PATH"
+        git diff --cached --quiet && { echo "upload-pages-artifact: unchanged"; echo "artifact_id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"; exit 0; }
+
+        git commit -m "pages artifact: ${{ inputs.name }} (${ARTIFACT_ID})"
+
+        for _attempt in 1 2 3; do
+          if git push origin main; then
+            break
+          fi
+          echo "upload-pages-artifact: push failed (attempt $_attempt/3), rebasing..."
+          git pull --rebase origin main
+        done
+
+        echo "artifact_id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
+        echo "upload-pages-artifact: stored ${REMOTE_PATH}"

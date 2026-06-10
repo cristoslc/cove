@@ -1,0 +1,81 @@
+name: "Deploy Pages"
+description: "Deploy static site artifact to Cove pages server"
+
+inputs:
+  artifact_id:
+    description: "Artifact identifier"
+    required: true
+  owner:
+    description: "Repository owner"
+    required: true
+  repo:
+    description: "Repository name"
+    required: true
+
+outputs:
+  page_url:
+    description: "URL where the site is served"
+    value: "${{ steps.deploy.outputs.page_url }}"
+  alive:
+    description: "'true' if deployment succeeded"
+    value: "${{ steps.deploy.outputs.alive }}"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Deploy
+      id: deploy
+      shell: bash
+      run: |
+        set -euo pipefail
+        ARTIFACT_ID="${{ inputs.artifact_id }}"
+        OWNER="${{ inputs.owner }}"
+        REPO="${{ inputs.repo }}"
+
+        RUN_ID="${ARTIFACT_ID##*/}"
+        REMOTE_PATH="artifacts/${OWNER}/${REPO}/${RUN_ID}.tar.gz"
+
+        [ -n "${GITHUB_TOKEN:-}" ] || { echo "::error::GITHUB_TOKEN not set"; exit 1; }
+
+        TMPDIR="$(mktemp -d)"
+        trap 'rm -rf "$TMPDIR"' EXIT
+
+        for _attempt in 1 2 3; do
+          if git clone --depth 1 --branch main --quiet \
+            "http://oauth2:${GITHUB_TOKEN}@forgejo:3000/cove/pages-artifacts.git" \
+            "$TMPDIR"; then
+            break
+          fi
+          echo "deploy-pages: clone failed (attempt $_attempt/3), retrying..."
+          rm -rf "$TMPDIR"
+          TMPDIR="$(mktemp -d)"
+          trap 'rm -rf "$TMPDIR"' EXIT
+        done
+
+        [ -f "$TMPDIR/$REMOTE_PATH" ] || { echo "::error::Artifact not found: ${REMOTE_PATH}"; exit 1; }
+
+        PAGES_ROOT="${PAGES_DATA_ROOT:-/data/pages}"
+        # NOTE: The runner container must mount the pages volume read-write at
+        # the same path nginx serves from (e.g. /data/pages/sites). The nginx
+        # container mounts this volume read-only; the runner needs write access
+        # so that deploy-pages can write site files that nginx then serves.
+        [ "$REPO" = "pages" ] && SITE_PATH="sites/${OWNER}/.index" || SITE_PATH="sites/${OWNER}/${REPO}"
+        DEST="${PAGES_ROOT}/${SITE_PATH}"
+
+        COVE_FQDN="${COVE_FQDN:-mbpbk-202602.taila90e7.ts.net}"
+        [ "$REPO" = "pages" ] && PAGE_URL="https://${OWNER}.pages.cove.${COVE_FQDN}" || \
+          PAGE_URL="https://${OWNER}.pages.cove.${COVE_FQDN}/${REPO}"
+
+        mkdir -p "$(dirname "$DEST")"
+        rm -rf "${DEST}.new" 2>/dev/null || true
+        mkdir -p "${DEST}.new"
+
+        tar -xzf "$TMPDIR/$REMOTE_PATH" -C "${DEST}.new" --strip-components=1
+
+        [ -d "$DEST" ] && { mv "$DEST" "${DEST}.old" 2>/dev/null || true; }
+        mv "${DEST}.new" "$DEST"
+        rm -rf "${DEST}.old" 2>/dev/null || true
+
+        echo "page_url=${PAGE_URL}" >> "$GITHUB_OUTPUT"
+        echo "alive=true" >> "$GITHUB_OUTPUT"
+        echo "deploy-pages: deployed to ${PAGE_URL}"
