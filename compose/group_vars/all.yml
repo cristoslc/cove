@@ -53,8 +53,8 @@ nginx_image: "nginx:1.27-alpine"
 nginx_container_name: cove-nginx
 nginx_conf_dir: "{{ playbook_dir }}/nginx"
 nginx_http_bind: "127.0.0.1"
-nginx_http_port: 80
-nginx_https_port: 443
+nginx_http_port: 8080
+nginx_https_port: 8443
 
 # --- dnsmasq ---
 dnsmasq_conf_dir: "{{ playbook_dir }}/dnsmasq"
