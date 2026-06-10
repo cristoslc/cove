@@ -112,3 +112,29 @@ But Colima wraps this with a polished UX (`colima start`, `colima stop`) and run
 ### Recommendation
 
 **Default to Colima for macOS, Docker Engine for Linux.** Keep `docker compose up` as the deployment mechanism. Don't introduce k3s until a specific feature requires it (Kata isolation, Kaniko, etc.). The overhead isn't justified for a 4-service pod serving a solo developer.
+
+## UX Gap: Losing Docker Desktop's Health Visibility
+
+Colima is CLI-only — no GUI for container logs, resource usage, or restart buttons. Docker Desktop's dashboard, for all its bloat, gives you at-a-glance container health. Moving to Colima means that disappears.
+
+### Options to Fill the Gap
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **Cove health daemon** (`docs/musings/cove-health-daemon.md`) | Built for Cove, minimal deps, self-heals on restart | Async loop + Docker SDK to write; own it forever |
+| **Portainer** | Rich web UI, active project, FOSS (BSL-2.0) | Runs as a container managing containers — meta, feels wrong. BSL license has enterprise terms that may shift. |
+| **LazyDocker** | TUI, lightweight, keyboard-driven | Another tool to install, terminal-only, not Cove-integrated |
+| **Nothing — trust the daemon** | Health daemon restarts on failure; don't need a GUI if you don't look | Silent if you don't run `cove status` |
+
+### Portainer Hesitation
+
+Portainer is the obvious "add a UI" answer, but:
+- It's a container managing your containers — if Docker goes down, Portainer goes with it (not useful for the crash-loop case).
+- BSL 2.0 license has enterprise conversion clauses (MongoDB-style rugpull risk).
+- It's a full web app for what should be a `cove status` command.
+
+### What This Means for the Health Daemon
+
+The health daemon (`docs/musings/cove-health-daemon.md`) goes from "nice to have" to **part of the migration prerequisite**. Without it, moving from Docker Desktop to Colima is a UX regression — you lose the GUI and gain nothing in return. The daemon is the replacement for that visual feedback loop. Its priority should be elevated to: build it before or alongside the Colima migration.
+
+**See also:** [`docs/musings/cove-health-daemon.md`](cove-health-daemon.md) — the health daemon fills the observability gap Colima creates.
