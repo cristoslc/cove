@@ -46,3 +46,9 @@ A TUI at `cove status` is the sweet spot for a solo dev: zero persistent UI, `co
 Cove runs constantly. The pod is 4 stable services, but "stable" doesn't mean "never crashes" — Docker Desktop updates, macOS restarts, Tailscale hiccups, and OOM kills all take down individual containers. Currently the only recovery path is noticing something broke and running `cove down && cove up` yourself. A health daemon closes that gap.
 
 When implemented: `cli/cove/health.py` with a lightweight async loop (httpx + docker SDK), no heavy dependencies.
+
+## Relationship to Colima Migration
+
+The health daemon's priority is elevated by the Colima migration (`docs/musings/docker-desktop-alternatives-for-cove-pod.md`). Docker Desktop provides at-a-glance container health via its GUI; Colima is CLI-only and removes that. The health daemon is how we fill the observability gap — it should be built **before or alongside** the switch to Colima, not after.
+
+**See also:** [`docs/musings/docker-desktop-alternatives-for-cove-pod.md`](docker-desktop-alternatives-for-cove-pod.md) — Colima is the recommended default; the daemon replaces the lost GUI feedback loop.
