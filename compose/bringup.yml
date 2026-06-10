@@ -25,8 +25,9 @@
 
     - name: Install mkcert local CA
       ansible.builtin.command: mkcert -install
+      become: true
       register: mkcert_install
-        changed_when: "'created' in mkcert_install.stdout | default('')"
+      changed_when: "'created' in mkcert_install.stdout | default('')"
 
     - name: Generate wildcard TLS certificate
       ansible.builtin.command: >
