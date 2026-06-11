@@ -217,7 +217,7 @@
       failed_when: false
       no_log: true
 
-    - name: Update git credential store for fjl remote
+    - name: Store HTTP credentials for Forgejo remote (fjl)
       ansible.builtin.command:
         stdin: |
           protocol=https

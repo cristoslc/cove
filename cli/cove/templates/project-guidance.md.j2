@@ -6,9 +6,7 @@ All services are offline-first. The same FQDN resolves locally and over Tailscal
 ## Forgejo
 
 - Web: `{{ forgejo_root_url }}`
-- SSH remote: `git@forgejo-localhost:{{ admin_username }}/repo.git`
-- CLI: `fjl` (alias for `fj -H {{ forgejo_root_url }}`) — requires interactive shell (`zsh -i -c 'fjl ...'`)
-- SSH host alias: `forgejo-localhost` → `{{ forgejo_ssh_domain }}` port {{ forgejo_ssh_port }}
+- CLI: use `fj` (auto-detects host from git remote — see `.agents/agents-md-detail/fj.md` for full reference)
 
 ## Vault / Credentials
 
