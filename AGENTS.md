@@ -94,7 +94,7 @@ This machine runs Cove — a local developer platform (forge, vault, CI, registr
 
 ### Quick facts
 
-- **Forgejo** at `https://mbpbk-202602.taila90e7.ts.net:3000/`. CLI: `fjl` (via `zsh -i -c`). SSH: `git@forgejo-localhost:cristos/repo.git` (port 2222).
+- **Forgejo** at `http://localhost:3000/`. CLI: `fj` (auto-detects host from git remote).
 - **Vault** at `http://127.0.0.1:8200`. Use `cove creds vault-get` / `cove creds vault-put` — never hardcode secrets.
 - **Constraints:** No cloud dependencies. No internet during builds/CI. All git remotes go to Forgejo.
 
@@ -105,7 +105,7 @@ Load and follow the spoke doc when the conversation involves:
 | Trigger | Examples |
 |---------|----------|
 | Credential management | `vault://`, `op://`, `cove creds`, `cove install`, `cove up/down` |
-| Forgejo / git remotes | `forgejo`, `forge`, `fjl`, `fj`, `git remote`, pushing/pulling non-GitHub |
+| Forgejo / git remotes | `forgejo`, `forge`, `fj`, `git remote`, pushing/pulling non-GitHub |
 | Pages / hosting | `cove pages`, static hosting, site deployment |
 | Services / infra | `cove`, `woodpecker`, `registry`, `down`, `uninstall`, service health |
 
