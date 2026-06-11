@@ -5,7 +5,7 @@ All services are offline-first. The same FQDN resolves locally and over Tailscal
 
 ## Forgejo
 
-- Web: `{{ forgejo_root_url }}`
+- Web: `http://localhost:3000/`
 - CLI: use `fj` (auto-detects host from git remote — see `.agents/agents-md-detail/fj.md` for full reference)
 
 ## Vault / Credentials
@@ -15,7 +15,7 @@ Never hardcode secrets. Use:
 - `cove creds vault-put op://vault/item/field` — cache a 1Password secret into Vault
 - `cove creds batch-pull` — refresh all cached refs in one batch (single biometric prompt)
 
-Vault address: `{{ vault_addr }}`
+Vault address: `http://127.0.0.1:8200`
 
 ## CLI reference
 
@@ -33,4 +33,4 @@ Vault address: `{{ vault_addr }}`
 
 - Do not add cloud dependencies.
 - Do not assume internet access during builds or CI.
-- All git remotes go to Forgejo at `{{ forgejo_domain }}`.
+- All git remotes go to Forgejo at `localhost`.

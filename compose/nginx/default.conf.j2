@@ -1,0 +1,63 @@
+server {
+    listen 80;
+    server_name git.cove.{{ ts_dns_name }} ~^[a-zA-Z0-9-]+\.pages\.cove\.{{ ts_dns_name | regex_escape }}$;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name git.cove.{{ ts_dns_name }};
+
+    ssl_certificate     /certs/fullchain.pem;
+    ssl_certificate_key /certs/privkey.pem;
+
+    location / {
+        proxy_pass http://forgejo:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name ~^[a-zA-Z0-9-]+\.pages\.cove\.{{ ts_dns_name | regex_escape }}$;
+
+    ssl_certificate     /certs/fullchain.pem;
+    ssl_certificate_key /certs/privkey.pem;
+
+    # NOTE: Tailscale certs (`tailscale cert`) issue certificates for a single
+    # FQDN only — they do not support wildcard certificates.  The pages
+    # subdomain pattern (*.pages.cove.{fqdn}) therefore has no valid TLS
+    # certificate today.  Options to close this gap:
+    #   1. Use a wildcard cert from an ACME provider with DNS-01 challenge
+    #      (e.g. Let's Encrypt + RFC 2136 dnsmasq plugin, or Route53).
+    #   2. Issue per-owner certs via Tailscale and configure SNI-based
+    #      certificate selection in nginx (complex, one cert per owner).
+    #   3. Serve pages over HTTP only (behind the Tailscale mesh, which
+    #      already encrypts in transit).
+    # For now, browsers will show a certificate-warning on pages subdomains.
+
+    set $owner_path "";
+    if ($host ~ "^([^.]+)\.pages\.") {
+        set $owner_path $1;
+    }
+
+    root /data/pages/sites/$owner_path;
+
+    # Owner root site (the "pages" repo) lives in .index/;
+    # other repos are served from /{repo}/.
+    #   GET /                     → .index/           (owner root)
+    #   GET /my-docs/             → my-docs/           (named repo)
+    #   GET /my-docs/sub/page     → my-docs/sub/page
+    location / {
+        try_files /.index$uri /.index$uri/index.html $uri $uri/index.html =404;
+    }
+
+    location = /_health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+}

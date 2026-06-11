@@ -41,4 +41,6 @@ cli/build/
 
 # Cove-generated speak docs (created by cove install)
 .agents/agents-md-detail/
+!.agents/agents-md-detail/fj.md
+
 .agents/cove/
