@@ -217,7 +217,7 @@
       failed_when: false
       no_log: true
 
-    - name: Update git credential store for fjl remote
+    - name: Store HTTP credentials for Forgejo remote (fjl)
       ansible.builtin.command:
         stdin: |
           protocol=https
@@ -337,9 +337,8 @@
         msg: |
           Forgejo provisioned.
             Admin: {{ admin_username }} (password sourced from Vault cache via {{ forgejo_admin_op_ref }})
-            SSH key: {{ ssh_key_path }} (machine-bound; public key registered with Forgejo)
-            Repo URL: {{ forgejo_ssh_url }}
+            Repo URL: {{ forgejo_root_url }}{{ repo_owner }}/{{ repo_name }}
 
           To add as remote and push:
-            git remote add forgejo {{ forgejo_ssh_url }}
-            GIT_SSH_COMMAND='ssh -i {{ ssh_key_path }} -o IdentitiesOnly=yes' git push -u forgejo <branch>
+            git remote add cove {{ forgejo_root_url }}{{ repo_owner }}/{{ repo_name }}
+            git push -u cove main

@@ -5,8 +5,7 @@
     compose_dir: "{{ playbook_dir }}"
 
   tasks:
-    # TAILSCALE SERVE OVERLAY -------------------------------------------------
-    - name: Set Forgejo URLs to localhost
+    - name: Set Forgejo URLs (localhost fallback)
       ansible.builtin.set_fact:
         forgejo_domain: localhost
         forgejo_root_url: "http://localhost:{{ forgejo_http_port }}/"
@@ -26,35 +25,33 @@
           ansible.builtin.set_fact:
             ts_dns_name: "{{ (ts_status.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
 
-        - name: Use tailscale DNS name for Forgejo URLs
+        - name: Set forgejo URLs through nginx proxy
           ansible.builtin.set_fact:
-            forgejo_domain: "{{ ts_dns_name }}"
-            forgejo_root_url: "https://{{ ts_dns_name }}:{{ forgejo_http_port }}/"
+            forgejo_domain: "git.cove.{{ ts_dns_name }}"
+            forgejo_root_url: "https://git.cove.{{ ts_dns_name }}/"
             forgejo_ssh_domain: "{{ ts_dns_name }}"
 
-        - name: Point tailscale name to localhost in hosts file
+        - name: Point tailscale FQDN to localhost in hosts file
           become: true
+          ignore_errors: true
           ansible.builtin.lineinfile:
             path: /etc/hosts
             regexp: '^127\.0\.0\.1\s+{{ ts_dns_name | regex_escape }}(\s+.*)?$'
             line: "127.0.0.1 {{ ts_dns_name }}"
             state: present
 
-        - name: Set up tailscale serve for HTTP 3000
+        - name: Configure tailscale serve for HTTPS on port 443
           ansible.builtin.shell: |
             set -eo pipefail
-            PORT="{{ forgejo_http_port | string }}"
             JSON=$(tailscale serve status --json 2>/dev/null || echo '{}')
-            if python3 -c "import json,sys,os; s=json.load(sys.stdin); exit(0 if s.get('TCP',{}).get(os.environ['PORT']) else 1)" <<< "$JSON"; then
+            if echo "$JSON" | python3 -c "import json,sys; s=json.load(sys.stdin); exit(0 if s.get('Web',{}).get('443') else 1)"; then
               echo "already configured"
             else
-              tailscale serve --bg --tcp "$PORT" "tcp://127.0.0.1:$PORT"
+              tailscale serve --bg --https "443" "https://127.0.0.1:8443"
               echo "configured"
             fi
-          register: ts_serve_http
-          changed_when: "'configured' in ts_serve_http.stdout and 'already' not in ts_serve_http.stdout"
-          environment:
-            PORT: "{{ forgejo_http_port | string }}"
+          register: ts_serve_https
+          changed_when: "'configured' in ts_serve_https.stdout and 'already' not in ts_serve_https.stdout"
 
     # DATA DIRECTORIES -------------------------------------------------------
     - name: Create cove data directories
@@ -69,6 +66,30 @@
         - "{{ cove_data_root }}/certs"
         - "{{ cove_data_root }}/vault/data"
         - "{{ cove_data_root }}/vault/logs"
+        - "{{ cove_data_root }}/pages/sites"
+        - "{{ cove_data_root }}/nginx"
+
+    # TEMPLATES ----------------------------------------------------------------
+    - name: Render nginx config from template
+      ansible.builtin.template:
+        src: "{{ nginx_conf_dir }}/default.conf.j2"
+        dest: "{{ nginx_conf_dir }}/default.conf"
+        mode: "0644"
+      when: ts_dns_name is defined
+
+    - name: Ensure dnsmasq data directory exists
+      ansible.builtin.file:
+        path: "{{ cove_data_root }}/dnsmasq"
+        state: directory
+        mode: "0755"
+      when: ts_dns_name is defined
+
+    - name: Render dnsmasq config from template
+      ansible.builtin.template:
+        src: "{{ dnsmasq_conf_dir }}/cove.conf.j2"
+        dest: "{{ cove_data_root }}/dnsmasq/cove.conf"
+        mode: "0644"
+      when: ts_dns_name is defined
 
     # COMPOSE .env -----------------------------------------------------------
     - name: Render compose .env from host vars
@@ -93,6 +114,17 @@
           VAULT_CONTAINER_NAME={{ vault_container_name }}
           VAULT_BIND={{ vault_bind }}
           VAULT_PORT={{ vault_port }}
+          NGINX_IMAGE={{ nginx_image }}
+          NGINX_CONTAINER_NAME={{ nginx_container_name }}
+          NGINX_CONF_DIR={{ nginx_conf_dir }}
+          NGINX_HTTP_BIND={{ nginx_http_bind }}
+          NGINX_HTTP_PORT={{ nginx_http_port }}
+          NGINX_HTTPS_PORT={{ nginx_https_port }}
+          COVE_FQDN={{ ts_dns_name | default('localhost') }}
+          DNSMASQ_CONF_DIR={{ dnsmasq_conf_dir }}
+          DNSMASQ_CONTAINER_NAME={{ dnsmasq_container_name }}
+          DNSMASQ_BIND={{ dnsmasq_bind }}
+          DNSMASQ_PORT={{ dnsmasq_port }}
 
     # CONTAINERS -------------------------------------------------------------
     - name: Detect active docker context endpoint
@@ -119,6 +151,15 @@
       delay: 2
       until: forgejo_health.status == 200
 
+    - name: Wait for nginx to respond
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ nginx_http_port }}"
+        status_code: [200, 301, 302, 404]
+      register: nginx_health
+      retries: 20
+      delay: 2
+      until: nginx_health.status in [200, 301, 302, 404]
+
     - name: Wait for Vault to respond
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
@@ -132,12 +173,17 @@
       ansible.builtin.debug:
         msg: |
           Containers are up.
-            Forgejo: {{ forgejo_root_url }} (bound to {{ forgejo_http_bind }}:{{ forgejo_http_port }})
+            Nginx  : https://127.0.0.1:{{ nginx_https_port }} (reverse proxy)
+                     ├─ git.cove.{{ ts_dns_name | default('ts.net') }} → forgejo:3000
+                     └─ *.pages.cove.{{ ts_dns_name | default('ts.net') }} → /data/pages/sites/
+            Forgejo: {{ forgejo_root_url }} (behind nginx)
             SSH    : {{ forgejo_ssh_bind }}:{{ forgejo_ssh_port }}
-            {% if ts_status.rc == 0 %}Tailscale: {{ ts_dns_name }} (serve overlay active)
+            DNS    : dnsmasq on {{ dnsmasq_bind }}:{{ dnsmasq_port }} (offline wildcard)
+            {% if ts_status.rc == 0 %}Tailscale: {{ ts_dns_name }} (serve → localhost:443 → nginx)
             {% endif %}Vault  : {{ vault_addr }} (initialized={{ vault_health.json.initialized | default(false) }}, sealed={{ vault_health.json.sealed | default(true) }})
 
           Next steps:
             1. ansible-playbook -i inventory.yml bootstrap_vault.yml
             2. ansible-playbook -i inventory.yml provision_vault_user.yml
             3. ansible-playbook -i inventory.yml provision_forgejo.yml
+            4. ansible-playbook -i inventory.yml provision_pages.yml
