@@ -1,0 +1,51 @@
+id: reverse-proxy-alternatives
+created: 2026-06-11
+tags:
+  - reverse-proxy
+  - nginx
+  - haproxy
+  - caddy
+  - traefik
+  - envoy
+  - ingress
+  - tls
+  - tcp-proxying
+  - cove
+default_ttl:
+  web-article: 180d
+
+sources:
+  - id: hostim-showdown
+    type: web-article
+    url: https://hostim.dev/blog/reverse-proxy-showdown/
+    fetched: 2026-06-11
+    hash: 80d0517eceabff55fa374835cd7009e163e9311e3ba91e55f0edefdcd06710ee
+    title: "Caddy vs HAProxy vs Nginx vs Traefik: Which Reverse Proxy to Pick (2026)"
+
+  - id: bigmike-comparison
+    type: web-article
+    url: https://bigmike.help/en/posts/102/
+    fetched: 2026-06-11
+    hash: e6a91c3afa807e48051339e0ffd9c7d22174bf7847ca743352a2de7478341237
+    title: "Caddy vs HAProxy vs Nginx vs Traefik: Performance Comparison 2026"
+
+  - id: edgeservers-nginx-haproxy-envoy
+    type: web-article
+    url: https://www.edgeservers.com.au/pt/articles/nginx-vs-haproxy-vs-envoy
+    fetched: 2026-06-11
+    hash: c471a29c23e1b4990bed2f29caa91ff835ede5c290add63f1c218e2f5fc57902
+    title: "Nginx vs HAProxy vs Envoy — an honest 2026 comparison"
+
+  - id: onidel-benchmark
+    type: web-article
+    url: https://onidel.com/blog/haproxy-nginx-envoy-benchmark-vps
+    fetched: 2026-06-11
+    hash: 850a55886cc1d719ce029a2d7a531168e4e865b2593e191c7407f8a0e9e47eab
+    title: "HAProxy vs Nginx vs Envoy on VPS in 2025"
+
+  - id: homelab-comparison
+    type: web-article
+    url: https://homelabstarter.com/homelab-reverse-proxy-comparison/
+    fetched: 2026-06-11
+    hash: 402278d44ef2c10332735e644eef1388f0da77a21ac674af070ff739e2ca53e8
+    title: "Homelab Reverse Proxy Showdown: Nginx Proxy Manager vs Traefik vs Caddy vs HAProxy"
