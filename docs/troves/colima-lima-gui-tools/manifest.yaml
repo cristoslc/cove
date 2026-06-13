@@ -95,8 +95,60 @@ sources:
     content-hash: placeholder
     notes: Real-world experience replacing Docker Desktop with Colima + Portainer. CPU dropped from 308% to 0.2%. Common pattern in developer community.
 
+  - id: dozzle
+    title: Dozzle — Real-time Docker Log Viewer
+    url: https://github.com/amir20/dozzle
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Lightweight web-based real-time log viewer. Explicitly supports Colima and Podman. Runs as a container. No database needed. Multi-host support. 7k+ stars.
+
+  - id: dockge
+    title: Dockge — Docker Compose Stack Manager
+    url: https://github.com/louislam/dockge
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Web-based Docker Compose stack manager from the creator of Uptime Kuma. File-based (stores compose YAML on disk). Runs as a container. Focused on compose stacks only. 15k+ stars.
+
+  - id: ctop
+    title: ctop — Top-like Container Metrics TUI
+    url: https://github.com/bcicen/ctop
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: "Top-like TUI for container metrics. Works with Colima via DOCKER_HOST env var. Known issue: ctop's -connector flag doesn't accept unix socket paths directly. Requires setting DOCKER_HOST=unix:///$HOME/.colima/default/docker.sock. 11k+ stars."
+
+  - id: yacht
+    title: Yacht — Lightweight Docker Web UI
+    url: https://github.com/selfhostedpro/yacht
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Lightweight Docker management web UI focused on simplicity and app templates. Runs as a container. Flask-based. Less feature-rich than Portainer but simpler. v0.0.8, early stage.
+
+  - id: raycast-colima
+    title: Raycast Colima Extension
+    url: https://www.reddit.com/r/raycastapp/comments/1rsjni4/extension_colima_containers_and_images_for_docker/
+    type: web-page
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Raycast extension for Colima management. Manage instances, inspect containers and images, pull and run from Raycast. macOS-only (Raycast requirement).
+
+  - id: dockhand
+    title: Dockhand — Modern Docker Management UI
+    url: https://github.com/nicedoc/dockhand
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Modern Docker management web UI with update management, pruning, scheduling, vulnerability scanning. ~150MB RAM. Runs as a container. Newer alternative to Portainer/Dockge.
+
 history:
   - event: created
     date: 2026-06-13
     commit: "8bb62e2"
     sources: 10
+  - event: extended
+    date: 2026-06-13
+    commit: "--"
+    sources: 17
