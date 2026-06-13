@@ -150,5 +150,5 @@ history:
     sources: 10
   - event: extended
     date: 2026-06-13
-    commit: "--"
+    commit: "42536c1"
     sources: 17
