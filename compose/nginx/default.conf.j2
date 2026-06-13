@@ -1,18 +1,42 @@
+upstream forgejo_backend {
+    server forgejo:3000;
+}
+
+upstream vault_backend {
+    server vault:8200;
+}
+
+# HTTP redirect
 server {
-    listen 80;
-    server_name git.cove.{{ ts_dns_name }} ~^[a-zA-Z0-9-]+\.pages\.cove\.{{ ts_dns_name | regex_escape }}$;
+    listen 80 default_server;
+    server_name _;
     return 301 https://$host$request_uri;
 }
 
+# hc.cove — health check endpoint (tests hosts resolution + nginx liveness)
 server {
     listen 443 ssl;
-    server_name git.cove.{{ ts_dns_name }};
+    server_name hc.cove;
 
-    ssl_certificate     /certs/fullchain.pem;
-    ssl_certificate_key /certs/privkey.pem;
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
 
     location / {
-        proxy_pass http://forgejo:3000;
+        return 200 "cove ingress ok\n";
+        add_header Content-Type text/plain;
+    }
+}
+
+# Catch-all — unrecognized hostnames route to forgejo (tailscale magicdns, direct IP, etc.)
+server {
+    listen 443 ssl default_server;
+    server_name _;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    location / {
+        proxy_pass http://forgejo_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -20,37 +44,50 @@ server {
     }
 }
 
+# git.cove — forgejo
 server {
     listen 443 ssl;
-    server_name ~^[a-zA-Z0-9-]+\.pages\.cove\.{{ ts_dns_name | regex_escape }}$;
+    server_name git.cove cove;
 
-    ssl_certificate     /certs/fullchain.pem;
-    ssl_certificate_key /certs/privkey.pem;
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
 
-    # NOTE: Tailscale certs (`tailscale cert`) issue certificates for a single
-    # FQDN only — they do not support wildcard certificates.  The pages
-    # subdomain pattern (*.pages.cove.{fqdn}) therefore has no valid TLS
-    # certificate today.  Options to close this gap:
-    #   1. Use a wildcard cert from an ACME provider with DNS-01 challenge
-    #      (e.g. Let's Encrypt + RFC 2136 dnsmasq plugin, or Route53).
-    #   2. Issue per-owner certs via Tailscale and configure SNI-based
-    #      certificate selection in nginx (complex, one cert per owner).
-    #   3. Serve pages over HTTP only (behind the Tailscale mesh, which
-    #      already encrypts in transit).
-    # For now, browsers will show a certificate-warning on pages subdomains.
-
-    set $owner_path "";
-    if ($host ~ "^([^.]+)\.pages\.") {
-        set $owner_path $1;
+    location / {
+        proxy_pass http://forgejo_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
     }
+}
 
-    root /data/pages/sites/$owner_path;
+# vault.cove — vault UI
+server {
+    listen 443 ssl;
+    server_name vault.cove;
 
-    # Owner root site (the "pages" repo) lives in .index/;
-    # other repos are served from /{repo}/.
-    #   GET /                     → .index/           (owner root)
-    #   GET /my-docs/             → my-docs/           (named repo)
-    #   GET /my-docs/sub/page     → my-docs/sub/page
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    location / {
+        proxy_pass http://vault_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+# pages subdomain — *.pages.cove
+server {
+    listen 443 ssl;
+    server_name ~^(?<owner>[a-zA-Z0-9-]+)\.pages\.cove$;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    root /data/pages/sites/$owner;
+
     location / {
         try_files /.index$uri /.index$uri/index.html $uri $uri/index.html =404;
     }
@@ -60,4 +97,22 @@ server {
         return 200 "healthy\n";
         add_header Content-Type text/plain;
     }
+}{% if ts_dns_name is defined %}
+
+# tailscale FQDN — tailscale cert TLS
+server {
+    listen 443 ssl;
+    server_name {{ ts_dns_name }};
+
+    ssl_certificate     /certs/fullchain.pem;
+    ssl_certificate_key /certs/privkey.pem;
+
+    location / {
+        proxy_pass http://forgejo_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
 }
+{% endif %}

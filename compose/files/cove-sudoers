@@ -1,0 +1,8 @@
+# Cove — passwordless sudo for ansible become tasks
+# Install: sudo cp /Users/cristos/Documents/code/cove/compose/files/cove-sudoers /etc/sudoers.d/cove && sudo chmod 440 /etc/sudoers.d/cove
+# Verify:   sudo visudo -c -f /etc/sudoers.d/cove
+
+# Development machine — ansible become uses /bin/sh -c which doesn't match
+# individual command grants. NOPASSWD: ALL is appropriate for a single-user
+# dev machine where the operator explicitly requested passwordless iteration.
+cristos ALL=(ALL) NOPASSWD: ALL

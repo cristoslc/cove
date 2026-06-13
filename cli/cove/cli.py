@@ -4,6 +4,7 @@ import os
 import platform
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import click
@@ -12,7 +13,7 @@ from cove import __version__
 from cove.creds import creds
 from cove.project import (
     _inject, _strip, _container_env, _render_context, _render_guidance,
-    _render_agents_block, _write_detail_cove, _write_project_override,
+    _render_agents_block, _write_detail_cove, _write_fj_detail, _write_project_override,
     _remove_detail_cove, _remove_project_override,
 )
 
@@ -41,12 +42,37 @@ def app():
 @app.command()
 @click.option("--no-provision", is_flag=True, help="Skip Forgejo provisioning")
 @click.option("--no-sudo", is_flag=True, help="Skip sudo elevation for /etc/hosts (safe if already configured)")
-def up(no_provision, no_sudo):
+@click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
+def up(no_provision, no_sudo, log):
     """Bring up cove containers and provision Forgejo."""
     compose_dir = _find_compose_dir()
     inventory = compose_dir / "inventory.yml"
     bringup = compose_dir / "bringup.yml"
     provision = compose_dir / "provision_forgejo.yml"
+
+    log_dir = None
+    if log:
+        log_dir = Path.home() / ".local" / "share" / "cove" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+    def _run_ansible(playbook, label):
+        click.echo(label)
+        cmd = base_cmd + [str(playbook)]
+        if log:
+            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            logfile = log_dir / f"{ts}-{playbook.name}.log"
+            with open(logfile, "w") as f:
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                for line in proc.stdout:
+                    click.echo(line, nl=False)
+                    f.write(line)
+                proc.wait()
+                result = proc
+            click.echo(f"  log: {logfile}")
+        else:
+            result = subprocess.run(cmd)
+        if result.returncode != 0:
+            raise SystemExit(result.returncode)
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
     if not no_sudo:
@@ -56,32 +82,14 @@ def up(no_provision, no_sudo):
 
     if not no_provision:
         click.echo("Pulling credentials from 1Password...")
-        subprocess.run(
-            ["cove", "creds", "batch-pull"],
-            check=True,
-        )
+        subprocess.run(["cove", "creds", "batch-pull"], check=True)
 
-    click.echo("Bringing up containers...")
-    subprocess.run(
-        base_cmd + [str(bringup)],
-        check=True,
-    )
+    _run_ansible(bringup, "Bringing up containers...")
 
     if not no_provision:
-        click.echo("Bootstrapping Vault...")
-        bootstrap_vault = compose_dir / "bootstrap_vault.yml"
-        provision_vault_user = compose_dir / "provision_vault_user.yml"
-        for p in [bootstrap_vault, provision_vault_user]:
-            subprocess.run(
-                base_cmd + [str(p)],
-                check=True,
-            )
-
-        click.echo("Provisioning Forgejo...")
-        subprocess.run(
-            base_cmd + [str(provision)],
-            check=True,
-        )
+        _run_ansible(compose_dir / "bootstrap_vault.yml", "Bootstrapping Vault...")
+        _run_ansible(compose_dir / "provision_vault_user.yml", "Provisioning Vault user...")
+        _run_ansible(provision, "Provisioning Forgejo...")
 
     click.echo("Cove is up.")
 
@@ -111,6 +119,7 @@ def install(global_):
         override = Path.cwd()
 
     _write_detail_cove(detail_path, rendered)
+    _write_fj_detail(detail_path.parent / "fj.md")
     if override:
         _write_project_override(override, ctx)
     agents_block = _render_agents_block(ctx, detail_ref)
@@ -136,33 +145,29 @@ def down(volumes):
 
 
 @app.command()
-@click.option("--yes", is_flag=True, help="Confirm destruction of all cove data.")
-def uninstall(yes):
-    """Destroy all cove containers, data, and credentials."""
-    if not yes:
-        raise click.ClickException(
-            "This will destroy all cove containers, data, and credentials.\n"
-            "Run again with --yes to confirm."
-        )
-
+@click.option("--yes", is_flag=True, help="Confirm container/data destruction.")
+@click.option("-g", "--global", "global_", is_flag=True, help="Remove from global ~/.agents/AGENTS.md instead of local.")
+def uninstall(yes, global_):
+    """Stop cove containers, remove credentials, and strip agent guidance."""
     compose_dir = _find_compose_dir()
 
-    click.echo("Destroying containers and volumes...")
+    if not yes:
+        click.confirm(
+            "Stop containers and remove credentials? (data in ~/Documents/cove-data/ is preserved)",
+            abort=True,
+        )
+
+    click.echo("Stopping containers...")
     subprocess.run(
         [
             "docker", "compose",
             "--project-directory", str(compose_dir),
-            "down", "--volumes", "--remove-orphans",
+            "down", "--remove-orphans",
         ],
-        check=True,
+        check=False,
     )
 
     home = Path.home()
-    data_dir = home / "Documents" / "cove-data"
-    if data_dir.exists():
-        click.echo(f"Removing {data_dir}...")
-        shutil.rmtree(str(data_dir))
-
     cache_dir = Path(os.environ.get("XDG_CACHE_HOME", home / ".cache")) / "cove"
     if cache_dir.exists():
         click.echo(f"Removing {cache_dir}...")
@@ -179,14 +184,28 @@ def uninstall(yes):
                 capture_output=True,
             )
 
-    for target in [Path.cwd() / "AGENTS.md", Path.home() / ".agents" / "AGENTS.md"]:
+    if global_:
+        targets = [Path.home() / ".agents" / "AGENTS.md"]
+        detail_dir = Path.home() / ".agents" / "agents-md-detail"
+    else:
+        targets = [Path.cwd() / "AGENTS.md"]
+        detail_dir = Path.cwd() / ".agents" / "agents-md-detail"
+
+    for target in targets:
         _strip(target)
 
-    for detail in [Path.cwd() / ".agents" / "agents-md-detail" / "cove.md",
-                   Path.home() / ".agents" / "agents-md-detail" / "cove.md"]:
-        _remove_detail_cove(detail)
+    for spoke in ["cove.md", "fj.md"]:
+        p = detail_dir / spoke
+        if p.exists():
+            p.unlink()
+            click.echo(f"Removed {p}")
 
-    _remove_project_override(Path.cwd())
+    if detail_dir.exists() and not any(detail_dir.iterdir()):
+        detail_dir.rmdir()
+        click.echo(f"Removed empty {detail_dir}")
+
+    if not global_:
+        _remove_project_override(Path.cwd())
 
     click.echo("Cove uninstalled.")
     click.echo("To remove the CLI: uv tool uninstall cove-cli")

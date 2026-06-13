@@ -18,7 +18,7 @@
       block:
         - name: Try Forgejo health endpoint directly
           ansible.builtin.uri:
-            url: "https://127.0.0.1:{{ nginx_https_port }}/api/healthz"
+            url: "https://git.cove/api/healthz"
             status_code: 200
             validate_certs: false
           register: forgejo_direct_check
@@ -27,7 +27,7 @@
 
         - name: Set forgejo_root_url to nginx proxy
           ansible.builtin.set_fact:
-            forgejo_root_url: "https://127.0.0.1:{{ nginx_https_port }}/"
+            forgejo_root_url: "https://git.cove/"
 
     - name: Fail if Forgejo unreachable
       ansible.builtin.fail:
