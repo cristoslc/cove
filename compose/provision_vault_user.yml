@@ -50,6 +50,7 @@
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
         status_code: [200, 429, 501, 503]
+        validate_certs: false
       register: vault_health
       changed_when: false
 
@@ -99,6 +100,7 @@
         headers:
           X-Vault-Token: "{{ vault_token }}"
         status_code: 200
+        validate_certs: false
       register: auth_list
       no_log: true
 
@@ -112,6 +114,7 @@
         body:
           type: userpass
         status_code: [204, 400]
+        validate_certs: false
       when: "'userpass/' not in auth_list.json"
 
     - name: Write admin policy
@@ -127,6 +130,7 @@
               capabilities = ["create", "read", "update", "delete", "list", "sudo"]
             }
         status_code: 204
+        validate_certs: false
 
     - name: Create or update userpass user
       ansible.builtin.uri:
@@ -139,6 +143,7 @@
           password: "{{ vault_ui_password }}"
           token_policies: "{{ vault_ui_policy_name }}"
         status_code: 204
+        validate_certs: false
       no_log: true
 
     - name: Print summary

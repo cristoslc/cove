@@ -6,22 +6,19 @@ forgejo_image_tag: "15"
 forgejo_image_digest: ""
 forgejo_image: "codeberg.org/forgejo/forgejo:{{ forgejo_image_tag }}"
 forgejo_container_name: cove-forgejo
-forgejo_http_bind: "127.0.0.1"
 forgejo_http_port: 3000
-forgejo_ssh_bind: "127.0.0.1"
 forgejo_ssh_port: 2222
-forgejo_domain: localhost
-forgejo_root_url: "https://localhost:{{ forgejo_http_port }}/"
-forgejo_ssh_domain: localhost
+forgejo_domain: git.cove
+forgejo_root_url: "https://git.cove/"
+forgejo_ssh_domain: git.cove
 
 # --- Vault ---
 vault_image_tag: "1.20"
 vault_image_digest: "sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10"
 vault_image: "hashicorp/vault:{{ vault_image_tag }}@{{ vault_image_digest }}"
 vault_container_name: cove-vault
-vault_bind: "127.0.0.1"
 vault_port: 8200
-vault_addr: "http://{{ vault_bind }}:{{ vault_port }}"
+vault_addr: "https://vault.cove"
 vault_key_shares: 5
 vault_key_threshold: 3
 vault_keystore_prefix: "cove/vault"
@@ -52,12 +49,10 @@ pages_data_root: "{{ cove_data_root }}/pages"
 nginx_image: "nginx:1.27-alpine"
 nginx_container_name: cove-nginx
 nginx_conf_dir: "{{ playbook_dir }}/nginx"
-nginx_http_bind: "127.0.0.1"
 nginx_http_port: 8080
 nginx_https_port: 8443
 
 # --- dnsmasq ---
 dnsmasq_conf_dir: "{{ playbook_dir }}/dnsmasq"
 dnsmasq_container_name: cove-dnsmasq
-dnsmasq_bind: "127.0.0.1"
 dnsmasq_port: 5353

@@ -49,6 +49,7 @@
     - name: Wait for Vault to respond on /v1/sys/health
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
+        validate_certs: false
         # 200=initialized+unsealed+active, 429=unsealed-standby, 501=not-initialized, 503=sealed
         status_code: [200, 429, 501, 503]
       register: health
@@ -70,6 +71,7 @@
           secret_shares: "{{ vault_key_shares }}"
           secret_threshold: "{{ vault_key_threshold }}"
         status_code: 200
+        validate_certs: false
       register: init_resp
       when: not vault_initialized
       no_log: true
@@ -151,6 +153,7 @@
         body:
           key: "{{ item }}"
         status_code: 200
+        validate_certs: false
       loop: "{{ unseal_keys[:vault_key_threshold] }}"
       loop_control:
         label: "key-{{ ansible_loop.index | default('?') }}"
@@ -162,6 +165,7 @@
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
         status_code: [200, 429]
+        validate_certs: false
       register: post_unseal_health
 
     - name: Read root token from OS keystore (Darwin)
@@ -210,6 +214,7 @@
           options:
             version: "2"
         status_code: [204, 400]
+        validate_certs: false
 
     - name: Print summary
       ansible.builtin.debug:

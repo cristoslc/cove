@@ -42,8 +42,7 @@ services:
         limits:
           memory: 512M
     ports:
-      - "${FORGEJO_SSH_BIND:-127.0.0.1}:${FORGEJO_SSH_PORT:-2222}:22"
-      - "${FORGEJO_HTTP_BIND:-127.0.0.1}:${FORGEJO_HTTP_PORT:-3000}:3000"
+      - "0.0.0.0:${FORGEJO_SSH_PORT:-2222}:22"
 
   nginx:
     image: ${NGINX_IMAGE:-nginx:1.27-alpine}
@@ -51,6 +50,8 @@ services:
     restart: unless-stopped
     depends_on:
       forgejo:
+        condition: service_started
+      vault:
         condition: service_started
     volumes:
       - ${NGINX_CONF_DIR:-./nginx}/default.conf:/etc/nginx/conf.d/default.conf:ro
@@ -60,8 +61,8 @@ services:
       # ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites (read-write) so the
       # action can write site files that nginx serves read-only here.
     ports:
-      - "${NGINX_HTTP_BIND:-127.0.0.1}:${NGINX_HTTPS_PORT:-443}:443"
-      - "${NGINX_HTTP_BIND:-127.0.0.1}:${NGINX_HTTP_PORT:-80}:80"
+      - "0.0.0.0:8443:443"
+      - "0.0.0.0:8080:80"
 
   dnsmasq:
     build: ${DNSMASQ_CONF_DIR:-./dnsmasq}
@@ -70,7 +71,7 @@ services:
     volumes:
       - ${COVE_DATA_ROOT}/dnsmasq/cove.conf:/etc/dnsmasq.d/cove.conf:ro
     ports:
-      - "${DNSMASQ_BIND:-127.0.0.1}:${DNSMASQ_PORT:-5353}:5353"
+      - "0.0.0.0:${DNSMASQ_PORT:-5353}:5353"
     cap_add:
       - NET_BIND_SERVICE
 
@@ -83,15 +84,13 @@ services:
     cap_add:
       - IPC_LOCK
     environment:
-      VAULT_ADDR: "http://127.0.0.1:8200"
+      VAULT_ADDR: "https://vault.cove/"
       VAULT_API_ADDR: "http://127.0.0.1:8200"
     command: ["server"]
     volumes:
       - ${COVE_DATA_ROOT}/vault/data:/vault/data
       - ${COVE_DATA_ROOT}/vault/logs:/vault/logs
       - ./vault/vault.hcl:/vault/config/vault.hcl:ro
-    ports:
-      - "${VAULT_BIND:-127.0.0.1}:${VAULT_PORT:-8200}:8200"
     deploy:
       resources:
         limits:

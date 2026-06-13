@@ -48,7 +48,7 @@ runs:
         mkdir -p "$(dirname "$REMOTE_PATH")"
         tar -czf "$REMOTE_PATH" -C "$(dirname "$PATH_IN")" "$(basename "$PATH_IN")"
 
-        git config user.email "cove-pages@cove.local"
+        git config user.email "cove-pages@cove"
         git config user.name "Cove Pages"
         git add "$REMOTE_PATH"
         git diff --cached --quiet && { echo "upload-pages-artifact: unchanged"; echo "artifact_id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"; exit 0; }

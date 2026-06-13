@@ -4,7 +4,6 @@
   vars:
     computer_name: "{{ ansible_hostname | regex_replace('\\..*$', '') }}"
     ssh_key_path: "{{ ansible_env.HOME }}/.ssh/forgejo_{{ computer_name | lower }}_ed25519"
-    forgejo_ssh_url: "ssh://git@{{ forgejo_ssh_domain }}:{{ forgejo_ssh_port }}/{{ repo_owner }}/{{ repo_name }}.git"
     cli_dir: "{{ playbook_dir }}/../cli"
 
   tasks:
@@ -12,6 +11,7 @@
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
         status_code: [200, 429, 501, 503]
+        validate_certs: false
       register: vault_health
 
     - name: Fail if Vault sealed
@@ -21,26 +21,17 @@
             cd {{ playbook_dir }} && ansible-playbook -i inventory.yml bootstrap_vault.yml
       when: vault_health.json.sealed | default(true)
 
-    - name: Detect Tailscale and override Forgejo URLs
-      block:
-        - name: Check if tailscale is up
-          ansible.builtin.command: tailscale status --json
-          register: ts_status_prov
-          changed_when: false
-          failed_when: false
-          no_log: true
+    - name: Check if tailscale is up
+      ansible.builtin.command: tailscale status --json
+      register: ts_status_prov
+      changed_when: false
+      failed_when: false
+      no_log: true
 
-        - name: Get tailscale DNS name
-          ansible.builtin.set_fact:
-            ts_dns_name_prov: "{{ (ts_status_prov.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
-          when: ts_status_prov.rc == 0
-
-        - name: Use tailscale DNS name for Forgejo URLs
-          ansible.builtin.set_fact:
-            forgejo_domain: "{{ ts_dns_name_prov }}"
-            forgejo_root_url: "https://{{ ts_dns_name_prov }}:{{ forgejo_http_port }}/"
-            forgejo_ssh_domain: "{{ ts_dns_name_prov }}"
-          when: ts_status_prov.rc == 0
+    - name: Get tailscale DNS name
+      when: ts_status_prov.rc == 0
+      ansible.builtin.set_fact:
+        ts_dns_name_prov: "{{ (ts_status_prov.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
 
     - name: Check 1P forgejo admin item cached
       ansible.builtin.command:
@@ -331,6 +322,34 @@
         printf '%s\n' "$KEY" | sed 's/^\[127\.0\.0\.1\]:/['"$DNS"']:/' >> {{ ansible_env.HOME }}/.ssh/known_hosts
       changed_when: true
       when: ts_status_prov.rc == 0
+
+    - name: Ensure ~/.ssh/config.d exists
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.ssh/config.d"
+        state: directory
+        mode: "0700"
+
+    - name: Write forgejo-localhost SSH config
+      ansible.builtin.copy:
+        dest: "{{ ansible_env.HOME }}/.ssh/config.d/forgejo-localhost.conf"
+        mode: "0600"
+        content: |
+          # Forgejo (localhost:2222) — uses a file-based key, not the 1Password agent.
+          # IdentitiesOnly + explicit IdentityFile bypass the global 1Password IdentityAgent.
+          Host forgejo-localhost
+            HostName localhost
+            Port {{ forgejo_ssh_port }}
+            User git
+            IdentityFile {{ ssh_key_path }}
+            IdentityAgent none
+            IdentitiesOnly yes
+
+    - name: Ensure ~/.ssh/config includes config.d
+      ansible.builtin.lineinfile:
+        path: "{{ ansible_env.HOME }}/.ssh/config"
+        line: "Include config.d/*"
+        create: true
+        mode: "0600"
 
     - name: Print ready summary
       ansible.builtin.debug:
