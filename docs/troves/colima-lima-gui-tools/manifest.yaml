@@ -1,0 +1,102 @@
+trove-id: colima-lima-gui-tools
+created: 2026-06-13
+refreshed: 2026-06-13
+tags:
+  - colima
+  - lima
+  - docker-desktop
+  - container-gui
+  - container-management
+  - docker-ui
+  - tauri
+  - desktop-app
+freshness-ttl:
+  web-page: 180d
+  repository: 180d
+  cli-help: 365d
+sources:
+  - id: colimaui
+    title: ColimaUI — Desktop & Web GUI for Colima
+    url: https://github.com/vnknowledge2014/colima-ui
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Most feature-rich Colima GUI. Tauri v2 + React 19 + Rust. Docker, K8s, Lima VM management, AI diagnostics, terminal. Dual-mode (desktop + web on :11420). 60 commits, active development.
+
+  - id: colima-gui
+    title: Colima GUI — Simple GUI for Colima on macOS
+    url: https://github.com/kyletaylored/colima-gui
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Minimal Tauri-based GUI. Start/stop/restart/delete Colima instances, check status, edit config. 17 commits, 46 stars. Basic functionality only.
+
+  - id: lima-gui
+    title: Lima GUI — Qt System Tray GUI for Lima VMs
+    url: https://github.com/afbjorklund/lima-gui
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Qt/C++ system tray app for Lima VM management. Create/start/stop/delete VMs from templates. 243 stars, 228 commits. Supports Kvantum themes. Optional QTermWidget terminal, VNC client.
+
+  - id: oma
+    title: 0ma — Desktop GUI for Lima Instances and Kubernetes
+    url: https://github.com/chenhunghan/0ma
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: ~15 MB Tauri app. One-click Docker & K8s setup, built-in terminal with tabs/split panes, visual Lima YAML editor. 22 stars, 543 commits. Homebrew installable.
+
+  - id: sailor-desktop
+    title: Sailor Desktop — Full-Rigged Container Management
+    url: https://github.com/stoutput/sailor-desktop
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Tauri/React container management UI. Container dashboard grouped by compose project, network topology view, in-container terminal, stats monitoring. 4 stars, 40 commits. Homebrew cask installable.
+
+  - id: nookat
+    title: Nookat — Lightweight Container Management Tool
+    url: https://github.com/nookat-io/nookat
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Tauri/React/Rust. Container/image/network/volume management. Auto-installs Colima as default engine. Cross-platform (macOS, Linux, Windows). 18 stars, 374 commits.
+
+  - id: portainer
+    title: Portainer — Web-based Docker UI
+    url: https://github.com/portainer/portainer
+    type: web-page
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Most popular web-based Docker management UI. Commonly paired with Colima as GUI replacement for Docker Desktop. Supports Docker, Swarm, Kubernetes. Runs as container itself.
+
+  - id: lazydocker
+    title: Lazydocker — Terminal UI for Docker
+    url: https://github.com/jesseduffield/lazydocker
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Go-based terminal UI (TUI) for Docker management. "htop for Docker". Single keypress operations, mouse support, live dashboard. Lightweight alternative to Portainer.
+
+  - id: lima-xbar-plugin
+    title: Lima xbar Plugin — Menu Bar VM Control
+    url: https://github.com/unixorn/lima-xbar-plugin
+    type: repository
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: xbar/Swiftbar plugin to start/stop VMs from macOS menu bar. 141 stars. Python-based. Minimal control (start/stop/status only).
+
+  - id: colima-portainer-combo
+    title: Colima + Portainer as Docker Desktop Replacement
+    url: https://muthuishere.medium.com/docker-desktop-colima-portainer-my-mac-finally-breathes-b70d82d6cf0f
+    type: web-page
+    fetched: 2026-06-13
+    content-hash: placeholder
+    notes: Real-world experience replacing Docker Desktop with Colima + Portainer. CPU dropped from 308% to 0.2%. Common pattern in developer community.
+
+history:
+  - event: created
+    date: 2026-06-13
+    commit: "--"
+    sources: 10
