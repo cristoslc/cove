@@ -194,7 +194,7 @@ class TestCoveUpCommand:
         ) as mock_run:
             mock_run.return_value.returncode = 0
 
-            cove.cli.up.callback(no_provision=True, no_sudo=False)
+            cove.cli.up.callback(no_provision=True, no_sudo=False, log=False)
 
             args_list = [str(a) for a in mock_run.call_args[0][0]]
             assert "-K" in args_list, "cove up must pass -K to ansible-playbook"
@@ -207,10 +207,14 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run:
+        ) as mock_run, patch("click.prompt") as mock_prompt:
             mock_run.return_value.returncode = 0
 
-            cove.cli.up.callback(no_provision=True, no_sudo=True)
+            cove.cli.up.callback(no_provision=True, no_sudo=True, log=False)
+
+            args_list = [str(a) for a in mock_run.call_args[0][0]]
+            assert "ansible_become=no" in " ".join(args_list)
+            mock_prompt.assert_not_called()
 
             args_list = [str(a) for a in mock_run.call_args[0][0]]
             assert "-K" not in args_list, "cove up --no-sudo must omit -K"
@@ -223,10 +227,10 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run:
+        ) as mock_run, patch("click.prompt", return_value="pw"):
             mock_run.return_value.returncode = 0
 
-            cove.cli.up.callback(no_provision=True, no_sudo=False)
+            cove.cli.up.callback(no_provision=True, no_sudo=False, log=False)
             assert mock_run.call_count == 1
 
     def test_full_up_calls_all_in_correct_order(self, tmp_path, monkeypatch):
@@ -241,10 +245,10 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run:
+        ) as mock_run, patch("click.prompt", return_value="pw"):
             mock_run.return_value.returncode = 0
 
-            cove.cli.up.callback(no_provision=False, no_sudo=False)
+            cove.cli.up.callback(no_provision=False, no_sudo=False, log=False)
             assert mock_run.call_count == 5
 
             all_args = [mock_run.call_args_list[i][0][0] for i in range(5)]
@@ -317,16 +321,13 @@ class TestCoveUninstallCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             runner = CliRunner()
-            result = runner.invoke(cove.cli.app, ["uninstall"])
-            assert result.exit_code != 0, "uninstall without --yes must fail"
-            assert "--yes" in result.output
+            result = runner.invoke(cove.cli.app, ["uninstall"], input="n\n")
+            assert result.exit_code != 0, "uninstall without confirmation must fail"
 
-    def test_uninstall_yes_destroys_everything(self, tmp_path, monkeypatch):
+    def test_uninstall_yes_stops_containers_and_strips_guidance(self, tmp_path, monkeypatch):
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
-        cove_data = tmp_path / "Documents" / "cove-data"
-        cove_data.mkdir(parents=True)
         cache_dir = tmp_path / ".cache" / "cove"
         cache_dir.mkdir(parents=True)
         (cache_dir / "op-cache.json").write_text("{}")
@@ -338,21 +339,15 @@ class TestCoveUninstallCommand:
         ) as mock_rmtree:
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(yes=True)
+            cove.cli.uninstall.callback(yes=True, global_=False)
 
             compose_down_calls = [
                 c for c in mock_run.call_args_list
                 if "compose" in str(c[0][0][:3])
             ]
             assert len(compose_down_calls) >= 1, (
-                "uninstall must run docker compose down --volumes"
+                "uninstall must run docker compose down"
             )
-
-            removed_paths = [str(ca[0][0]) for ca in mock_rmtree.call_args_list]
-            data_removed = any("cove-data" in p for p in removed_paths), (
-                f"expected cove-data removal in {removed_paths}"
-            )
-            assert data_removed, "uninstall must remove cove-data"
 
     def test_uninstall_no_project_dir_exits_cleanly(self, tmp_path, monkeypatch):
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
@@ -379,11 +374,11 @@ class TestCoveUninstallCommand:
         ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(yes=True)
+            cove.cli.uninstall.callback(yes=True, global_=False)
 
-        remaining = agents_md.read_text()
-        assert "cove-guidance" not in remaining
-        assert "# My Project" in remaining
+            remaining = agents_md.read_text()
+            assert "cove-guidance" not in remaining
+            assert "# My Project" in remaining
 
     def test_uninstall_removes_agents_md_if_only_guidance(self, tmp_path, monkeypatch):
         compose_sub = tmp_path / "compose"
@@ -402,7 +397,7 @@ class TestCoveUninstallCommand:
         ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(yes=True)
+            cove.cli.uninstall.callback(yes=True, global_=False)
 
         assert not agents_md.exists(), "AGENTS.md with only guidance should be deleted"
 
@@ -476,7 +471,7 @@ class TestProgressiveDisclosure:
         _remove_detail_cove(detail)
         assert not detail.exists()
 
-    def test_inject_agents_block_contains_quick_facts_and_triggers(self, tmp_path):
+    def test_inject_agents_block_contains_cove_info(self, tmp_path):
         agents_md = tmp_path / "AGENTS.md"
         agents_md.write_text("# Project\n")
         ctx = {
@@ -491,11 +486,8 @@ class TestProgressiveDisclosure:
         _inject(agents_md, block)
         content = agents_md.read_text()
         assert SENTINEL_START in content
-        assert "Quick facts" in content
-        assert "example.com" in content
-        assert "Triggers" in content
-        assert "vault://" in content
-        assert "forgejo" in content
+        assert "git.cove" in content
+        assert "Forgejo" in content
         assert "agents-md-detail/cove.md" in content
         assert "Project override" in content
 
@@ -524,7 +516,7 @@ class TestProgressiveDisclosure:
         ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(yes=True)
+            cove.cli.uninstall.callback(yes=True, global_=False)
 
         remaining = agents_md.read_text()
         assert "cove-guidance" not in remaining
@@ -568,9 +560,7 @@ class TestProgressiveDisclosure:
 
         agents_text = agents_md.read_text()
         assert "agents-md-detail/cove.md" in agents_text
-        assert "Quick facts" in agents_text
-        assert "Triggers" in agents_text
-        assert "vault://" in agents_text
-        assert "forgejo" in agents_text
+        assert "Forgejo" in agents_text
+        assert "Vault" in agents_text
         assert "Project override" in agents_text
         assert "# Existing Project" in agents_text

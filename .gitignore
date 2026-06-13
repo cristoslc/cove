@@ -44,3 +44,4 @@ cli/build/
 !.agents/agents-md-detail/fj.md
 
 .agents/cove/
+compose/nginx/default.conf

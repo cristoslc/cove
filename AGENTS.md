@@ -84,30 +84,11 @@ When swain skills overlap with other installed skills or built-in agent capabili
 
 <!-- end swain governance -->
 
-<!-- cove-guidance start -->
-## Cove
+## Cove-specific notes
 
-This machine runs Cove — a local developer platform (forge, vault, CI, registry, pages).
+- **`cove up` requires sudo** for `/etc/resolver/cove` and `mkcert -install`. Do not run it autonomously — ask the operator to run it, or offer to set up passwordless sudo for those specific commands via a `/etc/sudoers.d/cove` entry.
+- **`cove up --no-sudo`** skips sudo tasks but DNS resolution for `*.cove` won't work without the resolver file. Use `curl -H "Host: ..." https://127.0.0.1/...` for health checks when testing without sudo.
+- **Colima** is the Docker runtime on macOS. `cove up` auto-starts it if not running and switches the Docker context to `colima`.
+- **`uv run --directory cli cove up`** runs the project-local CLI without reinstalling the system tool. Use this for testing changes.
 
-**Full reference:** `.agents/agents-md-detail/cove.md`
-**Project override:** `.agents/cove/agents-md/cove.md` (if it exists, it augments/overrides the global doc for that repo)
 
-### Quick facts
-
-- **Forgejo** at `http://localhost:3000/`. CLI: `fj` (auto-detects host from git remote).
-- **Vault** at `http://127.0.0.1:8200`. Use `cove creds vault-get` / `cove creds vault-put` — never hardcode secrets.
-- **Constraints:** No cloud dependencies. No internet during builds/CI. All git remotes go to Forgejo.
-
-### Triggers
-
-Load and follow the spoke doc when the conversation involves:
-
-| Trigger | Examples |
-|---------|----------|
-| Credential management | `vault://`, `op://`, `cove creds`, `cove install`, `cove up/down` |
-| Forgejo / git remotes | `forgejo`, `forge`, `fj`, `git remote`, pushing/pulling non-GitHub |
-| Pages / hosting | `cove pages`, static hosting, site deployment |
-| Services / infra | `cove`, `woodpecker`, `registry`, `down`, `uninstall`, service health |
-
-When triggered, consult `.agents/agents-md-detail/cove.md` first. If a project-level `.agents/cove/agents-md/cove.md` exists, consult it second — it may override or extend.
-<!-- cove-guidance end -->

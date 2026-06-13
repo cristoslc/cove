@@ -30,19 +30,25 @@ def _container_env(container_name: str) -> dict[str, str]:
 
 def _render_context(forgejo: dict, vault: dict) -> dict:
     admin_username = os.environ.get("USER") or os.environ.get("LOGNAME") or "cove"
+    computer_name = os.environ.get("COMPUTER_NAME") or os.uname().nodename.split(".")[0]
+    home = Path.home()
     return {
         "forgejo_domain": forgejo.get("FORGEJO__server__DOMAIN", "localhost"),
         "forgejo_root_url": forgejo.get("FORGEJO__server__ROOT_URL", "http://localhost:3000/"),
         "forgejo_ssh_domain": forgejo.get("FORGEJO__server__SSH_DOMAIN", "localhost"),
         "forgejo_ssh_port": forgejo.get("FORGEJO__server__SSH_PORT", "2222"),
         "admin_username": admin_username,
+        "repo_owner": admin_username,
+        "repo_name": "cove",
+        "computer_name": computer_name.lower(),
+        "cove_data_root": str(home / "Documents" / "cove-data"),
         "vault_addr": vault.get("VAULT_ADDR", "http://127.0.0.1:8200"),
     }
 
 
 def _render_guidance(forgejo: dict, vault: dict) -> str:
     template_text = (
-        files("cove.templates").joinpath("project-guidance.md.j2").read_text()
+        files("cove.templates").joinpath("detail-cove.md.j2").read_text()
     )
     ctx = _render_context(forgejo, vault)
     env = Environment(loader=BaseLoader())
@@ -50,26 +56,23 @@ def _render_guidance(forgejo: dict, vault: dict) -> str:
 
 
 def _render_agents_block(ctx: dict, detail_ref: str) -> str:
+    parent = detail_ref.rsplit("/", 1)[0] if "/" in detail_ref else "."
     return (
         f"## Cove\n\n"
-        f"This machine runs Cove — a local developer platform (forge, vault, CI, registry, pages).\n\n"
-        f"**Full reference:** `{detail_ref}`\n"
-        f"**Project override:** `.agents/cove/agents-md/cove.md` (if it exists, it augments/overrides the global doc for that repo)\n\n"
-        f"### Quick facts\n\n"
-        f"- **Forgejo** at `{ctx["forgejo_root_url"]}`. CLI: `fj` (auto-detects host from git remote).\n"
-        f"- **Vault** at `{ctx["vault_addr"]}`. "
+        f"This machine runs Cove — a local developer platform (forge, vault, CI, registry, pages). "
+        f"All services are offline-first.\n\n"
+        f"- **Forgejo** at `https://git.cove/` (TLS via nginx+mkcert). "
+        f"CLI: `fj` (see `{parent}/fj.md`).\n"
+        f"- **Vault** at `https://vault.cove/` (TLS via nginx+mkcert). "
         f"Use `cove creds vault-get` / `cove creds vault-put` — never hardcode secrets.\n"
-        f"- **Constraints:** No cloud dependencies. No internet during builds/CI. All git remotes go to Forgejo.\n\n"
-        f"### Triggers\n\n"
-        f"Load and follow the spoke doc when the conversation involves:\n\n"
-        f"| Trigger | Examples |\n"
-        f"|---------|----------|\n"
-        f"| Credential management | `vault://`, `op://`, `cove creds`, `cove install`, `cove up/down` |\n"
-        f"| Forgejo / git remotes | `forgejo`, `forge`, `fj`, `git remote`, pushing/pulling non-GitHub |\n"
-        f"| Pages / hosting | `cove pages`, static hosting, site deployment |\n"
-        f"| Services / infra | `cove`, `woodpecker`, `registry`, `down`, `uninstall`, service health |\n\n"
-        f"When triggered, consult `{detail_ref}` first. "
-        f"If a project-level `.agents/cove/agents-md/cove.md` exists, consult it second — it may override or extend."
+        f"- **Prerequisites (macOS):** `brew install colima mkcert && colima start && mkcert -install`\n"
+        f"- **Constraints:** No cloud dependencies. No internet during builds/CI. "
+        f"All git remotes go to Forgejo.\n\n"
+        f"**Full reference:** `{detail_ref}`\n"
+        f"**Project override:** `.agents/cove/agents-md/cove.md` "
+        f"(if it exists, it augments/overrides the global doc for that repo)\n\n"
+        f"When triggered by any Cove-related keyword (credentials, forgejo, pages, services), "
+        f"load the spoke doc above."
     )
 
 
@@ -77,6 +80,15 @@ def _write_detail_cove(detail_path: Path, rendered: str) -> None:
     detail_path.parent.mkdir(parents=True, exist_ok=True)
     detail_path.write_text(rendered.strip() + "\n")
     click.echo(f"Wrote cove details to {detail_path}")
+
+
+def _write_fj_detail(fj_path: Path) -> None:
+    fj_path.parent.mkdir(parents=True, exist_ok=True)
+    template_text = (
+        files("cove.templates").joinpath("fj-reference.md.j2").read_text()
+    )
+    fj_path.write_text(template_text.strip() + "\n")
+    click.echo(f"Wrote fj CLI reference to {fj_path}")
 
 
 def _write_project_override(project_root: Path, ctx: dict) -> Path:
