@@ -333,7 +333,17 @@ All endpoints use `Authorization: token {sha1}` headers. Tokens are scoped per-r
 - **Forgejo-specific features** — reactions, project boards, milestones, labels with descriptions — all need explicit support in the event format. The format is extensible but each feature needs an event type.
 - **External collaborators** — this design does not support friends, reviewers, or other people. If the operator needs to share a PR with someone, they push to a public forge (out of scope for this musing) or share a read-only tier-2 URL.
 
-## Why Not Forgejo Federation
+## Why This Differs from Existing Forgejo PR Mirroring Tools
+
+The cove troves document the `forgejo-pr-mirror` research [synthesis](../../docs/troves/forgejo-pr-mirror/synthesis.md). The fundamental finding: **Forgejo's API cannot create real PR objects from external sources where the source branch doesn't exist on the target instance.** This kills Forgejo ↔ GitHub PR sync, and every existing tool works around it:
+
+- **Forgesync** — one-way metadata sync (Forgejo → GitHub). PR state as metadata, not full conversation threads.
+- **Gitea Mirror** — GitHub PRs imported as "enriched issues" with labels, not native PRs with diff/merge.
+- **Forgejo issue #7556** (full two-way mirroring) — opened April 2025, no activity, not on roadmap.
+
+Multi-stage cove avoids this limitation entirely because **branches exist on both instances**. The sync layer mirrors git refs (branches are everywhere), so when tier-2 calls `POST /repos/{owner}/{repo}/pulls` with `head: "macbook/feature-x"`, that branch already exists on tier-2. This is a standard Forgejo PR creation, not a cross-forge PR import. The API works.
+
+Forgejo ↔ Forgejo sync with co-located branches is a different problem than Forgejo ↔ GitHub sync with absent source repos. The trove confirms no existing tool solves this, but the technical limitation (missing source branches) doesn't apply to our case.
 
 Forgejo federation (ActivityPub/ForgeFed) is in progress. As of late 2025:
 - **Stars federation** is built
