@@ -136,27 +136,52 @@ The `show_status_dashboard()` function would:
 |----------|------|------|
 | Current (help text) | Standard CLI behavior | Not useful daily |
 | Status dashboard (proposed) | High value, immediate, scriptable, no deps | Static, no interactivity |
-| TUI (Lazydocker-style) | Interactive, scrollable logs, resource graphs | Extra dep (or bundled binary), not scriptable, overkill for "is it up?" |
+| TUI as default (`cove` launches TUI; `cove up/down/status/restart` remain CLI) | Unified management, discoverable, no extra tool needed | Extra dep, not scriptable, startup latency, accessibility |
 | Interactive menu | Discoverable | Not scriptable, extra deps |
 | `cove status` command | Explicit, scriptable | Extra keystroke for common case |
 
-## Why Not a TUI as Default?
+## TUI as Default: Deeper Analysis
 
-1. **Different use case** — A TUI is for *interactive management* (scrolling logs, restarting containers, inspecting resources). The default command answers a *read-only question*: "is my harbor running?"
+The proposal: `cove` (no args) launches a TUI for interactive management; `cove up`, `cove down`, `cove status`, `cove restart`, `cove logs`, `cove shell` remain CLI commands for scripting.
 
-2. **Scriptability** — A static dashboard works in scripts, CI, SSH sessions, and `watch cove`. A TUI breaks all of these.
+### Arguments For
 
-3. **Dependency cost** — Bundling a TUI (Textual, Bubble Tea, or a Go binary like Lazydocker) adds significant weight. Cove's CLI is a single Python package; adding a TUI framework or vendoring a binary contradicts "self-contained, three prerequisites."
+- **Unified entry point** — One command (`cove`) does everything: status at a glance, then navigate to logs, restart, shell, resources
+- **Discoverability** — New users explore features without reading docs; keybindings visible in UI
+- **No external dependency on Lazydocker** — Cove owns the management UX; users don't need to install/configure a separate tool
+- **Cove-specific views** — Can show Forgejo provisioning status, Vault seal state, cert expiry, DNS health — things generic Docker TUIs don't surface
+- **Consistent with `cove up/down`** — Feels like a cohesive platform, not a CLI + separate TUI
 
-4. **Lazydocker already exists** — The [gui-tools-for-cove.md](../gui-tools-for-cove.md) musing recommends Lazydocker for interactive management. Running `lazydocker` explicitly is the right UX for that mode; the default command shouldn't compete.
+### Arguments Against
 
-5. **Startup latency** — A TUI framework adds 100-500ms startup. The default command should be instant (<50ms).
+- **Dependency cost** — Textual (~3MB + deps) or vendored Go binary (~5-10MB). Cove CLI is currently ~200KB. Contradicts "three prerequisites."
+- **Scriptability broken for default case** — `watch cove`, `cove` in CI, `ssh host cove` all break. Workaround: `cove status` for scriptable output, but now two commands for "status."
+- **Startup latency** — Textual cold start ~200-400ms; Go binary ~50-100ms. Dashboard is <50ms.
+- **Accessibility** — TUIs are poor citizens for screen readers, terminal recording, `grep`, `less`.
+- **Maintenance burden** — Building a good TUI is a project in itself (keybindings, scrollback, resize handling, mouse support, themeability). Lazydocker has 30k stars and years of polish.
+- **User preference** — Some users already have a preferred Docker TUI (Lazydocker, Dozzle, ctop, Docker Desktop). Forcing Cove's TUI creates friction.
+- **Scope creep** — Cove is a platform orchestrator, not a Docker UI. A TUI pulls toward becoming a general Docker manager.
 
-6. **Accessibility** — Static text output works with screen readers, `less`, `grep`, and terminal recording. TUIs often don't.
+### Hybrid Compromise
+
+`cove` (no args) → **static dashboard** (fast, scriptable, accessible)
+`cove tui` → **optional TUI** (lazy-loaded, only if user wants it, can vendor Lazydocker or build minimal Textual app)
+
+This keeps the default fast and scriptable while offering interactive mode explicitly.
+
+## Why Not Replace Lazydocker Entirely?
+
+Even if Cove builds a TUI, Lazydocker remains the recommended fallback because:
+
+1. **Maturity** — 30k+ stars, handles edge cases Cove's TUI won't (custom networks, buildx, compose profiles, plugin ecosystems)
+2. **User choice** — "Cove manages the platform; you choose your Docker UI"
+3. **Zero maintenance** — Cove doesn't own Docker UI bugs
 
 ## Decision
 
-**Status dashboard as default command.** It's the highest-value view for the "is my harbor running?" use case that dominates daily interaction. Users who want help can still run `cove --help`.
+**Status dashboard as default command (`cove`).** Optional `cove tui` subcommand for interactive mode (lazy-loaded, can delegate to Lazydocker or build minimal Textual app). `cove up/down/status/restart/logs/shell` remain CLI for scripting.
+
+This preserves scriptability, fast startup, and accessibility for the 90% case ("is it up?"), while offering a path to interactive management without forcing a heavy dependency on all users.
 
 ## Related Musings
 
