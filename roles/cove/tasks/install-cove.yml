@@ -1,6 +1,0 @@
----
-- name: Download cove CLI from GitHub releases
-  ansible.builtin.get_url:
-    url: "https://github.com/cristoslc/cove/releases/download/v{{ cove_version }}/cove-{{ ansible_system | lower }}-{{ ansible_architecture | replace('aarch64', 'arm64') | replace('x86_64', 'amd64') }}"
-    dest: /usr/local/bin/cove
-    mode: "0755"
