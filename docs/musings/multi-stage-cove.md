@@ -1,7 +1,7 @@
 ---
 title: "Multi-Stage .cove — Operator-Centric with Always-Online Tier-2"
 created: 2026-06-13
-authored-by: deepseek-v4-flash:cloud
+authored-by: deepseek-v4-flash:cloud, glm-5.1:cloud
 status: Draft
 ---
 
@@ -401,6 +401,113 @@ SQLite (used by local Cove) supports some replication modes, but multi-master is
 - Or conflict resolution at the database level (not Forgejo's domain)
 
 Single-writer defeats the offline-first guarantee: if tier-2 is the single writer, locals can't work offline and sync back. Database-level conflict resolution is a much harder project than application-level event log sync.
+
+## Critical Evaluation
+
+The prior version of this musing was written by an agent that got the facts right but missed the soul. It built a distributed database on top of git and called it a sync protocol. It was thorough, correct on the technical details, and architecturally wrong for Cove.
+
+### What It Got Right
+
+1. **Offline-first as immutable.** Local Coves must work fully without tier-2. This is Cove's guiding principle applied correctly.
+2. **Single-operator identity.** One account (`cristos`) everywhere. No RBAC, no ghost users, no `[bot]` convention. Matches Cove's "one person" constraint.
+3. **PR/issue sync as the core problem.** Git sync is solved (Forgejo push mirrors handle it). PRs, issues, and comments are the actual feature. This framing is correct.
+4. **Forgejo federation doesn't help.** Federation is for many operators across instances. We have one operator across instances. Different problem.
+5. **Branch-mirroring advantage.** Existing tools fail because source branches don't exist on the target. Our architecture mirrors branches, avoiding this entirely.
+6. **The fork model is wrong.** Correctly evaluated and rejected. Forks fragment issues across repos, degrade the sequential workflow, and don't solve anything the shared model doesn't solve better.
+
+### What It Got Wrong
+
+**1. The event log is over-engineered.** Per-node event logs, immutable comment files, a replay engine, mapping.json for ID translation — this is a full event sourcing system built on git. Cove's PURPOSE says "if it needs you to configure three things before it runs, it is not done." The event log requires configuring: sync repos, daemon processes, webhook endpoints, ID mapping, replay engines. That's five things before it runs. The musing built a distributed database and used git as the replication layer.
+
+**2. Git is the wrong transport for operational data.** PRs and issues change frequently, have mutable state, and need arbitrary queries. Git is for immutable, content-addressed, branch-merging workflows. The musing acknowledged this without confronting it: "No meta.json is committed because two nodes would conflict on it." That's the data model telling you it doesn't fit the transport.
+
+**3. The sync daemon is essentially a distributed database.** Event sourcing, replay, conflict resolution, ID mapping, multi-master convergence — all on top of git. Cove's PURPOSE says "opinionated" — Cove makes choices so you don't have to. The musing didn't make a choice; it invented a new distributed database protocol and called it "sync."
+
+**4. Missing: the simplest thing that could work.** The musing leapt to event sourcing without considering direct API sync. Local Forgejo has a REST API. Tier-2 Forgejo has a REST API. A process that reads from one and writes to the other, bidirectionally, with last-writer-wins for conflicting mutations. No event logs, no git transport for operational data, no replay engine. Stateless. Restartable from scratch at any time.
+
+**5. Missing: what Forgejo already provides.** Forgejo has built-in push mirrors for git. It has webhooks for event detection. It has a full REST API for issues/PRs/comments. The musing proposed a parallel system instead of using what Forgejo already gives.
+
+**6. Missing: the harbor principle applied to tier-2.** Cove is a harbor — one command, everything inside. The musing treats tier-2 as a sync target but doesn't establish that tier-2 IS a Cove instance. If tier-2 is also a Cove, then `cove up` on tier-2 gives you Forgejo + Vault + runner + registry + pages. The sync is between two Cove instances, not between a Cove and a bespoke sync target.
+
+**7. The phone is overspecified.** PURPOSE says "single developer does not mean single machine." Any device on the Tailscale network can access any Cove instance directly. The phone doesn't need tier-2 as a special case — it can hit the laptop's Cove via Tailscale when the laptop is online. Tier-2 is for when no laptop is online. The phone case is "access my Cove from elsewhere," not "access a special tier-2 Cove."
+
+**8. The race conditions are self-inflicted.** R1-R8 are thorough, but most are problems created by the event log architecture, not inherent to multi-stage Cove. A simpler architecture (direct API sync) has fewer races because there's no intermediate representation to get out of sync.
+
+## Alternative Approaches
+
+Five approaches that supplement the event-log findings:
+
+### A1. Direct API Sync (Bidirectional Forgejo API Bridge)
+
+Forget event logs. A daemon reads issues/PRs/comments from one Forgejo instance via REST API and writes them to another. Bidirectional. Last-writer-wins for conflicts (compare `updated_at` timestamps). No event logs, no git transport for operational data, no replay engine. Git handles branches/commits via Forgejo's built-in push mirrors. The API bridge handles issues/PRs/comments.
+
+**Advantage:** Stateless. Restart from scratch at any time by re-reading the source. No mapping.json, no per-node logs, no replay. Forgejo is the source of truth on each instance; the bridge keeps them consistent.
+
+**Challenge:** Detecting changes. Poll the API (simple but wasteful) or webhooks (efficient but require the daemon to be reachable). For offline-first, webhook delivery fails when the target is down. Polling with `since` timestamps is more robust.
+
+### A2. Forgejo Database Sync (SQLite Replication)
+
+Instead of building a parallel system, sync Forgejo's own SQLite databases. Forgejo uses one SQLite file per repo. Rsync or Litestream could replicate these files. Application-level conflict resolution (last-writer-wins on rows) when both instances modified the same issue.
+
+**Advantage:** No custom event format, no mapping, no API bridge. Forgejo stays the source of truth. The sync layer is a file-level operation with row-level conflict resolution.
+
+**Challenge:** SQLite is not designed for multi-master replication. Two instances writing to the same DB file will corrupt it. The replication would need to be stop-sync-start: stop Forgejo on both sides, sync the DB files, restart. This defeats "always available."
+
+### A3. ForgeFed as Transport (Repurposed)
+
+Forgejo's federation layer uses ActivityPub for inter-instance communication. Even though it's designed for multi-operator, the transport and object model (Ticket, Comment, Review) could be repurposed for same-operator multi-instance. All instances trust all others because they're all `cristos`.
+
+**Advantage:** Leverages Forgejo's own federation work. Standard object types. No custom event format.
+
+**Challenge:** ForgeFed is incomplete (as of late 2025, only stars federation is built). Building on an incomplete foundation means either waiting or contributing upstream. And the trust model is wrong — ForgeFed assumes different operators, so it has authentication and authorization that we'd need to bypass or simplify for same-operator use.
+
+### A4. Shared Storage (NFS/SMB Mount)
+
+All local Coves share the same Forgejo data directory on tier-2 via network mount. Only the active instance writes. Needs a coordination layer (which Cove is active?) but eliminates sync entirely — there's one database.
+
+**Advantage:** No sync protocol at all. One Forgejo instance, one set of data.
+
+**Challenge:** Requires network connectivity for writes. Defeats offline-first. Only works for the "always-online tier-2" use case, not the "laptop in a café" use case. Also, SQLite over NFS is famously unreliable. This approach is a non-starter for Cove's offline-first principle.
+
+### A5. Single Forgejo, Multiple Git Remotes
+
+Run one Forgejo on tier-2. Local machines push/pull git directly (via SSH/HTTPS). Issues/PRs/comments live on tier-2 only. When offline, local machines work on git branches and accumulate local commits. When online, they push. The "multi-stage" problem reduces to "how do I use Forgejo when offline" — which Cove already handles (local git works offline, Forgejo is read-only until you're back online).
+
+**Advantage:** Simplest possible architecture. No sync protocol. One Forgejo. Issues and PRs are always in one place.
+
+**Challenge:** No offline issue/PR creation. If you want to file an issue while offline, you can't — Forgejo is on tier-2 and you can't reach it. This is the core use case that multi-stage Cove is supposed to solve. This approach reduces multi-stage Cove to "git push from multiple machines," which is already solved.
+
+## Going in a Different Direction
+
+Two alternatives that rethink the problem entirely:
+
+### D1. Don't Sync Forgejo — Build a Cove-Native Issue Tracker
+
+The hardest part of multi-stage is Forgejo's issue/PR model (no threading, no external API for creating real PRs from absent branches, SQLite-only). Why fight it? Build a Cove-native issue tracker that stores issues in git (like git-bug) and renders them in a web UI. No Forgejo API to fight, no database to sync, no event log to replay. Issues are git objects, synced the same way branches are synced. Comments are files in the repo. PR metadata (title, body, labels, state) are files too. The web UI reads from the git repo and renders issues/PRs.
+
+This makes multi-stage trivial: `git push` already handles distribution. The issue tracker is just another git-based tool. No daemon, no sync protocol, no mapping.
+
+**Advantage:** Eliminates the entire sync problem. Git IS the sync. Offline-first by construction.
+
+**Challenge:** You lose Forgejo's issue/PR UI and all its features (reviews, CI integration, merge buttons). You'd need to build a web UI that's good enough to replace Forgejo's. That's a significant product investment. And you'd need a PR creation flow that creates real Forgejo PRs (with diff, merge) from git data, which brings back the API limitation.
+
+### D2. Don't Multi-Stage — Single Instance, Remote Access
+
+Instead of N Forgejo instances, run one Forgejo (on tier-2 or on the laptop) and access it from everywhere via Tailscale. The laptop's Forgejo is THE Forgejo. When the laptop is online, everything works. When the laptop is asleep, tier-2 provides a read-only mirror (or a cached snapshot via Forgejo's push mirror).
+
+The "multi-stage" problem goes away because there's only one stage. The phone accesses the laptop's Forgejo via Tailscale when the laptop is on. When the laptop is off, the phone accesses tier-2's read-only mirror for viewing.
+
+**Advantage:** Simplest architecture. One Forgejo. No sync protocol. Issues and PRs are always in one place.
+
+**Challenge:** No offline issue/PR creation on any machine other than the one running Forgejo. The laptop needs to be on (or reachable via Tailscale) for writes. This is fine for "always-on desktop" setups but doesn't work for "laptop in a café." The original musing's use case — work offline, sync later — requires a local Forgejo instance.
+
+## Where This Leaves Us
+
+The event-log architecture in this musing is technically correct but architecturally excessive. It builds a distributed database on top of git to solve a problem that might be simpler than it appears. The most promising direction is **A1 (Direct API Sync)** — a stateless daemon that reads from one Forgejo and writes to another, using Forgejo's own API as the sync protocol. No event logs, no replay, no mapping files. Forgejo stays the source of truth on each instance. The daemon is just a consistency maintainer.
+
+But the deeper question is whether the problem is worth solving at this complexity. **D2 (single instance, remote access)** solves 80% of the use case (phone access, always-on availability) with 5% of the complexity. The remaining 20% (offline issue/PR creation on a secondary machine) is the expensive part. If the operator can tolerate "no offline issue creation on the laptop" for v1, then single instance + Tailscale is the right starting point.
+
+The event-log architecture should be revisited only when the operator has proven they need offline issue creation on multiple machines simultaneously. Until then, it's speculative complexity.
 
 ## Implementation Path
 
