@@ -493,47 +493,139 @@ This makes multi-stage trivial: `git push` already handles distribution. The iss
 
 ### D2. Don't Multi-Stage — Single Instance, Remote Access
 
-Instead of N Forgejo instances, run one Forgejo (on tier-2 or on the laptop) and access it from everywhere via Tailscale. The laptop's Forgejo is THE Forgejo. When the laptop is online, everything works. When the laptop is asleep, tier-2 provides a read-only mirror (or a cached snapshot via Forgejo's push mirror).
+Instead of N Forgejo instances, run one Forgejo (on tier-2 or on the laptop) and access it from everywhere via Tailscale.
 
-The "multi-stage" problem goes away because there's only one stage. The phone accesses the laptop's Forgejo via Tailscale when the laptop is on. When the laptop is off, the phone accesses tier-2's read-only mirror for viewing.
+**This is wrong for Cove's primary use case.** Cove is for "someone who writes code on planes, in cafés, at cabins." The laptop being offline — lid closed, asleep in a bag, on a plane with WiFi off — is the NORMAL mode, not an edge case. D2 solves phone access and always-on availability but fails the airplane test. The operator can't create issues, comment on PRs, or see CI status when the laptop is offline and Forgejo is on tier-2.
 
-**Advantage:** Simplest architecture. One Forgejo. No sync protocol. Issues and PRs are always in one place.
+D2 is not a viable starting point. It solves the wrong problem.
 
-**Challenge:** No offline issue/PR creation on any machine other than the one running Forgejo. The laptop needs to be on (or reachable via Tailscale) for writes. This is fine for "always-on desktop" setups but doesn't work for "laptop in a café." The original musing's use case — work offline, sync later — requires a local Forgejo instance.
+## Decomposing Further: Maybe Forgejo Isn't Where Issues Should Live
+
+The core tension: Forgejo's data model (SQLite, flat comments, no threading) is not designed for distributed sync. Every approach that syncs Forgejo instances fights Forgejo's architecture. What if we stop fighting it?
+
+### D3. Separate the Concerns: Forgejo for Git + PRs, Git-Based Tracker for Issues
+
+Forgejo handles what it's good at: git hosting, PRs (which are git operations — branches, diffs, merges), and CI status display. Issues and comments move to a **git-based issue tracker** that's designed for distributed sync from the ground up.
+
+**How it works:**
+
+- **Tier-2** runs Forgejo (git hosting, PRs) + a git-based issue tracker web UI
+- **Local machines** run git (for code) + a local git-based issue tracker (for offline issue work)
+- **Phone** accesses tier-2's web UI for everything
+
+The issue tracker stores issues as git objects (like git-bug). Each issue is a directory of files in a git repo. Comments are files. State changes are file edits. The entire issue tracker is a git repo that syncs via `git push` / `git pull` — the same mechanism that already handles distributed code.
+
+```
+┌─ local machine (MacBook, offline) ─┐
+│  git: code repos                    │
+│  git: issue-tracker repo            │──┐
+│  (create issues, comment, close)    │  │
+└─────────────────────────────────────┘  │
+                                         │ git push/pull (when online)
+┌─ local machine (Linux, offline) ────┐  │
+│  git: code repos                    │──┤
+│  git: issue-tracker repo            │  │
+│  (create issues, comment, close)    │  │
+└─────────────────────────────────────┘  │
+                                         ▼
+┌─ tier-2 (always online) ───────────────┘
+│  Forgejo: git hosting, PRs            │
+│  Issue tracker web UI                  │
+│  (reads from the same git repo)       │
+└───────────────────────────────────────┘
+                    ▲
+                    │ HTTPS
+┌───────────────────┴────┐
+│  Phone (browser)      │
+│  tier-2 web UI        │
+└───────────────────────┘
+```
+
+**What this solves:**
+
+- **Offline-first by construction.** Git works offline. The issue tracker is a git repo. Create issues, comment, close — all work offline. Sync when online via `git push`.
+- **No Forgejo API to fight.** Issues are files in a git repo, not rows in Forgejo's SQLite. No API calls, no webhooks, no event logs.
+- **No threading problem.** The issue tracker can implement threading natively (parent/child comment relationships in the file format) because it's not constrained by Forgejo's flat comment model.
+- **No sync protocol to build.** Git IS the sync protocol. Push and pull. Already works.
+- **No mapping.json.** Issues have stable IDs (git object hashes or directory names). No per-instance numeric ID translation.
+- **No race conditions beyond git's own.** Git handles concurrent pushes with rebase/merge. The issue tracker inherits git's conflict resolution.
+
+**What this loses:**
+
+- **Forgejo's issue/PR UI.** The issue tracker needs its own web UI on tier-2. Building a good-enough web UI is real work.
+- **Forgejo's issue/PR integration.** Cross-references between issues and PRs (e.g., "closes #42" in a commit message) need to work across two systems. A commit in Forgejo references an issue in the git-based tracker. This is a linking convention, not a technical problem, but it needs to be consistent.
+- **Forgejo's PR comments.** PR review comments (inline code comments, review approvals) live in Forgejo. General PR discussion could live in the issue tracker. This split needs a clear UX convention.
+- **CI status on issues.** If CI runs locally and reports to Forgejo, the issue tracker needs to display CI status from Forgejo. Cross-system data flow.
+
+**The key insight: git already solves distributed sync.** The problem is that Forgejo's issue/PR data doesn't live in git. By moving issues to a git-based tracker, we inherit git's distributed sync for free. Forgejo keeps doing what it's good at (git hosting, PRs, CI) without being forced into a sync model it wasn't designed for.
+
+This is the D1 direction (Cove-native issue tracker) but scoped more narrowly: not replacing Forgejo's issue tracker entirely, but providing a git-based issue tracker that coexists with Forgejo. Forgejo handles PRs (which are git operations anyway). The git-based tracker handles issues and comments (which are the hard sync problem).
+
+### D4. Email-Based Issue Workflow
+
+Before web-based forges, open source development ran on email. Patches were emailed. Bug reports were emailed. Discussion happened on mailing lists. Email is offline-first by design — you compose offline, send when connected, receive when connected.
+
+**How it works:**
+
+- Issues are filed by emailing a dedicated address on tier-2
+- Comments are replies to the email thread
+- PRs are email patches (git format-patch / git send-email)
+- Local machines use their email client for issue/PR workflow
+- Tier-2 runs a mail-to-issue bridge that converts emails to Forgejo issues/PRs
+- Phone uses its email client (already installed) for reading and replying
+
+**Advantage:** Email is the most battle-tested offline-first communication protocol. Every device has an email client. No sync daemon, no event log, no custom protocol. The operator composes an issue on the plane, it sends when the laptop reconnects.
+
+**Challenge:** Email threading is primitive (subject-line-based). Forgejo's flat comment model maps well to email (each reply is a new comment), but the UX is worse than a web UI. And email patches (git send-email) are a different workflow from Forgejo PRs — the operator would need to learn a new PR workflow or the bridge would need to create Forgejo PRs from emailed patches (which brings back the API limitation).
+
+### D5. CRDT-Based Issue Sync
+
+Instead of git or event logs, use CRDTs (Conflict-free Replicated Data Types) for issue/comment state. Each machine maintains a local CRDT store. Sync is a pairwise merge of CRDT state — no conflict resolution needed because CRDTs converge by construction.
+
+**How it works:**
+
+- Each issue is a CRDT document (title, body, labels, state, comments)
+- Each comment is a CRDT within the issue document
+- Local edits are applied immediately to the local CRDT store
+- Sync is a CRDT merge between instances (push/pull the CRDT state)
+- No conflict resolution, no last-writer-wins, no event log
+
+**Advantage:** CRDTs eliminate the entire conflict resolution problem. No races, no branching, no last-writer-wins. The math guarantees convergence.
+
+**Challenge:** CRDTs are complex to implement correctly. The CRDT store needs to be embedded in the sync daemon (or use an existing library like Automerge or Yjs). CRDT state can grow large (every edit is preserved for merge history). And CRDTs don't integrate with Forgejo's SQLite — you'd still need a bridge to convert CRDT state to Forgejo API calls on tier-2.
 
 ## Where This Leaves Us
 
-The event-log architecture in this musing is technically correct but architecturally excessive. It builds a distributed database on top of git to solve a problem that might be simpler than it appears. The most promising direction is **A1 (Direct API Sync)** — a stateless daemon that reads from one Forgejo and writes to another, using Forgejo's own API as the sync protocol. No event logs, no replay, no mapping files. Forgejo stays the source of truth on each instance. The daemon is just a consistency maintainer.
+The event-log architecture is over-engineered. D2 (single instance) fails the airplane test. The most promising direction is **D3 (separate concerns)** — move issues to a git-based tracker, let Forgejo handle git and PRs, and let git handle distributed sync. This is the only approach that gives offline-first issue/PR workflow without building a custom distributed database.
 
-But the deeper question is whether the problem is worth solving at this complexity. **D2 (single instance, remote access)** solves 80% of the use case (phone access, always-on availability) with 5% of the complexity. The remaining 20% (offline issue/PR creation on a secondary machine) is the expensive part. If the operator can tolerate "no offline issue creation on the laptop" for v1, then single instance + Tailscale is the right starting point.
+D3's cost is a new component (git-based issue tracker with web UI) and a split UX (issues in the tracker, PRs in Forgejo). But the cost of the event-log approach is also a new component (sync daemon with event log, replay engine, mapping, webhooks) — and it fights Forgejo's data model the whole way. D3 fights git's data model too, but git is designed for distributed sync. The fight is easier.
 
-The event-log architecture should be revisited only when the operator has proven they need offline issue creation on multiple machines simultaneously. Until then, it's speculative complexity.
+**Recommendation:** Prototype D3. Build a minimal git-based issue tracker (issues as files in a git repo, comments as files, state as file content). Test the offline workflow: create issues on the plane, sync when the laptop reconnects. If the UX is good enough, this is the architecture. If the split UX (issues in tracker, PRs in Forgejo) is too confusing, revisit the event-log approach with the understanding that it's a distributed database and should be designed as one.
 
-## Implementation Path
+## Implementation Path (D3)
 
-1. **Define the event format** — JSON schema for issues, PRs, comments, reviews, labels, etc. Each event type has a clear shape.
-2. **Build the local sync daemon** — watches Forgejo for changes, writes to the sync repo, commits, pushes to tier-2. Small Python service, runs alongside Forgejo.
-3. **Build the tier-2 sync daemon** — pulls from each local's sync repo (or receives pushes), applies events to its Forgejo database. Same daemon, different config.
-4. **Build the read path** — tier-2's Forgejo reads from its own database. No changes to Forgejo needed. The sync daemon is a separate process.
-5. **Handle initial sync** — when tier-2 is first set up, bulk-export all issues/PRs from each local, import to tier-2. After that, incremental.
-6. **Test offline convergence** — disconnect MacBook, work for a day, reconnect, verify both sides converge. This is the core invariant.
-7. **Test hub-and-spoke** — verify MacBook and Linux box both sync to tier-2 without interfering with each other.
+1. **Define the issue file format** — each issue is a directory with `title`, `body`, `comments/`, `labels`, `state` files. JSON or YAML. Stable IDs via directory name (slug or UUID).
+2. **Build the local CLI** — `cove issue create`, `cove issue comment`, `cove issue close`. Reads/writes files in the issue repo. No daemon, no web UI on local.
+3. **Build the tier-2 web UI** — reads the issue repo and renders issues/PRs in a web interface. Static site or lightweight server (Flask, FastAPI, or even a static site generator).
+4. **Build the tier-2 Forgejo bridge** — when a PR is created/merged on Forgejo, the bridge creates/updates the corresponding issue in the git-based tracker. This is the only cross-system integration.
+5. **Test offline convergence** — create issues on the plane, sync when the laptop reconnects. Verify both sides converge.
+6. **Test hub-and-spoke** — MacBook and Linux both sync to tier-2. Verify issues from both machines appear on tier-2 and on each other's next pull.
 
-## Open Questions
+## Open Questions (D3)
 
-1. **Sync trigger cadence** — push on every event, or batch every N seconds? Trade-off: latency vs. resource use.
-2. **Conflict UX** — when last-writer-wins isn't clear, how do we present the choice to the operator? Inline in Forgejo? A separate `cove sync` command?
-3. **Schema evolution** — when Forgejo adds a new field, how does the event format evolve? Versioned events, optional fields, migration scripts?
-4. **Attachments and large content** — images, PDFs, large comments. Store in the sync repo (bloats git) or use content-addressed storage (CAS) with git storing only the hash?
-5. **Tier-2 hardware** — Raspberry Pi? Old laptop? VPS? Each has different cost/uptime/trust trade-offs.
-6. **Phone as a sync participant?** — currently the phone is read-only via HTTPS. Should it ever write? If the operator types a long comment on their phone, does that go through tier-2's normal event flow? (Answer: yes, tier-2 is the phone's only writer, so it's already in the flow.)
-7. **What if tier-2 is down for a day?** — locals accumulate events locally. When tier-2 comes back, they push. No data loss. But phone access is unavailable during the outage.
+1. **Issue ID scheme** — UUIDs (no collision, ugly) or slugs (human-readable, collision possible)? Slugs with node prefix (`macbook/crash-on-startup`) are the middle ground.
+2. **PR ↔ issue linking** — how does a Forgejo PR reference an issue in the git-based tracker? Convention in commit messages (`closes issue: crash-on-startup`)? A bridge that updates the issue when the PR merges?
+3. **Web UI scope** — read-only (view issues, comment via CLI) or full CRUD (create/close via web)? Full CRUD means the web UI writes to the git repo, which means it needs git push access to tier-2.
+4. **Phone workflow** — phone accesses tier-2's web UI. Can the phone create issues? If yes, the web UI needs to commit to the issue repo. If no, the phone is read-only and the operator uses the CLI on a local machine.
+5. **Migration path** — existing Cove users have issues in Forgejo's SQLite. How do we export them to the git-based tracker? One-time migration script.
+6. **Attachments** — images in comments. Store in the git repo (bloats it) or in content-addressed storage (CAS) with the issue file referencing the hash?
+7. **CI status on issues** — if CI runs locally and reports to Forgejo, the issue tracker needs to display CI status. Cross-system data flow or skip for v1?
 
 ## Next Steps
 
-- Write a spec for the event format (SPEC: Multi-Stage Cove Sync Protocol)
-- Prototype the sync daemon with a minimal event set (issues + comments)
-- Test offline convergence with MacBook disconnected
-- Test hub-and-spoke with MacBook and Linux both syncing to tier-2
-- Decide on sync trigger cadence and conflict UX
-- Plan migration path for existing local-only Cove users
+- Prototype the issue file format (one directory per issue, files for each field)
+- Build a minimal CLI (`cove issue create`, `cove issue comment`, `cove issue list`)
+- Build a minimal tier-2 web UI that reads the issue repo and renders a list + detail view
+- Test the offline workflow: create issues on MacBook, push to tier-2, view on phone
+- Decide on PR ↔ issue linking convention
+- Decide on phone write capability (read-only or full CRUD via web UI)
