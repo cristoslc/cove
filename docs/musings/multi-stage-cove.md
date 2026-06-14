@@ -507,59 +507,86 @@ The core tension: Forgejo's data model (SQLite, flat comments, no threading) is 
 
 Forgejo handles what it's good at: git hosting, PRs (which are git operations — branches, diffs, merges), and CI status display. Issues and comments move to a **git-based issue tracker** that's designed for distributed sync from the ground up.
 
+**What already exists:** This isn't a greenfield build. The most mature option is **[git-bug](https://github.com/git-bug/git-bug)** (v0.10.1, May 2025, 9.9k stars, active development as of 2026). It's a standalone, distributed, offline-first issue tracker that embeds issues and comments as git objects in a separate ref namespace (`refs/bugs/`). It has:
+- CLI, TUI (`git bug termui`), and a web UI (`webui/`)
+- Bridges to GitHub and GitLab for bidirectional sync
+- Conflict-free merge by construction (issues are stored as edit operations in git blobs, assembled in a linear chain of commits)
+- Go binary, single-file install, no database
+
+Other options: **git-issue** (dspinellis, decentralized issue management), **bug** (driusan, filesystem-based with `issues/` directory), **Fossil** (built-in issue tracker but not git-based — would replace git entirely).
+
+git-bug is the right fit. It's already what D3 describes: a git-based issue tracker that's offline-first, distributed, and syncs via `git push`/`git pull`. No custom protocol, no event log, no daemon. The question isn't "build or buy" — it's "integrate git-bug alongside Forgejo."
+
 **How it works:**
 
-- **Tier-2** runs Forgejo (git hosting, PRs) + a git-based issue tracker web UI
-- **Local machines** run git (for code) + a local git-based issue tracker (for offline issue work)
-- **Phone** accesses tier-2's web UI for everything
-
-The issue tracker stores issues as git objects (like git-bug). Each issue is a directory of files in a git repo. Comments are files. State changes are file edits. The entire issue tracker is a git repo that syncs via `git push` / `git pull` — the same mechanism that already handles distributed code.
+- **Tier-2** runs Forgejo (git hosting, PRs) + git-bug web UI (issue tracking)
+- **Local machines** run git (for code) + git-bug CLI (for offline issue work)
+- **Phone** accesses tier-2's git-bug web UI for issues, tier-2's Forgejo for PRs
+- **Sync:** `git push` / `git pull` on the bug repo. Same as code. No daemon.
 
 ```
 ┌─ local machine (MacBook, offline) ─┐
 │  git: code repos                    │
-│  git: issue-tracker repo            │──┐
+│  git-bug: issue tracker             │──┐
 │  (create issues, comment, close)    │  │
 └─────────────────────────────────────┘  │
                                          │ git push/pull (when online)
 ┌─ local machine (Linux, offline) ────┐  │
 │  git: code repos                    │──┤
-│  git: issue-tracker repo            │  │
+│  git-bug: issue tracker            │  │
 │  (create issues, comment, close)    │  │
 └─────────────────────────────────────┘  │
                                          ▼
 ┌─ tier-2 (always online) ───────────────┘
 │  Forgejo: git hosting, PRs            │
-│  Issue tracker web UI                  │
-│  (reads from the same git repo)       │
+│  git-bug web UI: issue tracking       │
+│  (both read from the same git repos)  │
 └───────────────────────────────────────┘
                     ▲
                     │ HTTPS
 ┌───────────────────┴────┐
 │  Phone (browser)      │
-│  tier-2 web UI        │
+│  git-bug web UI       │
+│  Forgejo web UI       │
 └───────────────────────┘
 ```
 
 **What this solves:**
 
-- **Offline-first by construction.** Git works offline. The issue tracker is a git repo. Create issues, comment, close — all work offline. Sync when online via `git push`.
-- **No Forgejo API to fight.** Issues are files in a git repo, not rows in Forgejo's SQLite. No API calls, no webhooks, no event logs.
-- **No threading problem.** The issue tracker can implement threading natively (parent/child comment relationships in the file format) because it's not constrained by Forgejo's flat comment model.
-- **No sync protocol to build.** Git IS the sync protocol. Push and pull. Already works.
-- **No mapping.json.** Issues have stable IDs (git object hashes or directory names). No per-instance numeric ID translation.
-- **No race conditions beyond git's own.** Git handles concurrent pushes with rebase/merge. The issue tracker inherits git's conflict resolution.
+- **Offline-first by construction.** git-bug stores issues in git. Git works offline. Create issues, comment, close — all work offline. Sync when online via `git push`.
+- **No Forgejo API to fight.** Issues are git objects, not rows in Forgejo's SQLite. No API calls, no webhooks, no event logs.
+- **No threading problem.** git-bug can implement threading natively (it's not constrained by Forgejo's flat comment model).
+- **No sync protocol to build.** Git IS the sync protocol. git-bug already uses it.
+- **No mapping.json.** Issues have stable IDs (git object hashes). No per-instance numeric ID translation.
+- **No race conditions beyond git's own.** git-bug's storage model (edit operations in a linear commit chain) is conflict-free by design.
+- **Existing project, active community.** 9.9k stars, 2,627 commits, v0.10.1 released May 2025. Not a prototype — a real tool.
 
 **What this loses:**
 
-- **Forgejo's issue/PR UI.** The issue tracker needs its own web UI on tier-2. Building a good-enough web UI is real work.
-- **Forgejo's issue/PR integration.** Cross-references between issues and PRs (e.g., "closes #42" in a commit message) need to work across two systems. A commit in Forgejo references an issue in the git-based tracker. This is a linking convention, not a technical problem, but it needs to be consistent.
-- **Forgejo's PR comments.** PR review comments (inline code comments, review approvals) live in Forgejo. General PR discussion could live in the issue tracker. This split needs a clear UX convention.
-- **CI status on issues.** If CI runs locally and reports to Forgejo, the issue tracker needs to display CI status from Forgejo. Cross-system data flow.
+- **Split UX.** Issues live in git-bug's web UI. PRs live in Forgejo's web UI. The operator switches between two interfaces. This is the main cost.
+- **Cross-references.** A commit message saying "closes #42" needs to reference git-bug's issue ID, not Forgejo's. This is a convention, not a technical problem, but it needs to be consistent.
+- **PR comments.** Inline code review comments live in Forgejo. General PR discussion could live in git-bug. This split needs a clear UX convention.
+- **CI status on issues.** If CI runs locally and reports to Forgejo, git-bug needs to display CI status from Forgejo. Cross-system data flow or skip for v1.
+- **git-bug maturity.** v0.10.1 is pre-1.0. The API may change. The web UI may not be polished enough for phone use. Need to evaluate before committing.
 
-**The key insight: git already solves distributed sync.** The problem is that Forgejo's issue/PR data doesn't live in git. By moving issues to a git-based tracker, we inherit git's distributed sync for free. Forgejo keeps doing what it's good at (git hosting, PRs, CI) without being forced into a sync model it wasn't designed for.
+**The key insight: git already solves distributed sync.** The problem is that Forgejo's issue/PR data doesn't live in git. git-bug already solved this — it stores issues in git. By using git-bug alongside Forgejo, we inherit git's distributed sync for free. Forgejo keeps doing what it's good at (git hosting, PRs, CI) without being forced into a sync model it wasn't designed for.
 
-This is the D1 direction (Cove-native issue tracker) but scoped more narrowly: not replacing Forgejo's issue tracker entirely, but providing a git-based issue tracker that coexists with Forgejo. Forgejo handles PRs (which are git operations anyway). The git-based tracker handles issues and comments (which are the hard sync problem).
+### Branching Comment Threads: Edge Case, Not Architecture Driver
+
+The musing's race condition analysis (R5) spends significant effort on comment branching — two machines writing comments offline that interleave misleadingly when merged. This is a real problem, but for a single operator it's an edge case, not an architecture driver.
+
+**Why it's low likelihood:**
+- Single operator works on one machine at a time. Simultaneous offline work on two machines is rare.
+- NTP keeps clocks close enough that the order approximates wall-clock intent.
+- The operator wrote all the comments. They know what they meant.
+
+**How to handle it as an edge case:**
+- **Do nothing.** The operator sees the interleaved order, recognizes it's misleading, and moves on. They wrote the comments — they know the context.
+- **Clarifying comment.** The operator adds "To clarify, I wrote the above before seeing the Linux box's comment." Simple, human, works.
+- **Sync layer annotation.** The sync daemon appends a note to comments that were created offline: "Written offline on MacBook, synced at 2026-06-14T10:15:00Z." The operator sees the note and knows the comment may be out of order.
+- **Edit/delete.** Forgejo supports comment editing and deletion via API. If the ordering is truly confusing, the operator can reorder or delete comments.
+
+None of these require a custom event log, per-node event streams, or a replay engine. The simplest fix — a sync annotation — is a single field in the comment metadata. The event-log architecture was solving a problem that doesn't need solving at the architecture level.
 
 ### D4. Email-Based Issue Workflow
 
@@ -596,36 +623,38 @@ Instead of git or event logs, use CRDTs (Conflict-free Replicated Data Types) fo
 
 ## Where This Leaves Us
 
-The event-log architecture is over-engineered. D2 (single instance) fails the airplane test. The most promising direction is **D3 (separate concerns)** — move issues to a git-based tracker, let Forgejo handle git and PRs, and let git handle distributed sync. This is the only approach that gives offline-first issue/PR workflow without building a custom distributed database.
+The event-log architecture is over-engineered. D2 (single instance) fails the airplane test. The most promising direction is **D3 (separate concerns)** — use **git-bug** alongside Forgejo. Forgejo handles git hosting and PRs. git-bug handles issues and comments. Git handles distributed sync for both.
 
-D3's cost is a new component (git-based issue tracker with web UI) and a split UX (issues in the tracker, PRs in Forgejo). But the cost of the event-log approach is also a new component (sync daemon with event log, replay engine, mapping, webhooks) — and it fights Forgejo's data model the whole way. D3 fights git's data model too, but git is designed for distributed sync. The fight is easier.
+D3's cost is a split UX (issues in git-bug's web UI, PRs in Forgejo's web UI) and the integration work (PR ↔ issue linking, CI status display). But the cost of the event-log approach is also a new component (sync daemon with event log, replay engine, mapping, webhooks) — and it fights Forgejo's data model the whole way. git-bug already solved the hard problem (distributed issue tracking in git). We don't need to build it.
 
-**Recommendation:** Prototype D3. Build a minimal git-based issue tracker (issues as files in a git repo, comments as files, state as file content). Test the offline workflow: create issues on the plane, sync when the laptop reconnects. If the UX is good enough, this is the architecture. If the split UX (issues in tracker, PRs in Forgejo) is too confusing, revisit the event-log approach with the understanding that it's a distributed database and should be designed as one.
+Branching comment threads are an edge case, not an architecture driver. A sync annotation ("Written offline on MacBook, synced at...") is sufficient. No event log, no replay engine, no per-node event streams.
+
+**Recommendation:** Evaluate git-bug. Install it, test the offline workflow, test the web UI on a phone. If the UX is acceptable, this is the architecture. If the split UX is too confusing, the event-log approach is the fallback — but it should be designed as a distributed database, not a git-based event system.
 
 ## Implementation Path (D3)
 
-1. **Define the issue file format** — each issue is a directory with `title`, `body`, `comments/`, `labels`, `state` files. JSON or YAML. Stable IDs via directory name (slug or UUID).
-2. **Build the local CLI** — `cove issue create`, `cove issue comment`, `cove issue close`. Reads/writes files in the issue repo. No daemon, no web UI on local.
-3. **Build the tier-2 web UI** — reads the issue repo and renders issues/PRs in a web interface. Static site or lightweight server (Flask, FastAPI, or even a static site generator).
-4. **Build the tier-2 Forgejo bridge** — when a PR is created/merged on Forgejo, the bridge creates/updates the corresponding issue in the git-based tracker. This is the only cross-system integration.
-5. **Test offline convergence** — create issues on the plane, sync when the laptop reconnects. Verify both sides converge.
-6. **Test hub-and-spoke** — MacBook and Linux both sync to tier-2. Verify issues from both machines appear on tier-2 and on each other's next pull.
+1. **Evaluate git-bug** — install on MacBook, test CLI (`git bug create`, `git bug comment`), test TUI (`git bug termui`), test web UI (`git bug web`). Verify offline workflow: create issues on the plane, push when online.
+2. **Set up git-bug on tier-2** — run `git bug web` as a system service behind nginx. This is the phone-accessible issue tracker.
+3. **Set up git-bug on each local machine** — `git bug` CLI. Issues are stored in the same git repo as the code (or a separate bug repo — evaluate both).
+4. **Configure sync** — `git push` / `git pull` on the bug refs. git-bug stores issues in `refs/bugs/` — these need to be pushed/pulled alongside code refs. This may mean a separate remote or a custom push spec.
+5. **Build the Forgejo bridge (optional v1)** — when a PR is created/merged on Forgejo, create/update the corresponding issue in git-bug. This is the only cross-system integration. Skip for v1 if the operator can manually link.
+6. **Test offline convergence** — create issues on MacBook, push to tier-2, view on phone. Verify both sides converge.
+7. **Test hub-and-spoke** — MacBook and Linux both sync to tier-2. Verify issues from both machines appear on tier-2 and on each other's next pull.
 
 ## Open Questions (D3)
 
-1. **Issue ID scheme** — UUIDs (no collision, ugly) or slugs (human-readable, collision possible)? Slugs with node prefix (`macbook/crash-on-startup`) are the middle ground.
-2. **PR ↔ issue linking** — how does a Forgejo PR reference an issue in the git-based tracker? Convention in commit messages (`closes issue: crash-on-startup`)? A bridge that updates the issue when the PR merges?
-3. **Web UI scope** — read-only (view issues, comment via CLI) or full CRUD (create/close via web)? Full CRUD means the web UI writes to the git repo, which means it needs git push access to tier-2.
-4. **Phone workflow** — phone accesses tier-2's web UI. Can the phone create issues? If yes, the web UI needs to commit to the issue repo. If no, the phone is read-only and the operator uses the CLI on a local machine.
-5. **Migration path** — existing Cove users have issues in Forgejo's SQLite. How do we export them to the git-based tracker? One-time migration script.
-6. **Attachments** — images in comments. Store in the git repo (bloats it) or in content-addressed storage (CAS) with the issue file referencing the hash?
-7. **CI status on issues** — if CI runs locally and reports to Forgejo, the issue tracker needs to display CI status. Cross-system data flow or skip for v1?
+1. **Separate bug repo or same repo?** — git-bug can store issues in the same repo as code (in `refs/bugs/`) or in a separate repo. Same repo means issues travel with code (good for project context). Separate repo means issues can be synced independently (good for multi-machine). Evaluate both.
+2. **PR ↔ issue linking** — how does a Forgejo PR reference a git-bug issue? Convention in commit messages (`closes bug: <id>`)? A bridge that updates the issue when the PR merges?
+3. **Phone workflow** — git-bug's web UI on tier-2. Can the phone create issues? git-bug web supports this if the web UI has write access to the git repo. Evaluate.
+4. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has bridges for GitHub and GitLab but not Forgejo. A one-time migration script would need to read Forgejo's API and create issues in git-bug.
+5. **CI status on issues** — if CI runs locally and reports to Forgejo, git-bug needs to display CI status. Cross-system data flow or skip for v1?
+6. **git-bug maturity** — v0.10.1, pre-1.0. Evaluate stability, API compatibility, and community activity before committing.
 
 ## Next Steps
 
-- Prototype the issue file format (one directory per issue, files for each field)
-- Build a minimal CLI (`cove issue create`, `cove issue comment`, `cove issue list`)
-- Build a minimal tier-2 web UI that reads the issue repo and renders a list + detail view
-- Test the offline workflow: create issues on MacBook, push to tier-2, view on phone
-- Decide on PR ↔ issue linking convention
-- Decide on phone write capability (read-only or full CRUD via web UI)
+- Install git-bug on MacBook and test the full workflow (create, comment, close, push, pull, web UI)
+- Evaluate git-bug's web UI on a phone browser
+- Decide: same repo or separate repo for bug data
+- Decide: PR ↔ issue linking convention
+- Decide: phone write capability (read-only or full CRUD via git-bug web)
+- If git-bug passes evaluation, write a SPEC for the integration architecture
