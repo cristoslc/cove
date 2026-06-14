@@ -61,6 +61,40 @@ The operator has multiple machines (MacBook, Linux desktop, home server, etc.) t
                     └────────────────────────────────┘
 ```
 
+#### PR-Sashaying: Nodes + Branches
+
+PR-sashaying means each machine makes branches. Git is good at branches. With a handful of machines (not thousands of users), collision is trivially avoided by prefixing branch names with a per-node identifier rather than requiring a global registry.
+
+```
+macbook/feature-x       # MacBook's work on feature-x
+linux/feature-x         # Linux box's work on feature-x (same feature, different branch)
+server/docs-update      # Server's work on documentation
+```
+
+Each node creates PRs from its own prefixed branches. Tier-2 receives all branches from all nodes. No collision at the git level — different branch names, different git refs. No collision at the PR level — different source branches, different PRs (one per node per feature).
+
+#### The Rebase Step
+
+When MacBook and Linux both work on `feature-x`, they may diverge. The operator's normal git workflow handles this: `git fetch`, `git rebase`, resolve conflicts. What does the sync layer need to do?
+
+**Nothing.** The sync layer pushes branches and PRs. It does not rebase. The operator rebases on whichever machine they sit down at. The sync layer just mirrors the state after the operator resolves:
+
+1. MacBook pushes `macbook/feature-x` to tier-2
+2. Linux pushes `linux/feature-x` to tier-2
+3. Tier-2 has both branches (and potentially two PRs for the same feature)
+4. Operator sits down at MacBook, `git fetch tier2`, sees both branches
+5. Operator rebases `macbook/feature-x` onto `main`, merges `linux/feature-x` work if desired
+6. MacBook pushes rebased branch; sync layer mirrors to tier-2
+7. Operator closes the PRs or merges them
+
+The sync layer doesn't touch branches. It mirrors git refs. Git already solves the distributed branching problem — the sync layer just ensures all refs are visible everywhere.
+
+#### No CI on Tier-2 (V1 Scope)
+
+Tier-2 has no runner and no Vault in v1. CI runs locally on each node. The phone sees PR status only when it was computed on a local runner and synced as part of the event log. If a PR has CI status from MacBook's runner, that status syncs to tier-2 so the phone sees "CI passed." If no local runner has run CI for a given PR, the phone sees "no status."
+
+Vault stays local too — each local node has its own Vault for secrets. Tier-2 doesn't need Vault for PR/issue sync. This keeps the scope tight: v1 is about PRs, issues, and comments on Forgejo instances. Vault and CI can be added later.
+
 ## Identity Model (Single-Operator)
 
 The operator has one account (`cristos`) on every surface. That's it.
@@ -179,13 +213,13 @@ When they bring tier-2 back online (or MacBook reconnects to tier-2):
 
 No data loss. No merge conflicts on most fields. The operator's offline work is preserved and synced.
 
-### Event Identity
+### Event Identity and Uniqueness
 
-Every event is authored by the same operator. No machine ID, no origin-instance ID, no bot suffix:
+Every event is authored by the same operator. But events from different nodes must be globally unique to avoid collisions when merged on tier-2. Include a node identifier and a node-local sequence number:
 
 ```json
 {
-  "id": "evt-001-cristos-2026-06-13T10-15Z",
+  "id": "macbook-evt-042",
   "type": "comment.add",
   "issue": 42,
   "author": "cristos",
@@ -194,7 +228,53 @@ Every event is authored by the same operator. No machine ID, no origin-instance 
 }
 ```
 
-The author string is identical on every instance. Comment file names are identical too. The sync daemon doesn't need to translate, map, or remap anything.
+The `id` is `{node_id}-evt-{seq}` where `node_id` is a short string (e.g., `macbook`, `linux`, `server`) unique to each local node, and `seq` is a monotonically increasing counter per node. This guarantees global uniqueness across all nodes without coordination.
+
+Comment files follow the same pattern: `{seq}-{node_id}-cristos-{timestamp}.json`. Two nodes that generate comment `042` at the same second produce different filenames: `042-macbook-cristos-2026-06-13T10-15Z.json` vs `042-linux-cristos-2026-06-13T10-15Z.json`. Merging the sync repos is a clean union — no overwrite, no conflict.
+
+### Git Push Races on Tier-2
+
+Two locals pushing to the same sync repo on tier-2 simultaneously will cause one to get a non-fast-forward rejection. The sync daemon must handle this:
+
+1. Try `git push`
+2. If rejected (non-fast-forward), `git pull --rebase`
+3. Rebase applies the other node's commits cleanly (comment files are additive, no conflicts)
+4. Retry `git push`
+
+For the hub-and-spoke model, this is the only coordination the sync daemon needs. One retry loop per push. With a handful of machines, contention is rare and the retry is fast (git pull + rebase + push < 1 second).
+
+### Sync Repo: Shared or Per-Node?
+
+Each project gets one sync repo on tier-2. All local nodes push to and pull from the same repo. This is simpler than per-node repos (which would require tier-2 to aggregate) and matches the git workflow the operator already uses — one remote, multiple contributors (the operator's own machines).
+
+### Forgejo API Integration
+
+The sync daemon reads and writes Forgejo state via its REST API. Forgejo provides a Swagger-documented API at `https://instance/api/swagger` with stable endpoints across each major version. The key endpoints for PR/issue sync:
+
+| Operation | Endpoint | Auth |
+|-----------|----------|------|
+| List issues | `GET /repos/{owner}/{repo}/issues` | Token (scoped to repo) |
+| Get issue | `GET /repos/{owner}/{repo}/issues/{idx}` | Token |
+| Create issue | `POST /repos/{owner}/{repo}/issues` | Token (write) |
+| Edit issue | `PATCH /repos/{owner}/{repo}/issues/{idx}` | Token (write) |
+| List PRs | `GET /repos/{owner}/{repo}/pulls` | Token |
+| Get PR | `GET /repos/{owner}/{repo}/pulls/{idx}` | Token |
+| Create PR | `POST /repos/{owner}/{repo}/pulls` | Token (write) |
+| List comments (issue) | `GET /repos/{owner}/{repo}/issues/{idx}/comments` | Token |
+| Create comment | `POST /repos/{owner}/{repo}/issues/{idx}/comments` | Token (write) |
+| List PR reviews | `GET /repos/{owner}/{repo}/pulls/{idx}/reviews` | Token |
+| List labels | `GET /repos/{owner}/{repo}/labels` | Token |
+| List reactions | Part of comment/issue response body | Token |
+
+All endpoints use `Authorization: token {sha1}` headers. Tokens are scoped per-repo (generated via `POST /users/{name}/tokens`). Pagination is cursor-based with `page` and `limit` parameters, defaulting to 30 items per page, max 50. The sync daemon needs a `read:issue` + `write:issue` token for each repo on each instance.
+
+**Detection strategy:** webhooks, not polling. Configure Forgejo to fire a webhook to the sync daemon on issue/PR/comment events. Each event has a payload with the affected resource ID and action. The sync daemon then fetches the full resource via API (for completeness — the webhook body may be truncated). Webhooks are more efficient than polling and give near-real-time sync.
+
+**Bulk export for initial sync:** `GET /repos/{owner}/{repo}/issues` and `GET /repos/{owner}/{repo}/pulls` with pagination to export all state from local. Import to tier-2 with `POST` endpoints. Initial sync is a one-time import; after that, webhook-driven incremental.
+
+**Write path (events to Forgejo):** when the sync daemon receives an event that creates/modifies an issue or comment, it calls the corresponding POST/PATCH endpoint on the target Forgejo. If the target Forgejo already has the event (idempotency check via event log position), skip. If the event fails (API error), retry with backoff.
+
+**Scope note:** Forgejo projects (kanban boards) have limited API support as of 2025 — a merged PR adds basic project management via REST. Reactions, milestones, and fine-grained assignee management are available. The sync daemon doesn't need to cover every Forgejo feature in v1 — issues, PRs, and comments are the core.
 
 ## What This Doesn't Solve
 
