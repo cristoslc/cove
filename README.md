@@ -6,17 +6,19 @@ A local development platform running on Docker Compose — a sheltered harbor wh
 
 | Service | Purpose | Access |
 |---------|---------|--------|
-| **Forgejo** | Self-hosted Git forge with commit signing | `https://{machine}.taila90e7.ts.net:3000` (Tailscale) or `https://localhost:3000` |
-| **HashiCorp Vault** | Secrets store with Shamir auto-unseal | `http://127.0.0.1:8200` |
+| **Forgejo** | Self-hosted Git forge with built-in OCI registry and commit signing | `https://git.cove/` |
+| **HashiCorp Vault** | Secrets store with Shamir auto-unseal | `https://vault.cove/` |
+| **nginx** | TLS termination and reverse proxy for all `*.cove` subdomains | `127.0.0.1:8443` (HTTPS), `:8080` (HTTP) |
+| **dnsmasq** | Wildcard DNS resolver for offline `.cove` resolution | `127.0.0.1:5353` |
 
-Both run in Docker Compose with `recreate: always` so configuration changes (env vars, volumes) take effect on every `cove up`.
+All services run in Docker Compose with `restart: unless-stopped`. Configuration changes take effect on every `cove up`.
 
 ## Install
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv tool install cove
+uv tool install cove-cli
 ```
 
 ## Quick Start
@@ -34,7 +36,7 @@ cove uninstall --yes     # Destroy everything: containers, data, keychain, cache
 | Command | Purpose |
 |---------|---------|
 | `cove up` | Full pipeline: batch-pull → bringup → bootstrap Vault → provision Forgejo |
-| `cove up --no-sudo` | Same as above, skips `/etc/hosts` elevation |
+| `cove up --no-sudo` | Same as above, skips `/etc/hosts` and pf NAT elevation |
 | `cove up --no-provision` | Bring up containers only |
 | `cove down` | Stop containers (data preserved) |
 | `cove down --volumes` | Stop containers and remove volumes |
@@ -50,18 +52,16 @@ cove uninstall --yes     # Destroy everything: containers, data, keychain, cache
 ```
 cove up
   ├─ batch-pull           # One biometric prompt for all 1Password refs
-  ├─ bringup              # docker compose up (Forgejo + Vault)
-  ├─ bootstrap_vault.yml  # Initialize/unseal Vault from OS keychain
-  ├─ provision_vault.yml  # Userpass user + admin policy
-  └─ provision_forgejo.yml # Admin user, SSH key, repo, manual merge
+  ├─ bringup              # Start Colima, mkcert TLS, /etc/hosts, docker compose up
+  ├─ bootstrap_vault      # Initialize/unseal Vault from OS keychain
+  ├─ provision_vault      # Userpass user + admin policy
+  └─ provision_forgejo    # Admin user, SSH key, repo, push token
 ```
 
-All data lives in `~/Documents/cove-data/`. Tailscale MagicDNS provides HTTPS access from any device on your tailnet.
+All data lives in `~/Documents/cove-data/`. TLS via mkcert with wildcard `*.cove` certificates. Tailscale Serve provides HTTPS access from any device on your tailnet via pf NAT forwarding (`127.0.0.1:443` → `8443`).
 
-## Project Artifacts
+## Architecture Docs
 
-| Artifact | Status | Description |
-|----------|--------|-------------|
-| [VISION-001](docs/vision/Proposed/(VISION-001)-Cove-Developer-Platform/(VISION-001)-Cove-Developer-Platform.md) | Active | Cove Developer Platform — full local dev stack vision |
-
-(End of file - total 54 lines)
+- [Architecture](docs/architecture.md) — system boundaries, bounded contexts, service topology, DNS strategy, data persistence
+- [Abstractions](docs/abstractions.md) — domain concepts: project, pipeline, secret, image, site, deployment, identity, workspace
+- [Pages](docs/pages.md) — static site hosting via Forgejo Actions and nginx
