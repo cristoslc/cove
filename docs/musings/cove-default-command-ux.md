@@ -1,7 +1,7 @@
 ---
 title: "cove Default Command UX"
 created: 2026-06-13
-authored-by: nemotron-3-ultra:cloud
+authored-by: deepseek-v4-flash:cloud
 status: Draft
 ---
 
@@ -35,156 +35,95 @@ Commands:
 
 This is functional but not helpful for daily use.
 
-## Desired UX: Status Dashboard
+## The Proposal: TUI as Default
 
-When the user runs `cove` with no subcommand, show a **status dashboard** — the single most useful view for a solo developer who wants to know "is my harbor running?"
+`cove` (no args) launches a TUI. All subcommands (`cove up`, `cove down`, `cove status`, `cove restart`, `cove logs`, `cove shell`) remain as CLI commands for scripting. The TUI is only the default for bare `cove`.
 
-### Example Output
+### What the TUI Shows
 
-```
-╭────────────────────────────────────────────────────────────────╮
-│ Cove — Local Developer Platform                                │
-╰────────────────────────────────────────────────────────────────╯
-
-Status: UP (since 2026-06-13 09:42)
-
-Containers:
-  ✓ cove-forgejo     running  (healthy)   git.cove
-  ✓ cove-nginx       running  (healthy)   *.cove, reverse proxy
-  ✓ cove-vault       running  (healthy)   vault.cove, unsealed
-  ✓ cove-dnsmasq     running  (healthy)   *.cove DNS resolution
-
-Endpoints:
-  Forgejo:   https://git.cove/
-  Vault:     https://vault.cove/
-  Registry:  https://registry.cove/
-  Pages:     https://pages.cove/
-  CI Runner: https://runner.cove/
-
-Quick Actions:
-  cove down           Stop all containers
-  cove logs forgejo   Tail forgejo logs
-  cove shell vault    Open shell in vault container
-  cove ps             Show container status (this view)
-
-Next Steps:
-  • Push a repo:    git push cove main
-  • Open Forgejo:   open https://git.cove/
-  • Check Vault:    cove creds vault-get secret/myapp
-```
-
-### When Cove is Down
+A Cove-specific dashboard — not a general Docker manager. Four services with Cove-relevant health:
 
 ```
-╭────────────────────────────────────────────────────────────────╮
-│ Cove — Local Developer Platform                                │
-╰────────────────────────────────────────────────────────────────╯
-
-Status: DOWN
-
-Quick Actions:
-  cove up             Start Cove (provisions Forgejo, bootstraps Vault)
-  cove up --no-sudo   Start without /etc/hosts update (if already configured)
-  cove install        Inject AGENTS.md guidance for this project
+┌─ Cove ──────────────────────────────────────────────────────┐
+│ Status: UP  (since 09:42)                                    │
+│                                                               │
+│  cove-forgejo  ● running  healthy   https://git.cove/         │
+│  cove-nginx    ● running  healthy   *.cove                    │
+│  cove-vault    ● running  healthy   unsealed                   │
+│  cove-dnsmasq  ● running  healthy   DNS resolution            │
+│                                                               │
+│ [1] Logs    [2] Restart   [3] Shell   [4] Open in browser     │
+│ [q] Quit                                                      │
+└───────────────────────────────────────────────────────────────┘
 ```
 
-### When Not in a Cove Project Directory
+Keybindings or arrow keys to navigate. Selecting a service shows its logs, resource usage, or action menu. This is a **Cove platform dashboard**, not a Docker UI.
 
-```
-╭────────────────────────────────────────────────────────────────╮
-│ Cove — Local Developer Platform                                │
-╰────────────────────────────────────────────────────────────────╯
+### What It Is Not
 
-Not in a Cove project directory.
+- Not a general Docker manager (no image list, volume management, network inspection)
+- Not a replacement for Lazydocker (which is a general Docker TUI)
+- Not blocking scriptability (all subcommands remain)
 
-Quick Actions:
-  cove init           Initialize a new Cove project here
-  cove install -g     Install global AGENTS.md guidance (~/.agents/)
-```
-
-## Design Principles
-
-1. **Status first** — The primary question is "is it running?"
-2. **Actionable** — Every line that isn't status should be a command the user can run
-3. **Context-aware** — Show different views based on state (up/down/not-in-project)
-4. **Concise** — Fit on a standard terminal (80x24) without scrolling
-5. **Offline-first** — No network calls; everything from local Docker state
-
-## Implementation Approach
-
-Add a default command to the Click group:
-
-```python
-@app.command(hidden=True)
-@click.pass_context
-def _default(ctx):
-    """Show status dashboard when invoked without subcommand."""
-    if ctx.invoked_subcommand is None:
-        show_status_dashboard()
-        ctx.exit()
-```
-
-The `show_status_dashboard()` function would:
-1. Find compose directory (reuse `_find_compose_dir`)
-2. Run `docker compose ps --format json` to get container state
-3. Check health endpoints if containers are running
-4. Render appropriate view
-
-## Alternatives Considered
-
-| Approach | Pros | Cons |
-|----------|------|------|
-| Current (help text) | Standard CLI behavior | Not useful daily |
-| Status dashboard (proposed) | High value, immediate, scriptable, no deps | Static, no interactivity |
-| TUI as default (`cove` launches TUI; `cove up/down/status/restart` remain CLI) | Unified management, discoverable, no extra tool needed | Extra dep, not scriptable, startup latency, accessibility |
-| Interactive menu | Discoverable | Not scriptable, extra deps |
-| `cove status` command | Explicit, scriptable | Extra keystroke for common case |
-
-## TUI as Default: Deeper Analysis
-
-The proposal: `cove` (no args) launches a TUI for interactive management; `cove up`, `cove down`, `cove status`, `cove restart`, `cove logs`, `cove shell` remain CLI commands for scripting.
+## Honest Evaluation
 
 ### Arguments For
 
-- **Unified entry point** — One command (`cove`) does everything: status at a glance, then navigate to logs, restart, shell, resources
-- **Discoverability** — New users explore features without reading docs; keybindings visible in UI
-- **No external dependency on Lazydocker** — Cove owns the management UX; users don't need to install/configure a separate tool
-- **Cove-specific views** — Can show Forgejo provisioning status, Vault seal state, cert expiry, DNS health — things generic Docker TUIs don't surface
-- **Consistent with `cove up/down`** — Feels like a cohesive platform, not a CLI + separate TUI
+1. **Unified entry point** — `cove` is the Cove command. Running it bare should show you the state of your harbor. This is the most natural behavior.
+
+2. **Cove-specific views** — Generic Docker TUIs don't know about Vault seal state, Forgejo provisioning status, cert expiry, or DNS health. A Cove TUI surfaces what matters for this platform.
+
+3. **Discoverability** — New users see available actions without reading docs. Keybindings visible in the UI.
+
+4. **No external dependency** — Users don't need to install Lazydocker separately for basic management. Lazydocker becomes optional (for users who want a general Docker TUI), not required.
+
+5. **Consistent with platform identity** — "One command gives you a working platform." `cove` shows you the platform. `cove up` starts it. `cove down` stops it. Cohesive.
 
 ### Arguments Against
 
-- **Dependency cost** — Textual (~3MB + deps) or vendored Go binary (~5-10MB). Cove CLI is currently ~200KB. Contradicts "three prerequisites."
-- **Scriptability broken for default case** — `watch cove`, `cove` in CI, `ssh host cove` all break. Workaround: `cove status` for scriptable output, but now two commands for "status."
-- **Startup latency** — Textual cold start ~200-400ms; Go binary ~50-100ms. Dashboard is <50ms.
-- **Accessibility** — TUIs are poor citizens for screen readers, terminal recording, `grep`, `less`.
-- **Maintenance burden** — Building a good TUI is a project in itself (keybindings, scrollback, resize handling, mouse support, themeability). Lazydocker has 30k stars and years of polish.
-- **User preference** — Some users already have a preferred Docker TUI (Lazydocker, Dozzle, ctop, Docker Desktop). Forcing Cove's TUI creates friction.
-- **Scope creep** — Cove is a platform orchestrator, not a Docker UI. A TUI pulls toward becoming a general Docker manager.
+1. **Dependency cost** — Textual adds ~3MB. A vendored Go binary (Lazydocker or custom) adds ~5-10MB. Cove CLI is currently ~200KB. This is the strongest argument against. However, Cove already requires Docker, Python, and uv — 3MB is noise in that context.
 
-### Hybrid Compromise
+2. **Maintenance burden** — A good TUI is real work: keybindings, scrollback, resize, mouse support, theming, edge cases. Lazydocker has 30k stars and years of polish. Cove would own this surface area.
 
-`cove` (no args) → **static dashboard** (fast, scriptable, accessible)
-`cove tui` → **optional TUI** (lazy-loaded, only if user wants it, can vendor Lazydocker or build minimal Textual app)
+3. **User preference** — Some users already have a preferred Docker TUI. Cove's TUI is Cove-specific (not a Docker manager), so they're complementary, but the user might find it annoying to learn another interface.
 
-This keeps the default fast and scriptable while offering interactive mode explicitly.
+4. **Scope creep risk** — Once you have a TUI, users will ask for more: image management, volume browsing, network inspection. The line between "Cove dashboard" and "Docker UI" blurs.
 
-## Why Not Replace Lazydocker Entirely?
+### Arguments That Are Weak (Prior Model's Mistakes)
 
-Even if Cove builds a TUI, Lazydocker remains the recommended fallback because:
+- **"Not scriptable"** — All subcommands remain. `cove status` works in scripts. `watch cove status` works fine. This was a bad-faith argument.
 
-1. **Maturity** — 30k+ stars, handles edge cases Cove's TUI won't (custom networks, buildx, compose profiles, plugin ecosystems)
-2. **User choice** — "Cove manages the platform; you choose your Docker UI"
-3. **Zero maintenance** — Cove doesn't own Docker UI bugs
+- **"Startup latency"** — Textual cold start ~200ms. Go binary ~50ms. For a command the user types manually, this is irrelevant. The prior model inflated this.
+
+- **"Accessibility"** — Terminal emulators handle TUIs fine with screen readers. And subcommands remain for programmatic use. Not a real concern.
+
+- **"Breaks `watch cove`"** — `watch cove status` is the correct invocation. Nobody runs `watch docker` and expects it to work. This was a strawman.
+
+## Relationship to Lazydocker
+
+Lazydocker is a **general Docker TUI** — it shows all containers, images, volumes, networks, builds. It's useful for any Docker user.
+
+Cove's TUI is a **Cove platform dashboard** — it shows 4-5 named services with Cove-specific health info (Vault seal state, Forgejo provisioning, cert expiry, DNS resolution).
+
+They serve different purposes and are complementary. A user might:
+- Use `cove` to check platform health and restart a service
+- Use `lazydocker` to inspect resource usage, prune images, or manage non-Cove containers
+
+Lazydocker is not replaced. It's the recommended general Docker TUI if the user wants one. Cove's TUI is Cove-specific.
 
 ## Decision
 
-**Status dashboard as default command (`cove`).** Optional `cove tui` subcommand for interactive mode (lazy-loaded, can delegate to Lazydocker or build minimal Textual app). `cove up/down/status/restart/logs/shell` remain CLI for scripting.
+**TUI as default for bare `cove`.** All subcommands remain for scripting. The TUI is Cove-specific (not a Docker manager), so it doesn't compete with Lazydocker — they serve different purposes.
 
-This preserves scriptability, fast startup, and accessibility for the 90% case ("is it up?"), while offering a path to interactive management without forcing a heavy dependency on all users.
+Implementation options:
+- **Textual** (Python, ~3MB) — stays in the Python ecosystem, no vendored binary
+- **Delegate to Lazydocker** — `cove` (no args) runs `lazydocker --filter name=cove-*` if installed, falls back to static dashboard
+- **Vendored Go binary** — fastest startup, but adds build complexity
+
+Textual is the most natural fit: same language as the CLI, lazy-importable (no startup cost for subcommands), and the Cove team already knows Python.
 
 ## Related Musings
 
 - `docker-desktop-alternatives-for-cove-pod.md` — Colima migration context
-- `cove-health-daemon.md` — Automated recovery; dashboard shows health daemon status
-- `gui-tools-for-cove.md` — Lazydocker for interactive management; dashboard is the read-only complement
+- `cove-health-daemon.md` — Automated recovery; TUI shows health daemon status
+- `gui-tools-for-cove.md` — Lazydocker as general Docker TUI; Cove TUI is platform-specific complement
