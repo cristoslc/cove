@@ -87,6 +87,25 @@ Local Cove has **one real account** (`cristos-laptop` — the operator's identit
 
 **The exception: friends who also have a local Cove.** If `friend-alice` runs her own Cove and syncs to my network forge, her machine account (`friend-alice-laptop`) is a remote author on my local Cove. We are both the operator of our own forges, and our local forges sync to the same network forge. Neither of us has accounts on the other's local forge.
 
+### The Database Constraint Problem
+
+Forgejo's `comment` table has a foreign key to the `user` table — every comment's `poster_id` must reference a real user. A remote author metadata entry is not a Forgejo user. When the sync daemon tries to insert a comment from `friend` (who only exists as metadata on local), the foreign key constraint fails.
+
+**Solution: ghost users.** The sync daemon creates a minimal Forgejo user for each remote author it encounters:
+
+- **Stable ID** — derived from a hash of `author@origin-instance` (e.g., `sha256("friend@network.example.com")`). The same remote author always maps to the same local ghost user, even across re-syncs.
+- **Marked as remote** — a flag (`is_remote`, `is_read_only`, `prohibit_login`) indicates this is a ghost, not a real account.
+- **Minimal data** — name, email (synthetic), avatar URL (link to network profile), created timestamp. No password, no SSH key, no two-factor.
+- **No permissions** — can't push to repos, can't create issues, can't be assigned, can't be @-mentioned for notifications. They appear in comment threads and that's it.
+
+This is how federated platforms like Mastodon handle incoming remote users — create a local stub user for referential integrity, populate metadata from the remote profile, restrict to read-only.
+
+The ghost user table is not the same as the real accounts table. A `cove sync status` command can list ghost users and their origin instances, so the operator can audit what's been materialized. Old ghost users (from a collaborator who left, or a network instance that was decommissioned) can be garbage-collected.
+
+**Why not just use a single "remote" user for all remote authors?** It loses attribution. All comments from `friend` and `cristos` and `friend-laptop` would appear as "remote-author" — useless for a conversation. Ghost users preserve provenance at the cost of a bit more database state.
+
+**What about reactions, mentions, cross-references?** Same treatment. A reaction by `friend` creates a ghost user for `friend` if not already present, then writes the reaction. A mention of `cristos-laptop` in a comment body is rendered as a link to the local ghost user (if it exists) or as plain text (if it doesn't, pending sync).
+
 ## Sync Architecture: Event Log via Git
 
 PRs and issues are stored in Forgejo's database (SQLite for local Cove). To sync them between two instances without modifying Forgejo, we extract state as an **append-only event log** and use a git repo as the log's storage. Git is offline-first by design, handles distributed sync via push/pull, and is already part of the Cove toolchain.
