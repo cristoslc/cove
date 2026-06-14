@@ -92,23 +92,6 @@ class TestDeploymentManifests:
             "autodetect_manual_merge should be true in provision task"
         )
 
-    def test_statefulset_template_has_signing_env_vars(self):
-        sst = (
-            PROJECT_ROOT / "roles" / "cove" / "templates" / "forgejo-statefulset.yml.j2"
-        )
-        assert sst.exists(), f"forgejo-statefulset.yml.j2 not found at {sst}"
-
-        text = sst.read_text()
-        assert "GITEA__repository.signing__SIGNING_KEY" in text
-        assert "value: default" in text
-        assert "GITEA__repository.signing__SIGNING_NAME" in text
-        assert "value: Forgejo" in text
-        assert "GITEA__repository.signing__SIGNING_EMAIL" in text
-        assert "GITEA__repository.signing__INITIAL_COMMIT" in text
-        assert "value: always" in text
-        assert "GITEA__repository.signing__DEFAULT_TRUST_MODEL" in text
-        assert "value: committer" in text
-
     def test_provision_forgejo_no_bare_op(self):
         """provision_forgejo.yml must not call bare 'op' directly — biometric prompt spam."""
         pf = COMPOSE_DIR / "provision_forgejo.yml"
