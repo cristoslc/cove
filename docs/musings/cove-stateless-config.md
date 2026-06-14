@@ -1,90 +1,65 @@
-# Cove Stateless Config
+# Cove Stateless Config — Workflow First
 
-The repo has hardcoded config files that should be generated at runtime. Every time we find one, we have to scrub PII before pushing to GitHub. This is backwards.
+I keep jumping to file paths. Let me think about the actual workflow.
 
-## The constraint: uv tool install
-
-`cove` is installed via `uv tool install cove-cli`. At runtime, there is **no repo checkout**. The only files available are the Python package itself and `~/.config/cove/`. This means:
-
-- `cove up` cannot reference `compose/bringup.yml` by relative path
-- Ansible playbooks, compose files, templates, action files, and seeds must all be **Python package resources**
-- The CLI extracts them to `~/.config/cove/` on first run (or renders on the fly)
-- `uv run --directory cli cove up` (dev mode) is the exception — it can use relative paths
-
-## The principle
-
-Cove's source repo should contain **no rendered config, no machine-specific state, no generated output**. Everything the CLI needs to run should be either:
-
-1. A Python package resource (template, compose file, playbook, seed schema)
-2. Rendered at `cove up` time from a Jinja2 template
-3. A default value in the CLI code itself
-4. A seed schema that the CLI fills from 1Password or env vars
-
-State that *is* machine-specific goes to `~/.config/cove/` — not in the repo.
-
-## What's currently wrong
-
-| File | Problem | Fix |
-|------|---------|-----|
-| `compose/dnsmasq/cove.conf` | Rendered output of `cove.conf.j2` | Delete from repo, add to `.gitignore` |
-| `compose/files/actions/*/action.yml` | Hardcoded Tailscale FQDN default | Template at push time, read FQDN from env or `~/.config/cove/config.toml` |
-| `seeds/forgejo-creds.yaml` | Machine-specific SSH key paths | Generate from template at seed time |
-| `compose/files/cove-sudoers` | Reference file with username | Delete from repo, generate instructions in CLI help text |
-| `cli/cove/__pycache__/` | Build artifacts | Already gitignored, just need to `git rm --cached` |
-| `compose/bringup.yml` (and all playbooks) | Referenced by path from CLI | Bundle as package resources, extract to `~/.config/cove/` on first run |
-| `compose/docker-compose.yml` | Referenced by path from Ansible | Same — bundle as package resource |
-| `compose/nginx/default.conf.j2` | Referenced by path from bringup.yml | Same — bundle as package resource |
-
-## What goes where
+## The end-user workflow
 
 ```
-~/.config/cove/
-├── config.toml          # User preferences, FQDN overrides
-├── state.json           # Last known service state (for health checks)
-├── op-cache/            # 1Password credential cache
-├── compose/
-│   ├── docker-compose.yml
-│   ├── bringup.yml
-│   ├── bootstrap_vault.yml
-│   ├── provision_vault_user.yml
-│   ├── provision_forgejo.yml
-│   ├── provision_pages.yml
-│   ├── nginx/default.conf.j2
-│   ├── dnsmasq/cove.conf.j2
-│   ├── vault/vault.hcl
-│   ├── files/actions/*/action.yml.j2
-│   └── seeds/*.yaml.j2
-└── templates/           # (optional) User overrides for any template
+uv tool install cove-cli
+cove up
 ```
 
-The repo keeps only:
+That's it. Two commands. The user doesn't have the repo, doesn't know what Ansible is, doesn't care about compose files. `cove up` either works or it doesn't.
+
+If it doesn't work because Ansible isn't installed, the error message should say: "Install Ansible: `brew install ansible`" — not "extract resources to ~/.config/cove/".
+
+## The developer workflow
+
 ```
-cli/cove/
-├── cli.py               # CLI entry point
-├── templates/           # Jinja2 templates for rendered files
-│   ├── bringup.yml.j2
-│   ├── docker-compose.yml.j2
-│   ├── ...
-│   └── forgejo-creds.yaml.j2
-├── resources/           # Static files (no machine-specific values)
-│   └── actions/
-│       └── upload-pages-artifact/
-│           └── action.yml
-└── project.py           # AGENTS.md injection
+git clone ...
+uv run --directory cli cove up
 ```
 
-## What this enables
+The developer edits `compose/bringup.yml` and runs `cove up` to test. No rebuild, no reinstall, no extraction step. The repo checkout IS the source of truth.
 
-- Push to GitHub without PII scrub
-- `uv tool install cove-cli && cove up` works on any machine — no repo needed
-- No stale rendered configs (the dnsmasq conf problem)
-- `~/.config/cove/` is the one place to back up or wipe
-- Dev mode (`uv run --directory cli cove up`) still works via relative paths
+When the developer is done, they commit. The package is rebuilt on `uv tool install` — the `compose/` directory is bundled as a resource.
 
-## What it costs
+## The migration workflow
 
-- All playbooks, compose files, and templates must move from `compose/` to `cli/cove/templates/` as Jinja2-wrapped resources
-- CLI needs an `extract` step on first run (or `cove init`) that unpacks resources to `~/.config/cove/`
-- `cove up` must resolve resource paths: try `~/.config/cove/compose/` first, fall back to relative paths in dev mode
-- Ansible playbooks need `vars` for resource paths (e.g., `compose_dir: "{{ cove_config_dir }}/compose"`)
-- Migration: `git rm --cached` rendered files, add to `.gitignore`, move files, update CLI, verify dev mode and installed mode both work
+The question is: how do we verify the migration is correct?
+
+Option A: Move files, test, fix bugs.
+Option B: Generate the new structure from the old one, diff them, verify they match, then switch over.
+
+Option B is better. Write a script that:
+1. Reads the current `compose/` directory
+2. Generates the package resource structure
+3. Diffs the two
+4. If they match, the migration is correct
+
+But wait — the current `compose/` directory IS the package resource structure. We don't need to generate anything. The migration is just:
+1. Add `compose/` to the package manifest
+2. Write extraction logic
+3. Write resource resolution
+4. Done
+
+No files move. No structure changes. The migration is adding code, not moving files.
+
+## The real question
+
+Is this migration worth doing? What does it buy us?
+
+| Before | After |
+|--------|-------|
+| `git clone && cove up` | `uv tool install cove-cli && cove up` |
+| Repo required | No repo needed |
+| PII in tracked files | No PII in tracked files |
+| Dev mode = same as installed | Dev mode = repo checkout, installed = extracted |
+
+The benefit is: no repo needed. The cost is: extraction logic + resource resolution + Ansible dependency.
+
+For a single-developer tool that you install from source, the benefit is marginal. The real win is the PII cleanup — which is independent of the stateless migration.
+
+## Recommendation
+
+Do the PII cleanup now (it's quick and independent). Defer the stateless migration until there's a real need for `uv tool install` without the repo. The musing captures the design for when that day comes.
