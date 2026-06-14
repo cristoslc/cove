@@ -1,1 +1,0 @@
-../skills/swain-search/scripts/ocr_frames.py

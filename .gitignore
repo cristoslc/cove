@@ -33,13 +33,7 @@ cli/build/
 # Worktrees
 /.worktrees/
 
-# Vendored swain skills (managed by swain-update)
-.claude/skills/swain/
-.claude/skills/swain-*/
-.agents/skills/swain/
-.agents/skills/swain-*/
-
-# Cove-generated speak docs (created by cove install)
+# Cove-generated docs (created by cove install)
 .agents/agents-md-detail/
 !.agents/agents-md-detail/fj.md
 
