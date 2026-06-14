@@ -43,7 +43,7 @@ Every service has a single FQDN. That FQDN is the same whether you are on the ho
 
 ### Self-Contained
 
-Cove requires exactly three things from the host: Python, uv, Docker Desktop. Everything else — services, certificates, DNS, runners — is brought and managed by Cove. Uninstalling means deleting the containers and the data directory. Nothing is left in system paths, launch daemons, or hidden dotfiles.
+Cove requires exactly three things from the host: Python, uv, and a container runtime (Colima on macOS, Docker Engine on Linux). Everything else — services, certificates, DNS, runners — is brought and managed by Cove. Uninstalling means deleting the containers and the data directory. Nothing is left in system paths, launch daemons, or hidden dotfiles.
 
 ## Audience
 

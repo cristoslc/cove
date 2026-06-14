@@ -106,7 +106,7 @@ def _write_project_override(project_root: Path, ctx: dict) -> Path:
         f"## Remotes\n\n"
         f"- Web: `{ctx['forgejo_root_url']}`\n\n"
         "## Local dev workflow\n\n"
-        "For development on Cove itself, see `playbooks/` and `compose/` for service definitions.\n"
+        "For development on Cove itself, see `compose/` for service definitions.\n"
         "Run `cove up` from the project root to start services.\n"
     )
     override_path.write_text(content)
