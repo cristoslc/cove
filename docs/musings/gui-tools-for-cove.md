@@ -20,8 +20,8 @@ Cove runs 4 Docker containers (forgejo, nginx, dnsmasq, vault) via docker-compos
 | Tool | Container Mgmt | Logs | Resource Usage | Compose | Maturity | Security |
 |------|---------------|------|---------------|---------|----------|----------|
 | **0ma** | Limited (Lima/K8s focused) | No | No | No | Medium | Best |
-| **Nookat** | Full (containers/images/volumes/networks) | No | No | No | Medium | Unknown |
-| **Sailor Desktop** | Full + compose project grouping | Yes | Yes | Yes | Low | Unknown |
+| **Nookat** | Full (containers/images/volumes/networks) | No | No | No | Very Low | Unknown |
+| **Sailor Desktop** | Full + compose project grouping | Yes | Yes | Yes | Very Low | Unknown |
 | **ColimaUI** | Full + K8s + VMs + AI | Yes | Yes | Yes | Low | Worst |
 
 ### Web-based (run as containers — chicken-and-egg)
@@ -32,33 +32,34 @@ Portainer, Dockge, Dozzle, Yacht, Dockhand — all require Docker to be running.
 
 Lazydocker and ctop work via the Docker socket and are always available if Colima is up. No background services. Lightweight.
 
-## Recommendation
+## Recommendation: Lazydocker
 
-**For daily Cove management: Lazydocker + `cove status` (when built)**
-
-Lazydocker is the pragmatic choice right now:
+Lazydocker is the clear winner for Cove:
+- **30k+ stars**, by the same author as Lazygit (60k+ stars) — mature, actively maintained
 - Works with any Docker socket, including Colima's
-- No background services, no container dependency
+- No background services, no container dependency, no chicken-and-egg
 - Live container status, logs, resource usage, restart — all in one TUI
-- Single keypress operations
-- ~10 MB binary, instant startup
-- 30k+ stars, mature project
+- Single keypress operations, mouse support
+- ~10 MB Go binary, instant startup
+- No API keys, no HTTP server, no attack surface
 
-The health-daemon musing already proposes `cove status` as a TUI. Lazydocker fills that gap today with zero build effort.
+No native desktop app is mature enough for Cove. Nookat (v0.1.7, 18 stars, last release Dec 2025) is stalled. 0ma is more secure but too Lima/K8s-focused. ColimaUI has the features but the security issues (unauthenticated HTTP API, localStorage API keys, CSP disabled) make it a poor fit for a platform that manages credentials and secrets.
 
-**For a native desktop experience: Nookat**
+## Relationship to Other Musings
 
-If a GUI is preferred over terminal, Nookat is the best fit:
-- Full container/image/network/volume management
-- Auto-installs Colima (useful for new Cove setups)
-- Cross-platform (macOS/Linux/Windows)
-- No HTTP API surface (unlike ColimaUI)
-- No AI features or API key storage (unlike ColimaUI)
+This musing connects two existing ones:
 
-0ma is more secure but too Lima/K8s-focused for Cove's needs. ColimaUI has the features but the security issues (unauthenticated HTTP API, localStorage API keys, CSP disabled) make it a poor fit for a platform that manages credentials and secrets.
+**`docker-desktop-alternatives-for-cove-pod.md`** — Recommends Colima as the Docker Desktop replacement. Identifies the UX gap: "Colima is CLI-only — no GUI for container logs, resource usage, or restart buttons." Lists Lazydocker as one option to fill the gap. This musing confirms Lazydocker is the right choice.
+
+**`cove-health-daemon.md`** — Proposes a background health daemon with a `cove status` TUI. The daemon handles what Lazydocker cannot: detecting and restarting crashed containers automatically, and working when Colima itself is down. Lazydocker and the health daemon are complementary:
+- **Lazydocker** for interactive management (logs, restart, resource usage when you want to look)
+- **Health daemon** for automated recovery (restart on crash, notify on escalation, status when Colima is unreachable)
+
+The health daemon's priority is still elevated by the Colima migration — Lazydocker fills the "look at things" gap, but the daemon fills the "fix things automatically" gap. Both are needed for a complete replacement of Docker Desktop's feedback loop.
 
 **Not recommended for Cove:**
 - ColimaUI — security issues unacceptable for a credential-managing platform
 - Portainer/Dockge/Dozzle — chicken-and-egg with Colima
+- Nookat — stalled, too early
 - Sailor Desktop — too early (4 stars, 40 commits)
 - Lima GUI — VM-focused, not container-focused
