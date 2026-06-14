@@ -245,6 +245,41 @@ There is no threading fix because Forgejo doesn't support it. The only mitigatio
 | Flat comments (no threading in Forgejo) | No reply-to hierarchy; all comments are chronological |
 | Comment branching (fake causal chains) | Tolerated for single operator; tier-2 `received_at` order as fallback |
 
+### Forgejo Forks — Evaluated
+
+Forgejo supports forks via `POST /repos/{owner}/{repo}/forks` (REST API) and a fork button in the UI. Forks are independent repos with their own issue tracker, branches, and PRs. They can open PRs against the parent repo.
+
+### Alternative Architecture: Trunk + Machine-Controlled Forks
+
+An alternative to the shared-event-log model: make tier-2 the canonical trunk, and give each machine its own fork of the trunk. Each machine writes comments to its fork, not the trunk. The trunk only receives consolidated git state (branches, commits, merged PR metadata), not every machine's comment thread.
+
+When sync detects divergent comment paths (two machines commenting on the same issue independently), it splits them into separate issues on tier-2 rather than trying to merge the threads.
+
+**What this solves:**
+
+- Comment branching disappears — each machine's comments live in its own fork, no interleaving
+- No per-node event log naming needed — forks are naturally namespaced
+- Trunk is clean — only git state and merged metadata
+- Phone sees a clean trunk without machine-scoped noise
+
+**What it breaks:**
+
+- **Forgejo forks don't share issues.** An issue in MacBook's fork is NOT the same issue as an issue in the trunk or in Linux's fork. There's no cross-fork issue linking. The operator sees scattered issues across N+1 repos.
+- **The operator loses unified state.** "What's the status of issue #42?" depends on which fork you're looking at. The trunk might show "open" while MacBook's fork shows it closed with a comment.
+- **Every issue splits by default.** Since machines can't share issues across forks, every issue the operator creates on MacBook exists ONLY in MacBook's fork. There is no "same issue on multiple forks" — the issue IDs are different repos.
+- **Sequential workflow degraded.** The common case (operator works on MacBook, then moves to Linux) is worse — comments from the MacBook session live in MacBook's fork, invisible on Linux unless the operator navigates to a different repo.
+- **Phone writes orphaned.** The phone comments on the trunk, but machine comments are in forks. Comments on the same topic live in three different places.
+- **The "split out" trigger is unclear.** What constitutes divergent? Every comment from a different machine is in a different fork — all comments "diverge" by default. There's nothing to detect; the split is structural, not behavioral.
+- **Fork PRs create admin overhead.** For changes to flow back to the trunk, the operator must open PRs from each fork, review them, and merge — the full multi-repo fork workflow for what should be a single-project experience.
+
+**Verdict: the fork model makes the common case (sequential multi-machine work) worse while solving only the rare case (simultaneous offline work).** Most of the time, the operator works on one machine, syncs, then works on another. The shared-issue model handles this; the fork model degrades it.
+
+### Middle Ground: Manual Splits, Not Structural Forks
+
+Keep the current architecture (shared issues, merged comments) but add a **split command** in the Cove command center. If the operator notices misleading comment ordering (two machines wrote interleaved comments while offline), they can manually split the issue: "create two issues — one for MacBook's thread, one for Linux's thread." The sync layer preserves manual splits and reuses the issue prefix/directory structure. The split is an operator decision, not an automatic behavior.
+
+This preserves the common case (clean sequential sync) while giving the operator a tool for the rare case (confusing interleaving from simultaneous offline work).
+
 ### Offline-First
 
 The operator can:
