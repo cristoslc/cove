@@ -1,1 +1,0 @@
-../skills/swain-search/scripts/extract_frames.py

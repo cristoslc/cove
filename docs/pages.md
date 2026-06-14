@@ -1,9 +1,6 @@
 # Cove Pages
 
-Cove Pages is a Forgejo-native static site hosting service. Push your site
-source to a `pages` branch on your Forgejo instance, and Forgejo Actions
-builds and deploys it automatically. Sites are served at
-`{owner}.pages.cove.{fqdn}`.
+Cove Pages is a Forgejo-native static site hosting service. Push your site source to a `pages` branch on your Forgejo instance, and Forgejo Actions builds and deploys it automatically. Sites are served at `{owner}.pages.cove`.
 
 ## Prerequisites
 
@@ -34,45 +31,31 @@ jobs:
 Push to the `pages` branch and your site will be live at:
 
 - **Owner root site** (if the repo is named `pages`):
-  `https://{owner}.pages.cove.{fqdn}/`
+  `https://{owner}.pages.cove/`
 - **Named repo** (any other repo name):
-  `https://{owner}.pages.cove.{fqdn}/{repo}/`
+  `https://{owner}.pages.cove/{repo}/`
 
 ## SSG Auto-Detection
 
-The `configure-pages` action detects your static site generator
-automatically based on files present in the repository root.
+The `configure-pages` action detects your static site generator automatically based on files present in the repository root.
 
-| File                | SSG      | Build command           |
+| File | SSG | Build command |
 |---------------------|----------|-------------------------|
-| `hugo.toml`         | Hugo     | `hugo`                  |
-| `_config.yml`       | Jekyll   | `bundle exec jekyll build` |
-| `config.toml`       | Zola     | `zola build`            |
-| `next.config.*`     | Next.js  | `npm run build`         |
-| `package.json`      | (fallback) | `npm run build`       |
+| `hugo.toml` | Hugo | `hugo` |
+| `_config.yml` | Jekyll | `bundle exec jekyll build` |
+| `config.toml` | Zola | `zola build` |
+| `next.config.*` | Next.js | `npm run build` |
+| `package.json` | (fallback) | `npm run build` |
 
-If no known SSG is detected, the action defaults to serving the
-repository root as static files.
+If no known SSG is detected, the action defaults to serving the repository root as static files.
 
-## Limitations
+## TLS
 
-### TLS
-
-Tailscale certificates do not support wildcard domains. The
-`*.pages.cove.{fqdn}` subdomain pattern has no valid TLS certificate
-today. Browsers will display a certificate warning when accessing pages
-subdomains over HTTPS.
-
-Options to close this gap:
-1. Use a wildcard certificate from an ACME provider with DNS-01 challenge.
-2. Issue per-owner certificates via Tailscale with SNI-based selection.
-3. Serve pages over HTTP only, relying on the Tailscale mesh for
-   in-transit encryption.
+mkcert generates locally-trusted wildcard certificates for `*.pages.cove`. All pages subdomains have valid TLS with no browser warnings when the mkcert root CA is installed (which `cove up` does automatically).
 
 ### Custom Domains
 
-Custom domains are not supported. Sites are only available at
-`{owner}.pages.cove.{fqdn}` URLs.
+Custom domains are not supported. Sites are only available at `{owner}.pages.cove` URLs.
 
 ## Troubleshooting
 
@@ -81,23 +64,12 @@ Custom domains are not supported. Sites are only available at
 1. Check that the `pages` branch exists in your repository.
 2. Verify Forgejo Actions ran successfully in the Actions tab.
 3. Confirm the workflow file is at `.forgejo/workflows/pages.yml`.
-4. Check that the `GITHUB_TOKEN` (Forgejo Actions token) is available
-   in the workflow environment.
+4. Check that the `GITHUB_TOKEN` (Forgejo Actions token) is available in the workflow environment.
 
 ### 404 on a named repo
 
-Ensure the repo name in the URL matches exactly (case-sensitive). The
-deploy action writes to `{owner}/{repo}`, so
-`https://alice.pages.cove.fqdn/My-Docs/` will not match a repo named
-`my-docs`.
-
-### Certificate warning on HTTPS
-
-This is expected. See the TLS limitation above. Access the site over
-HTTP or accept the browser warning to proceed.
+Ensure the repo name in the URL matches exactly (case-sensitive). The deploy action writes to `{owner}/{repo}`, so `https://alice.pages.cove/My-Docs/` will not match a repo named `my-docs`.
 
 ### Actions not triggering
 
-Forgejo Actions must be enabled in the repository settings. Go to
-Settings → Actions → Enable actions, and ensure the `pages` branch is
-not excluded.
+Forgejo Actions must be enabled in the repository settings. Go to Settings → Actions → Enable actions, and ensure the `pages` branch is not excluded.
