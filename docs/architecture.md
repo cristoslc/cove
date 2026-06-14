@@ -7,117 +7,120 @@ status: Active
 
 # Cove Architecture
 
-Cove is a portable, offline-capable local developer platform. It runs Forgejo (Git), Vault (secrets), CI runners, a container registry, and a static pages server — all from a single Docker Compose file. The current track targets macOS via Docker Desktop with Tailscale for remote access. A future track migrates to k3s.
+Cove is a portable, offline-capable local developer platform. It runs Forgejo (Git), Vault (secrets), a container registry (built into Forgejo), CI runners, and a static pages server — all from a single Docker Compose file on Colima (macOS) or Docker Engine (Linux).
 
 ## System Boundaries
 
 ```
-                          Host (macOS)
+                          Host (macOS/Linux)
 ┌─────────────────────────────────────────────────────────────┐
 │                                                             │
 │  /etc/hosts          cove CLI (uv tool install)             │
-│  /etc/resolver/      ├─ creds vault-put / vault-get        │
-│                      └─ [up/down/build   ← future]          │
+│  /etc/resolver/      ├─ creds vault-put / vault-get         │
+│                      └─ up / down / uninstall               │
 │                                                             │
 │  ┌─── Docker Compose ────────────────────────────────────┐  │
 │  │                                                        │  │
-│  │  nginx (:80 → 301, :443 TLS)   dnsmasq (:5353)       │  │
-│  │   ├─ git.cove.{ts.net}  → forgejo:3000                │  │
-│  │   └─ *.pages.cove.{ts.net} → /data/pages/sites/      │  │
+│  │  nginx (:8080 → 301, :8443 TLS)   dnsmasq (:5353)    │  │
+│  │   ├─ git.cove       → forgejo:3000                    │  │
+│  │   ├─ vault.cove     → vault:8200                      │  │
+│  │   ├─ hc.cove        → health check                    │  │
+│  │   └─ *.pages.cove   → /data/pages/sites/              │  │
 │  │                                                        │  │
-│  │  forgejo (:3000)         vault (:8200)                │  │
-│  │   SQLite, TLS certs       Shamir 5/3, age-encrypted   │  │
+│  │  forgejo (:3000)         vault (:8200)                 │  │
+│  │   SQLite, OCI registry    Shamir auto-unseal            │  │
 │  │                                                        │  │
-│  │  ~/Documents/cove-data/  ← bind mounts                │  │
-│  │    forgejo/ vault/ pages/ certs/ nginx/ dnsmasq/       │  │
+│  │  ~/Documents/cove-data/  ← bind mounts                 │  │
+│  │    forgejo/ vault/ pages/ certs/ nginx/ dnsmasq/        │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                                                             │
-│  Tailscale daemon                     1Password CLI         │
-│   ├─ serve → https://localhost:443     └─ op item get       │
-│   └─ MagicDNS: mbpbk-202602.taila90e7.ts.net                │
+│  pf NAT: 127.0.0.1:443 → 127.0.0.1:8443                    │
+│  Tailscale Serve → https://127.0.0.1:443 (if tailnet)      │
 │                                                             │
-│  OS Keychain                                                 │
-│   └─ cove/vault/unseal-{1..5}, cove/vault/root-token        │
+│  mkcert               OS Keychain                            │
+│   └─ *.cove, localhost  └─ cove/vault/unseal-{1..5}        │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ### What Cove Owns
 
-- Docker Compose file defining the service stack.
-- Ansible playbooks for provisioning (`compose/`).
-- Python CLI for credential operations (`cli/`).
-- Nginx configuration for HTTPS reverse proxy.
-- dnsmasq configuration for offline wildcard DNS.
-- Tailscale Serve configuration (managed by `bringup.yml`).
-- `/etc/hosts` entries and `/etc/resolver/` configuration.
-- OS keychain entries for Vault unseal keys and root token.
+- Docker Compose file defining the service stack (`compose/docker-compose.yml`)
+- Ansible playbooks for provisioning (`compose/`)
+- Python CLI for credential and lifecycle operations (`cli/`)
+- Nginx configuration for HTTPS reverse proxy (`compose/nginx/`)
+- dnsmasq configuration for offline wildcard DNS (`compose/dnsmasq/`)
+- mkcert TLS certificates for `*.cove` subdomains
+- `/etc/hosts` entries and `/etc/resolver/` configuration
+- OS keychain entries for Vault unseal keys and root token
+- pf NAT rule forwarding `localhost:443` → `localhost:8443`
 
 ### What Cove Does Not Own
 
-- The Docker Desktop installation (prerequisite).
-- The Tailscale daemon (prerequisite).
-- The 1Password CLI (prerequisite).
-- Python 3.12+ and uv (prerequisites).
-- `~/Documents/projects/` — user project directories.
+- The container runtime (Colima on macOS, Docker Engine on Linux)
+- The Tailscale daemon (optional, for remote access)
+- The 1Password CLI (optional, for credential seeding)
+- Python 3.12+ and uv
+- `~/Documents/projects/` — user project directories
 
 ## Bounded Contexts
 
-Cove's domain splits into five contexts. Each owns its vocabulary, its storage, and its entry point. Contexts communicate only through declared interfaces — a pipeline in Forge reads secrets from Vault via the CLI, pushes artifacts to the Registry, and the Pages context serves them. No context reaches into another's storage directly.
+Cove's domain splits into five contexts. Each owns its vocabulary, its storage, and its entry point. Contexts communicate only through declared interfaces — a pipeline in Forge reads secrets from Vault, pushes artifacts to the Registry, and the Pages context serves them. No context reaches into another's storage directly.
 
 ### Forge Context
 
-The source of truth for code and collaboration. Owns repositories, issues, pull requests, workflows, releases. Everything in Cove starts with a git push to the forge. The forge triggers pipelines and records their outcomes. It is the only context that creates identities (`<owner>/<repo>`).
+The source of truth for code and collaboration. Owns repositories, issues, pull requests, workflows, releases, and the OCI container registry. Everything in Cove starts with a git push to the forge.
 
 | Aspect | Detail |
 |--------|--------|
 | Language | repository, issue, pull request, workflow, runner, webhook |
 | Storage | SQLite database + git repositories on disk |
-| Entry point | `https://git.cove.mbpbk-202602.taila90e7.ts.net` |
+| Entry point | `https://git.cove/` |
 | Implementation | Forgejo v15 |
 
 ### Vault Context
 
-The source of truth for secrets at rest. Caches credentials from 1Password so pipelines run offline. Owns secret storage, access tokens, and the unseal lifecycle. The vault is never exposed to any network — it is only accessible from the CLI on localhost. No other context stores secrets. No other context generates tokens.
+The source of truth for secrets at rest. Caches credentials from 1Password so pipelines run offline. Owns secret storage, access tokens, and the unseal lifecycle. Accessed through nginx at `https://vault.cove/` — no direct host port exposure.
 
 | Aspect | Detail |
 |--------|--------|
 | Language | secret, mount, path, token, unseal, shamir, policy |
 | Storage | Raft (on-disk, `~/Documents/cove-data/vault/data/`) |
-| Entry point | `cove creds vault-put` / `vault-get` (CLI on `127.0.0.1:8200`) |
+| Entry point | `https://vault.cove/` (via nginx) |
 | Implementation | HashiCorp Vault 1.20 |
 
 ### Runtime Context
 
-Executes pipelines. Owns runner lifecycle, job dispatch, build environments, and isolation guarantees. The runtime pulls source from the forge, reads secrets from the vault (via the CLI), executes steps, and pushes artifacts to the registry. It is the only context that runs untrusted code.
+Executes pipelines. Owns runner lifecycle, job dispatch, build environments, and isolation guarantees. Pulls source from the forge, reads secrets from the vault, executes steps, and pushes artifacts to the registry.
 
 | Aspect | Detail |
 |--------|--------|
 | Language | runner, job, step, pipeline, sandbox, isolation |
 | Storage | Ephemeral (containers destroyed after job completion) |
 | Entry point | Forgejo Actions runner |
-| Implementation | Forgejo runner (Docker), Kata Containers (future) |
+| Implementation | Forgejo runner (Docker) |
 
 ### Registry Context
 
-Stores build outputs. Owns container images and their lifecycle — pull, cache, serve. The registry is the bridge between building an image and deploying it. It is the only context that stores binary artifacts.
+Stores build outputs as OCI artifacts. Owns container images and their lifecycle — pull, cache, serve. Implemented by Forgejo's built-in OCI registry at `/v2/` — no separate `registry:2` container.
 
 | Aspect | Detail |
 |--------|--------|
 | Language | image, tag, layer, pull, push, cache |
 | Storage | Forgejo data directory (`~/Documents/cove-data/forgejo/`) |
-| Entry point | `forgejo.cove.local/v2/` |
+| Entry point | `https://git.cove/v2/` |
 | Implementation | Forgejo built-in OCI registry |
 
 ### Pages Context
 
-Serves static sites. Owns site artifacts, subdomain routing, and the deploy-publish-serve lifecycle. Three composite actions (`configure-pages`, `upload-pages-artifact`, `deploy-pages`) replicate GitHub Pages behavior. The pages context only reads artifacts pushed by pipelines — it never builds them.
+Serves static sites. Owns site artifacts, subdomain routing, and the deploy-publish-serve lifecycle. Three composite actions (`configure-pages`, `upload-pages-artifact`, `deploy-pages`) replicate GitHub Pages behavior.
 
 | Aspect | Detail |
 |--------|--------|
 | Language | site, page, artifact, deploy, subdomain, redirect |
 | Storage | `~/Documents/cove-data/pages/sites/<owner>/<repo>/` |
-| Entry point | `https://<owner>.pages.cove.mbpbk-202602.taila90e7.ts.net` |
-| Implementation | nginx + dnsmasq (planned) |
+| Entry point | `https://<owner>.pages.cove/` |
+| Implementation | nginx + dnsmasq |
 
 ### Context Map
 
@@ -144,58 +147,50 @@ Serves static sites. Owns site artifacts, subdomain routing, and the deploy-publ
 
 ### Reverse Proxy (nginx)
 
-The single entry point for all HTTP/HTTPS traffic. Terminates TLS on port 443 using Tailscale certs, redirects HTTP on port 80 to HTTPS. Routes by `Host` header:
+The single entry point for all HTTP/HTTPS traffic. Terminates TLS on port 8443 (host) using mkcert certificates, redirects HTTP on port 8080 to HTTPS. pf NAT forwards `localhost:443` → `8443`. Routes by `Host` header:
 
 | Host Pattern | Target |
 |---|---|
-| `git.cove.mbpbk-202602.taila90e7.ts.net` | `forgejo:3000` |
-| `*.pages.cove.mbpbk-202602.taila90e7.ts.net` | `/data/pages/sites/` |
-
-Vault is not routed through nginx — it is accessed directly by the CLI on `127.0.0.1:8200`.
+| `git.cove` | `forgejo:3000` |
+| `vault.cove` | `vault:8200` |
+| `hc.cove` | health check (200 OK) |
+| `*.pages.cove` | `/data/pages/sites/` |
+| Tailscale FQDN | `forgejo:3000` (conditional) |
 
 ### Git Forge (Forgejo)
 
-Codeberg Forgejo v15 container. SQLite backend. TLS handled by nginx; Forgejo itself listens on port 3000. Key configuration:
-- Registration disabled, sign-in required.
-- Push-to-create enabled (user and org).
-- SSH port 2222 published to `127.0.0.1:2222` bypassing the proxy, to keep SSH reachable offline.
+Codeberg Forgejo v15 container. SQLite backend. TLS handled by nginx; Forgejo itself listens on port 3000. SSH port 2222 published to `0.0.0.0:2222` directly, bypassing the proxy.
 
 ### Secrets Vault (HashiCorp Vault)
 
-Vault 1.20 with Raft storage. TLS disabled (reached via `127.0.0.1:8200`, never exposed to any network interface). Shamir unseal with 5 shares / 3 threshold. Unseal keys and root token stored in the host OS keychain. KV v2 engine at `secret/`. Age-encrypted backups via CronJob (future).
+Vault 1.20 with Raft storage. Accessible only through nginx at `https://vault.cove/` — no host port mapping. Shamir unseal with 5 shares / 3 threshold. Unseal keys and root token stored in the host OS keychain. KV v2 engine at `secret/`.
 
-### Static Pages Server (planned)
+### Static Pages Server
 
 A wildcard DNS resolver plus static file server that replicates GitHub Pages:
-- dnsmasq resolves `*.cove.mbpbk-202602.taila90e7.ts.net` → `127.0.0.1` (offline fallback).
-- nginx serves static content from `~/Documents/cove-data/pages/sites/<owner>/<repo>/`.
-- MagicDNS handles the same wildcard online; dnsmasq is only consulted offline via `/etc/resolver/`.
+- dnsmasq resolves `*.pages.cove` → `127.0.0.1`.
+- nginx serves static content from `~/Documents/cove-data/pages/sites/<owner>/<repo>/` with mkcert wildcard TLS.
 - Three Forgejo composite actions (`cove/configure-pages`, `cove/upload-pages-artifact`, `cove/deploy-pages`) provide GitHub Pages workflow compatibility.
 
 ### CI Runners
 
-Forgejo's built-in runner dispatches CI jobs to Docker containers on the same network. The k3s track adds Kata Containers with VM-level isolation for untrusted code from LLM agents.
+Forgejo's built-in runner dispatches CI jobs to Docker containers on the same network. No separate runner container is deployed yet.
 
-### Container Registry (future)
+### Container Registry
 
-The Registry context is implemented by Forgejo's built-in OCI-compatible container registry at the `/v2/` path. Woodpecker pipelines push images using `GITHUB_TOKEN` scoped to the project. Remote deploy targets authenticate with Forgejo PATs. A standalone `registry:2` container is not needed within Cove's scope — consumer projects (e.g., Homelab) deploy their own registries if required.
+Forgejo's built-in OCI-compatible container registry at the `/v2/` path. Pipelines push images using `GITHUB_TOKEN` scoped to the project. Remote deploy targets authenticate with Forgejo PATs. A standalone `registry:2` container is not needed within Cove's scope.
 
 ## DNS Strategy
 
 ### Online
 
-Tailscale MagicDNS resolves `mbpbk-202602.taila90e7.ts.net` to the machine's Tailscale IP. MagicDNS natively resolves subdomains to the same machine, so `*.cove.mbpbk-202602.taila90e7.ts.net` all route to the Mac. Tailscale Serve forwards HTTPS traffic to `https://localhost:443` (nginx).
+All `*.cove` domains resolve via `/etc/hosts` to `127.0.0.1`. Tailscale MagicDNS resolves the Tailscale FQDN to the machine's Tailscale IP; Tailscale Serve forwards HTTPS to `https://127.0.0.1:8443`.
 
 ### Offline
 
-MagicDNS is unreachable. Two mechanisms handle DNS offline:
-- `/etc/hosts` maps the base MagicDNS FQDN to `127.0.0.1` for Forgejo access.
-- `/etc/resolver/cove.mbpbk-202602.taila90e7.ts.net` routes subdomain queries to `dnsmasq:5353`, which has a wildcard `address=` rule resolving `*.cove.*.ts.net` → `127.0.0.1`.
-- nginx at `127.0.0.1:443` uses locally cached Tailscale certs — valid TLS, CA-accepted, no warnings.
-
-### Future (k3s)
-
-The k3s migration introduces `.cove.local` as a cluster-local domain, resolved by CoreDNS inside the cluster and forwarded from the host via `/etc/resolver/` (macOS) or systemd-resolved (Linux). MagicDNS access continues in parallel for phone/Tailscale access. dnsmasq is removed; CoreDNS handles all internal resolution.
+- `/etc/hosts` maps `cove`, `git.cove`, `vault.cove`, `hc.cove` to `127.0.0.1`.
+- `/etc/resolver/cove` routes subdomain queries to `dnsmasq:5353`, which has a wildcard rule resolving `*.cove` → `127.0.0.1`.
+- nginx at `127.0.0.1:8443` uses mkcert certs — valid TLS, CA-accepted, no warnings.
 
 ## Data Persistence
 
@@ -211,18 +206,18 @@ All persistent state lives under `~/Documents/cove-data/`:
 │   ├── data/            # Vault Raft storage
 │   └── logs/            # Vault audit logs
 ├── pages/
-│   └── sites/           # Deployed static sites (planned)
+│   └── sites/           # Deployed static sites
 │       └── <owner>/
 │           ├── .index/  # User/org site
 │           └── <repo>/  # Per-repository site
 ├── certs/
-│   ├── fullchain.pem    # Tailscale TLS certificate
-│   └── privkey.pem      # Tailscale TLS private key
+│   ├── cove.local.pem    # mkcert TLS certificate
+│   └── cove.local-key.pem # mkcert TLS private key
 ├── nginx/
 │   └── conf.d/
-│       └── default.conf # Rendered from Ansible template
+│       └── default.conf  # Rendered from Ansible template
 └── dnsmasq/
-    └── cove.conf        # Wildcard resolver configuration
+    └── cove.conf         # Wildcard resolver configuration
 ```
 
 Files are backed up by existing tools (Time Machine, Syncthing, restic) that already capture `~/Documents/`.
@@ -233,10 +228,13 @@ Provisioning is Ansible-driven and sequential:
 
 ```
 bringup.yml
-  ├─ Renders .env
+  ├─ Starts Colima (macOS)
+  ├─ Configures mkcert TLS for *.cove
   ├─ Creates data directories
   ├─ Configures /etc/hosts
-  ├─ Configures Tailscale Serve
+  ├─ Configures pf NAT (443 → 8443)
+  ├─ Configures Tailscale Serve (if tailnet)
+  ├─ Renders .env + nginx + dnsmasq configs
   ├─ docker compose up (forgejo, vault, nginx, dnsmasq)
   └─ Waits for health
 
@@ -255,9 +253,9 @@ provision_forgejo.yml
   ├─ Creates SSH key + registers with Forgejo
   └─ Sets up known_hosts
 
-provision_pages.yml (planned)
+provision_pages.yml
   ├─ Creates cove org in Forgejo
-  ├─ Creates four repos (three actions + artifact store)
+  ├─ Creates action repos (configure-pages, upload-pages-artifact, deploy-pages)
   ├─ Pushes action code
   └─ Registers workflow template
 ```
@@ -266,16 +264,16 @@ provision_pages.yml (planned)
 
 | Service | External Access | Internal Access | Notes |
 |---------|----------------|-----------------|-------|
-| nginx | 127.0.0.1:443, :80 | internal Docker network | TLS termination, host-header routing |
+| nginx | `127.0.0.1:8443`, `:8080` | Internal Docker network | TLS termination, host-header routing |
 | Forgejo HTTP | Via nginx only | `forgejo:3000` | No published host port |
-| Forgejo SSH | 127.0.0.1:2222 | `forgejo:22` | Direct, not proxied |
-| Vault | None | 127.0.0.1:8200 | CLI-only, no network exposure |
-| dnsmasq | None | 127.0.0.1:5353 | Only resolves to 127.0.0.1 |
-| Pages static files | Via nginx only | internal volume | Read-only from nginx container |
+| Forgejo SSH | `0.0.0.0:2222` | `forgejo:22` | Direct, not proxied |
+| Vault | Via nginx only | `vault:8200` | No host port mapping |
+| dnsmasq | None | `127.0.0.1:5353` | Only resolves to `127.0.0.1` |
+| Pages static files | Via nginx only | Internal volume | Read-only from nginx container |
 
 ## TLS
 
-Tailscale generates an HTTPS certificate for the MagicDNS FQDN via Let's Encrypt. The certificate is stored at `~/Documents/cove-data/certs/` and valid for the MagicDNS hostname and subdomains. Both nginx and Forgejo (pre-proxy) use this cert. Offline, the cert is still valid — the CA is trusted and the hostname resolves via `/etc/hosts`.
+mkcert generates locally-trusted CA and certificates for `*.cove`, `localhost`, `127.0.0.1`, `::1`. Stored at `~/Documents/cove-data/certs/`. All services trust the mkcert root CA after `mkcert -install`. If Tailscale is available, its Tailscale FQDN certificate is also loaded for remote access via tailnet URLs.
 
 ## Credential Lifecycle
 
@@ -283,6 +281,9 @@ Tailscale generates an HTTPS certificate for the MagicDNS FQDN via Let's Encrypt
 1Password (op://Private/../password)
   │
   ├─ cove creds 1p-bulk-write → creates 1Password items
+  │
+  ├─ cove creds batch-pull → writes disk cache
+  │   └─ ~/.cove/op-cache/<vault>/<item>/<field>
   │
   ├─ cove creds vault-put → caches in Vault KV v2
   │   └─ secret/data/op-cache/<vault>/<item>/<field>
@@ -292,25 +293,3 @@ Tailscale generates an HTTPS certificate for the MagicDNS FQDN via Let's Encrypt
 ```
 
 The CLI reads `VAULT_TOKEN` from the environment or the OS keychain. If Vault is sealed, `vault-put` and `vault-get` automatically unseal it using keys from the keychain.
-
-## Future: k3s Architecture
-
-```
-Host (macOS/Linux)
-├── Lima VM (macOS only)
-│   └── k3s single-node cluster
-│       ├── namespace: cove
-│       │   ├── forgejo (StatefulSet)          # Git + CI + OCI registry
-│       │   ├── vault (StatefulSet + init-container unseal)
-│       │   ├── runner (Deployment, Kata RuntimeClass)
-│       │   └── traefik (Ingress Controller)
-│       └── namespace: cove-draft-* (ephemeral)
-└── ~/Documents/cove/ ← hostPath mounts
-```
-
-Key differences from the Compose MVP:
-- Services are Kubernetes workloads, not Docker Compose services.
-- Traefik replaces nginx as the ingress controller.
-- CI runners use Kata Containers (VM per pod) for isolation.
-- CoreDNS handles `.cove.local` as the sole internal DNS resolver.
-- MagicDNS + Tailscale Serve still provide phone access.

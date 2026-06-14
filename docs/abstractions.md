@@ -27,13 +27,13 @@ Pipelines are portable. The only difference between a Cove pipeline and its GitH
 
 ### Secret
 
-A piece of information a pipeline or service needs that must not live in source code. Secrets move through three stages: source of truth (1Password) → cache (Vault KV v2) → consumer (pipeline step, Ansible task, CLI). The canonical address is an `op://` reference. Vault holds the cache so pipelines run offline. Consumers call `cove creds vault-put` and receive a string — they never know which stage produced it.
+A piece of information a pipeline or service needs that must not live in source code. Secrets move through four stages: source of truth (1Password) → disk cache (`cove creds batch-pull`) → Vault cache (KV v2) → consumer (pipeline step, Ansible task, CLI). The canonical address is an `op://` reference. Vault holds the cache so pipelines run offline. Consumers call `cove creds vault-get` and receive a string — they never know which stage produced it.
 
 ## Registry Context
 
 ### Image
 
-A built container, stored as an OCI artifact in Forgejo's container registry. Images are what pipelines produce when the build target is a Dockerfile. They are identified by `<owner>/<name>:<tag>` and pushed to `forgejo.cove.local/v2/`. They serve as the input to container deployments. Forgejo's registry stores both locally built and externally pulled images, making them available to authenticated consumers.
+A built container, stored as an OCI artifact in Forgejo's container registry. Images are what pipelines produce when the build target is a Dockerfile. They are identified by `<owner>/<name>:<tag>` and pushed to `https://git.cove/v2/`. They serve as the input to container deployments. Forgejo's registry stores both locally built and externally pulled images, making them available to authenticated consumers.
 
 ## Pages Context
 
