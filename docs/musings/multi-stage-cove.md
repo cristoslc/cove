@@ -200,33 +200,37 @@ local B ──┘
 
 **R3: Comment ordering drift.** Nodes have independent clocks. If MacBook's clock is 5 minutes ahead, its comments sort after Linux's in replay order even though they were written first in wall-clock time. Mitigation: NTP on all Cove nodes. For a single operator, sub-second drift is the norm; second-level drift is visible but the operator can mentally reorder what they themselves wrote. If this becomes a problem in practice, tier-2 can assign a monotonic `received_at` timestamp on processing each event, which provides a global total order at the cost of complexity.
 
-**R4: Two nodes independently replying to the same comment.** Both create reply events with `reply_to: macbook-evt-001`. On replay, both are indented under the parent. Sort order between the two replies is by `created_at` timestamp. The conversation may look slightly out of chronological order if the two nodes' clocks differ, but the threading is correct.
+**R4: Two nodes independently replying to the same comment.** Forgejo's comment model is flat — no threading, no `in_reply_to`, no parent/child hierarchy. A "reply" is just a new comment. If both nodes post a comment referencing the same prior comment, they appear in `created_at` timestamp order. There is no notion of "indenting under the parent" because Forgejo doesn't do threads.
 
-**R5: Reply event arrives before parent event.** Linux's reply to MacBook's comment lands on tier-2 before MacBook's root comment does (network timing). The reply is temporarily orphaned. The renderer shows "reply to an unknown comment" and resolves when the parent arrives. Acceptable transient state.
+**R5: Comment branching — the big one.** Forgejo has no threading, so every comment is top-level in chronological order. The real problem: two nodes writing comments offline that, when merged, interleave in misleading ways:
+
+```
+MacBook offline:
+  10:00 "I think this is a race condition."
+  10:02 "A deadlock is a kind of race condition."  (still offline, hasn't seen Linux's comment)
+
+Linux offline:
+  10:01 "No, it's a deadlock."
+```
+
+When merged on tier-2 and sorted by `created_at`:
+```
+1. macbook: "I think this is a race condition."        (10:00)
+2. linux:   "No, it's a deadlock."                      (10:01)
+3. macbook: "A deadlock is a kind of race condition."   (10:02)
+```
+
+Comment 3 appears to respond to comment 2, but MacBook hadn't seen comment 2 when writing it. The converged order implies a causal chain that doesn't exist.
+
+**For a single operator, this is acceptable.** The operator wrote all three comments. They know what they were thinking. NTP keeps clocks close enough that the order approximates wall-clock intent. The operator can mentally separate "follow-up to my earlier thought" from "reply to something the other machine wrote."
+
+There is no threading fix because Forgejo doesn't support it. The only mitigation is that the tier-2 `received_at` timestamp could provide a causal order (when did tier-2 first learn of each comment?), but this is a different order than author intent and arguably more useful — it reflects the order in which the operator actually discovered information.
 
 **R6: Two nodes create the same issue slug simultaneously.** Unlikely (human-written slugs), but possible. Mitigation: the sync-dir-name includes `{creation-timestamp}-{node}-{slug}`. If two nodes create `my-bug-report` at the exact same second, the timestamps and node IDs differ. The sync-dir-names are unique. The operator sees two issues with similar slugs and can close or link them. This is a UX concern, not a data integrity problem.
 
 **R7: Tier-2 applies events slower than locals push.** A local pushes, then immediately pulls expecting to see its own events. Tier-2 hasn't finished applying them yet — the pull returns stale state. Mitigation: locals push and apply their own events to their local Forgejo before pushing. The pull-after-push is for OTHER nodes' events, not self-verification. If the local wants to verify its events are on tier-2, it checks the sync repo's HEAD (its commit is there) rather than Forgejo's API.
 
 **R8: Per-node event log corruption.** An event log line is truncated due to a crash during write. Replay on tier-2 skips the corrupted line and logs a warning. The node's next push contains a repaired copy (or the node detects the corruption on its own next startup via CRC/length check and rewrites).
-
-### Conversation Integrity
-
-The hardest problem is not data conflict but **comment branching** — two nodes creating comments that, when merged, imply causal relationships that don't exist.
-
-**Example:** MacBook posts "I think this is a race condition." Linux (offline, hasn't synced yet) posts "No, it's a deadlock." MacBook (also offline, hasn't seen Linux's comment) posts "A deadlock is a kind of race condition." When all three sync to tier-2, replay by timestamp shows:
-
-```
-1. macbook: "I think this is a race condition."        (T=10:00)
-2. linux:   "No, it's a deadlock."                      (T=10:01)
-3. macbook: "A deadlock is a kind of race condition."   (T=10:02)
-```
-
-Comment 3 appears to reply to comment 2, but MacBook hadn't seen comment 2 when writing it. The converged order implies a conversation that didn't happen.
-
-**For a single operator, this is tolerable.** The operator wrote all three comments. They know what they were thinking. The chronological order is mostly correct (NTP keeps clocks close). The operator can mentally separate "follow-up to my earlier thought" from "reply to the other machine."
-
-**The real fix is threading.** When a comment is explicitly a reply to another comment, the event includes `reply_to: "macbook-evt-001"`. The renderer indents replies under parents regardless of chronological order. Comments without `reply_to` are just sequential thoughts — ordering between them is chronological, and minor clock drift doesn't break understanding.
 
 ### Conflict Resolution Summary
 
@@ -238,8 +242,8 @@ Comment 3 appears to reply to comment 2, but MacBook hadn't seen comment 2 when 
 | Same issue edited by two nodes | Replay by timestamp — last write wins per field |
 | Comment ordering across nodes | Sort by `created_at` timestamp; NTP for clock sync |
 | Tier-2 push contention | Pull --rebase + retry (always clean due to additive-only git) |
-| Reply before parent arrives | Temporarily orphaned; resolved when parent syncs |
-| Comment branching (fake causal chains) | Tolerated for single operator; threaded replies use explicit `reply_to` |
+| Flat comments (no threading in Forgejo) | No reply-to hierarchy; all comments are chronological |
+| Comment branching (fake causal chains) | Tolerated for single operator; tier-2 `received_at` order as fallback |
 
 ### Offline-First
 
