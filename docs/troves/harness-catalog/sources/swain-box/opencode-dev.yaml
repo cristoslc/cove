@@ -1,0 +1,51 @@
+# opencode-dev Lima VM configuration
+# Place at ~/.lima/opencode-dev.yaml
+
+vmType: vz          # Apple Virtualization.framework on macOS; swap to qemu on Linux
+cpus: 4
+memory: "4GiB"
+
+mounts:
+  # Agent harness configs (shared across all sessions, hot-reloaded at runtime)
+  - location: "~/.agents"
+    writable: false
+    mountPoint: "/home/user.linux/.agents"
+
+  - location: "~/.claude"
+    writable: false
+    mountPoint: "/home/user.linux/.claude"
+
+  # opencode global config: read-only into VM (provides AGENTS.md, opencode.json, MCP defs)
+  - location: "~/.config/opencode"
+    writable: false
+    mountPoint: "/home/user.linux/.config/opencode"
+
+  # Code directories: writable, MCP filesystem serves these
+  - location: "~/Documents/code"
+    writable: true
+    mountPoint: "/home/user.linux/Documents/code"
+
+  - location: "~/Documents/projects"
+    writable: true
+    mountPoint: "/home/user.linux/Documents/projects"
+
+  # opencode data dir: VM writes here, Mac host reads for ccusage
+  # VM is sole writer — no concurrent-write corruption
+  - location: "~/lima-opencode-data"
+    writable: true
+    mountPoint: "/home/user.linux/.local/share/opencode"
+
+portForwards:
+  - guestPort: 4097
+    hostPort: 4097
+    hostIP: "127.0.0.1"
+
+hostResolver:
+  hosts:
+    "host.lima.internal": "192.168.5.2"
+
+provision:
+  - mode: system
+    script: |
+      curl -fsSL https://opencode.ai/install | sh
+      curl -fsSL https://caddyserver.com/install | sh

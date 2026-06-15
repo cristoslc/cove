@@ -1,317 +1,215 @@
-# Opencode Server as Cove Service
+---
+title: "AI Coding Harnesses as Cove Services"
+created: 2026-06-13
+revised: 2026-06-15
+authored-by: cristos
+status: Draft
+---
 
-Right now, I'm using opencode on my laptop with the server running on the laptop itself. This allows me to access it from my phone, but it's subject to the same tier-1/tier-2 access issues as Cove itself. The two main reasons I use opencode server are session continuity and remote access.
+# AI Coding Harnesses as Cove Services
 
-## Research Findings
+## Why This Musing Exists
 
-### OpenCode Architecture
+AI coding harnesses (OpenCode, Claude Code, Aider, etc.) all want filesystem access. The deployment question for Cove is: where does each harness run, how does the phone reach it, and does it need a tier-2 copy?
 
-OpenCode is a TypeScript/Bun monorepo with a **local HTTP server architecture** — even the TUI starts a local HTTP server on `127.0.0.1` and acts as a client to it. Key architectural facts:
+The key insight from research: **most harnesses don't have a native server mode**, so "drop-in" means containerize + bind mount. Only OpenCode has a server-first architecture. For everything else, the deployment pattern is the same: container with bind mounts, a web/remote surface (built-in or third-party), and nginx/Caddy in front.
 
-- **Server mode**: `opencode serve` exposes a full HTTP API (Hono + Effect-ts) with OpenAPI 3.1 spec
-- **Web UI**: `opencode web` provides a browser-based interface (SolidJS)
-- **Sessions**: Stored in SQLite (Drizzle ORM), supports create/fork/compact/abort/share/revert
-- **File access**: Direct filesystem access via REST endpoints (`GET /file/content?path=...`)
-- **Auth**: HTTP Basic Auth via `OPENCODE_SERVER_PASSWORD`
-- **Docker**: Official image at `ghcr.io/anomalyco/opencode` (Alpine, multi-arch)
-- **SDK**: `@opencode-ai/sdk` for programmatic access
-- **Plugins**: Plugin system hooks into all events
-- **MCP support**: Yes
+This musing catalogs the harnesses I've considered for Cove, their tier-1/tier-2 viability, and recommends a deployment model. A detailed evidence-backed comparison is in the [`harness-catalog` trove](../troves/harness-catalog/synthesis.md).
 
-### Cove's Two-Tier Model (from multi-stage-cove.md)
+## The Four Patterns
 
-| Aspect | Tier 1 (Local) | Tier 2 (Always-Online) |
-|--------|:---:|:---:|
-| Location | Laptop | Raspberry Pi / always-on box |
-| Offline-first | ✅ Immutable | ❌ Requires network |
-| Forgejo | ❌ | ✅ |
-| git-bug CLI | ✅ | ❌ |
-| git-bug web UI | ❌ | ✅ |
-| Phone access | ❌ | ✅ (HTTPS) |
+### Pattern A: Server-First (OpenCode)
 
-## Harness Catalog
+OpenCode's TUI is a client to a local HTTP server. The server is the primary surface; the TUI is one of many possible clients. Designed for containerization — `ghcr.io/anomalyco/opencode` is the official image. Sessions in SQLite.
 
-This section evaluates AI coding harnesses as Cove drop-ins. The key question for each is: **can it run on Tier 1 and/or Tier 2, and is the split-tier architecture viable?**
+This is the only harness that fits the Cove service model without modification. It's also the only one where tier-2 is genuinely useful (the server can run anywhere, session state is a known mount).
 
-### Evaluation Criteria
+### Pattern B: CLI with Filesystem Dependency (Claude Code, Aider, Codex CLI, Gemini CLI)
 
-A harness's tier-placement viability depends on three things:
+The harness needs direct filesystem access to work. Containerize it; bind-mount `~/Documents/code` and `~/Documents/projects`. The CLI is the entry point; web/remote access is bolted on through one of:
 
-1. **Filesystem access model** — does it need direct host access, or can it operate on a bind-mounted directory?
-2. **Server architecture** — does it have a native server mode (HTTP), or is it CLI-only with sessions stored locally?
-3. **Web UI** — is there a browser-based interface, or must the operator use a terminal client?
+- **Built-in remote control** (Claude Code v2.1.51+, Feb 2026)
+- **Third-party web shell** (ttyd wrapping the CLI in tmux)
+- **Third-party session UI** (CloudCLI / siteboon/claudecodeui for full session management across Claude Code, OpenCode, Cursor CLI, Codex, Gemini-CLI)
 
-These three determine whether a harness can:
-- Run in a container with a bind mount (most can)
-- Be accessed from a phone over HTTPS (needs server + web UI)
-- Survive being split across Tier 1 and Tier 2 (the hard one)
+For tier-2, these harnesses are mostly stateless — each invocation reads the working tree, does work, writes commits. Filesystem access on tier-2 is the hard problem (git sync or proxied I/O).
 
-### Harness Matrix
+### Pattern C: IDE-Extension (Cline, Continue, Cursor)
 
-| Harness | Server Mode | Web UI | Official Docker | MCP | Notes |
-|---------|:---:|:---:|:---:|:---:|-------|
-| **OpenCode** | ✅ Native (Hono+Effect) | ✅ SolidJS | ✅ | ✅ | Server-first architecture. Best tier-placement candidate. |
-| **Claude Code** | ❌ CLI only | ❌ | ❌ | ✅ | Anthropic's official. Works directly on filesystem. No server, no web UI. |
-| **Aider** | ❌ CLI only | ❌ | ❌ Community | ❌ | 46K stars, Apache 2.0. Operates on filesystem. Auto-commits to git. |
-| **Cline / Roo Code** | ❌ VS Code ext | ❌ | ❌ | ✅ | IDE extension. Bound to VS Code runtime. |
-| **Continue** | ❌ VS Code/JetBrains ext | ❌ | ❌ | ✅ | IDE extension. Read-only, mostly. |
-| **Cursor** | ❌ IDE | ❌ | ❌ | ❌ | Full IDE. No way to extract it. |
-| **OpenHands** | ✅ (Docker-isolated) | ✅ | ✅ | ✅ | Sandboxed agents. Heavy infrastructure. |
-| **Codex CLI** | ❌ CLI only | ❌ | ❌ | ❌ | OpenAI's. Container-mode available. |
-| **Gemini CLI** | ❌ CLI only | ❌ | ❌ | ✅ | Google's. |
-| **Cody (Sourcegraph)** | ❌ IDE ext | ❌ | ❌ | ❌ | |
-| **openclaw** | ❓ (need to research) | ❓ | ❓ | ❓ | Mentioned by user; unknown architecture. |
+Run inside an editor. No standalone server. Not a drop-in for Cove. Skip for tier-2.
 
-### Tier-Placement Patterns
+### Pattern D: Local-First Agent Platform (OpenClaw)
 
-Three distinct patterns emerge from the matrix:
+Not a coding harness. A multi-channel personal-assistant platform (250K+ GitHub stars, formerly Clawdbot/Moltbot) with its own gateway, session model, and node pairing. WhatsApp/Telegram/Slack/Discord/iMessage/Signal as UI. Created by Peter Steinberger (who joined OpenAI in Feb 2026).
 
-#### Pattern 1: Server-First (OpenCode)
+Could be considered for tier-2 deployment if the operator wants 24/7 agent availability via messaging apps. But it competes with the forge/git-bug stack for the operator's attention and workflow. Different product, different problem.
 
-OpenCode is the only harness with a native server mode, web UI, and official Docker image. Its architecture is designed for network access: the server runs on a host, multiple clients (TUI, web, SDK) connect over HTTP. This maps directly onto Cove's two-tier model:
+## Claude Code Remote Control — Changes the Story
 
-- **Tier 1 (laptop):** `opencode serve` in a container with bind-mounted code directory. Phone accesses via Tailscale.
-- **Tier 2 (always-on):** Same container setup on the always-on box. Phone accesses via HTTPS at `opencode.cove`.
+Claude Code shipped **Remote Control** in February 2026 (v2.1.51+). It's a built-in feature that bridges a local Claude Code CLI session to `claude.ai/code` (web), the Claude iOS app, and the Claude Android app.
 
-**The split-tier problem is unsolved** — sessions are local SQLite, files are on the host. But OpenCode is the *least bad* candidate for split-tier because its server-first design means a containerized instance on either tier behaves the same way. The operator connects to whichever is online.
+Key facts from the official docs:
 
-#### Pattern 2: CLI with Filesystem Dependency (Claude Code, Aider, Codex CLI, Gemini CLI)
+- **Files stay local.** Remote Control is a window into a local session, not a cloud migration. MCP servers, tools, project config, and environment all stay on the operator's machine.
+- **Outbound only.** No inbound ports. The local process registers with the Anthropic API and polls for work. Traffic flows over TLS with short-lived credentials.
+- **Auth requirement.** Requires a Claude Max/Pro/Team/Enterprise subscription. API keys are not supported. Must be signed in via claude.ai.
+- **Three modes.** `claude remote-control` (server mode, multiple sessions), `claude --remote-control` (interactive with remote access), `/remote-control` (mid-session activation).
+- **Mobile push.** As of v2.1.110+, Claude can push to the mobile app on long task completion or when it needs input.
+- **Limitations.** One remote session per interactive process. Local process must keep running. Extended network outage (>10 min) ends the session.
 
-These harnesses are CLI-only, operate directly on the host filesystem, and have no server. They're excellent coding tools but architecturally hostile to remote access.
+**Implication for Cove:** Claude Code doesn't need a tier-2 deployment. The session lives on the laptop, the phone connects via claude.ai/code, files never leave the machine. A Cove tier-1 container running `claude --remote-control` is sufficient.
 
-**Containerized deployment is straightforward** — bind-mount the project directory and the harness works inside the container just as it would on the host. But the CLI is still local; the operator must `docker exec` into the container to use it.
+## Third-Party Web Surfaces
 
-**Two ways to get a phone-accessible experience:**
+For harnesses without built-in remote control, the web surface comes from elsewhere.
 
-1. **Web terminal in a container.** Run ttyd, Wetty, or similar in the same container as the harness. The harness stays CLI-only, but the operator gets a browser-based terminal at `claude.cove` that proxies into the container. This works for any CLI harness with zero changes to the harness itself. The cost: it's a terminal, not a polished web UI. The benefit: it works for everything.
+### ttyd (tsl0922)
 
-2. **The harness gets a server (upstream or fork).** Claude Code may eventually ship a server mode; today it doesn't. Until then, Pattern 2 harnesses are tier-1-only via web terminal, or tier-2 with a phone-friendly terminal proxy.
-
-**Split-tier viability:** Low. The harness's whole model is "I run here, on the host, with the files." A Tier-2 instance has no access to the Tier-1 filesystem unless the directory is shared (NFS, syncthing, git) — which defeats the point of having a local copy.
-
-#### Pattern 3: IDE-Extension (Cline, Continue, Cody, Cursor)
-
-These run inside VS Code, JetBrains, or a full IDE. They can't be extracted from the IDE runtime.
-
-**Containerized deployment is impossible** without also containerizing the IDE (which defeats the purpose — the operator wants their own IDE, not a remote one).
-
-**Tier placement:** Tier 1 only, on the operator's actual development machine. The phone-accessible experience comes from pairing the IDE with a remote-development extension (VS Code Remote, JetBrains Gateway) that proxies the IDE to a phone browser — but the latency is brutal and the UX is poor.
-
-**Split-tier viability:** None. These are not Cove drop-ins; they're IDE drop-ins.
-
-### Per-Harness Notes
-
-#### OpenCode
-
-- Tier 1: containerized, bind-mount code, expose 4096 via nginx + Tailscale.
-- Tier 2: same container, different host. Phone reaches whichever is online.
-- **Recommended.** Best fit for the two-tier model.
-
-#### Claude Code
-
-- CLI-only, no server. Operates on the host filesystem with full tool access.
-- **Tier 1:** install directly on the laptop. Phone access via web terminal proxy (ttyd/wetty) in a container.
-- **Tier 2:** viable as a containerized CLI, but the container must have the project files. Use git clones for offline, bind-mount for online. The operator runs `claude` inside the container.
-- **Not split-tier.** Each instance is independent. No session sharing without a custom layer.
-
-#### Aider
-
-- Same shape as Claude Code. CLI-only, filesystem-direct, auto-commits to git.
-- 46K stars, Apache 2.0, very stable.
-- **Tier 1:** install on laptop, or run in a container with bind-mount.
-- **Tier 2:** same — container with git clone of the project. Useful for unattended work (overnight builds, refactors on a Pi).
-- **Not split-tier.** Sessions are per-process. No sync layer.
-
-#### Cline / Roo Code
-
-- VS Code extension. The harness *is* the IDE integration.
-- **Tier 1 only.** No path to containerization that doesn't also containerize VS Code.
-- **Not a Cove drop-in.** It's a VS Code drop-in.
-
-#### OpenHands
-
-- Sandboxed agent platform. Each agent runs in its own Docker container.
-- Server mode + web UI. Heavy infrastructure (Postgres, Docker-in-Docker, separate backend/frontend).
-- **Tier 2 candidate.** Designed for unattended agentic work. Operator submits a task, walks away, returns to a result.
-- **Not tier 1.** The whole point is unattended operation; running it on a laptop is overhead without the benefit.
-- **Not split-tier.** It's a tier-2-only service.
-
-#### openclaw
-
-- Mentioned by the operator. Not researched in depth. Treat as a Pattern 2 candidate (CLI with filesystem dependency) until proven otherwise.
-
-### What "Connect To Directly" Means
-
-The user's framing is right: **most harnesses can have containerized instances on Tier 1 and/or Tier 2 that you connect to directly.** The connection mode varies:
-
-- **OpenCode:** HTTP, the server speaks the OpenCode API. Browser UI, SDK, or TUI client.
-- **Claude Code / Aider / Codex / Gemini:** terminal (ttyd, wetty, gotty) over HTTPS. Or `docker exec` from a phone SSH client (Termux, Blink).
-- **Cline / Continue / Cursor:** VS Code Remote / JetBrains Gateway. Slow, not recommended.
-- **OpenHands:** HTTP, the OpenHands web UI. Submit tasks, review results.
-
-The containerized instance is the same regardless of tier — the difference is which host runs the container and which files are bind-mounted.
-
-### Why Not Force a Single Harness
-
-Cove shouldn't pick one harness and force the operator to use it. Different tasks want different tools:
-
-- **Quick edit, in-repo, while at the laptop:** Claude Code or Aider, direct on the host. No container overhead.
-- **Unattended refactor on the always-on box:** OpenHands or a containerized Aider. Let it run overnight.
-- **Phone-driven exploration:** OpenCode (web UI) or a web-terminal proxy into any CLI harness.
-- **Heavy multi-file agentic work:** OpenCode (Tier 2) or OpenHands (Tier 2).
-
-A Cove harness setup should support *all* of these without the operator having to think about it. That's the harbor principle: one command, the right tool is available.
-
-## Tier-1: OpenCode Server on Local Machine (No-Brainer)
-
-Running opencode server as a Tier-1 Cove service is straightforward:
+C binary, 18K+ stars. Default port 7681. Wraps any command in a web-based terminal served via WebSocket. Basic auth, SSL support, Docker image. The canonical web-shell bridge.
 
 ```
-┌─ Laptop (Tier 1) ──────────────────────┐
-│  opencode serve --hostname 0.0.0.0     │
-│  Binds to 127.0.0.1:4096              │
-│  Access from phone via Tailscale       │
-│  Sessions in local SQLite              │
-│  Direct filesystem access to ~/code/   │
-└────────────────────────────────────────┘
+ttyd -p 4097 -c user:pass claude
 ```
 
-**Benefits:**
-- Session continuity across laptop sleep/wake cycles
-- Remote access from phone via Tailscale (already works)
-- No new infrastructure needed
-- Filesystem access is trivial (same machine)
+This puts Claude Code in a browser-accessible terminal. Loss: no session management, no diff view, no chat-style UX. Gain: works with any CLI, no harness modifications.
 
-**How to add to Cove:**
-- Add a `compose/opencode/` service definition
-- Mount `~/Documents/code/` or `~/code/` into the container
-- Expose port 4096 behind nginx at `opencode.cove`
-- Set `OPENCODE_SERVER_PASSWORD` from Vault
-- Persist SQLite sessions in `~/Documents/cove/opencode/`
+### CloudCLI (siteboon/claudecodeui)
 
-## Tier-2: OpenCode Server on Always-Online Box (Open Question)
+A web/GUI for Claude Code, OpenCode, Cursor CLI, Codex, and Gemini-CLI. "Use it locally or remotely to view your active projects and sessions from everywhere." Sandboxed agents with hypervisor-level isolation. PM2 setup, remote server config.
 
-The hard question: can opencode server run on Tier-2 and still be useful?
+More harness-aware than ttyd — knows about sessions, projects, and the differences between harnesses. A real multi-harness dashboard.
 
-### The Filesystem Problem
+### Claude Code UI (claudecodeui)
 
-OpenCode's core value is reading/writing files and running shell commands. A Tier-2 server doesn't have access to the laptop's filesystem. Solutions ranked by feasibility:
+Same project (the README uses both names). Live projects, session history, mobile-friendly.
 
-**Option A: Git-based sync (most aligned with Cove philosophy)**
-```
-Tier-2 opencode works on a git clone of the repo.
-Agent edits files, commits, pushes.
-Laptop pulls when online.
-```
-- Pro: Aligns with Cove's git-based sync model
-- Pro: Works offline on laptop (just pull before disconnecting)
-- Con: Agent can only work on repos that exist on Tier-2
-- Con: No access to uncommitted changes on laptop
-- Con: Can't run project-specific commands that need local env
+## swain-box — The Reference Pattern
 
-**Option B: Tailscale/Funnel (simplest)**
-```
-Tier-1 opencode server is accessible via Tailscale Funnel.
-Phone connects directly to laptop's opencode server.
-No Tier-2 opencode needed.
-```
-- Pro: Zero new infrastructure
-- Pro: Full filesystem access
-- Con: Laptop must be online and awake
-- Con: Defeats the purpose of Tier-2 (laptop independence)
+[`~/code/swain-box/`](https://git.cove/~/code/swain-box) is a real, working deployment of **kernel-isolated harness deployment** using OpenCode:
 
-**Option C: Hybrid — Tier-2 as proxy/relay**
-```
-Tier-2 runs opencode server with git clones.
-Tier-1 runs opencode server with full filesystem access.
-Phone connects to whichever is available.
-Session state syncs between them (SQLite replication?).
-```
-- Pro: Best of both worlds
-- Con: Session sync is complex (SQLite doesn't do multi-master)
-- Con: Two servers, two sets of sessions
+- Lima VM (Apple VZ on macOS, QEMU on Linux) provides kernel isolation
+- Caddy inside the VM on `:4097` reverse-proxies to `opencode serve` on `127.0.0.1:8848`
+- Mounts: `~/.agents`, `~/.claude`, `~/.config/opencode` (ro); `~/Documents/code`, `~/Documents/projects`, `~/lima-opencode-data` (rw)
+- VM is sole writer to `~/lima-opencode-data`; host reads for ccusage — no concurrent-write corruption
+- 4 CPU / 4GiB RAM (reduced from 8GiB after measurement: opencode 1.31 GiB RSS, Caddy 34 MiB, Ubuntu idle ~300MB)
 
-**Option D: Tier-2 as stateless compute + file proxy**
-```
-Tier-2 opencode server has no local filesystem.
-File operations are proxied to Tier-1 via Tailscale.
-Tier-2 handles LLM calls, session state, web UI.
-Tier-1 handles file I/O and shell execution.
-```
-- Pro: Single session state on Tier-2
-- Pro: Files stay on laptop
-- Con: Requires custom proxy layer (not built into opencode)
-- Con: Laptop must be online for file operations
+**The pattern is portable across harnesses.** Replace `opencode serve` with `claude --remote-control`, `aider`, or any CLI. The Caddyfile, mount topology, and lifecycle are harness-agnostic.
 
-### The Session Continuity Problem
+**Full evidence:** [`swain-box/`](../troves/harness-catalog/sources/swain-box/) in the harness-catalog trove.
 
-Even with filesystem access solved, there's the session problem:
+## Does swain-box Become a Cove Service?
 
-- Sessions are stored in local SQLite on whichever server you're using
-- If you start a session on Tier-1 (laptop) and want to continue on Tier-2 (phone), the session history doesn't follow
-- OpenCode has a `compact` feature (summarize session → create child session), but it's not designed for cross-server sync
+Arguments for making it a Cove service:
+- swain-box already has the deployment figured out (mounts, ports, lifecycle)
+- `cove up` could include a `limactl start opencode-dev` step
+- The Lima YAML + Caddyfile are versioned in swain-box; they'd move to cove
 
-### Recommendation
+Arguments for keeping it as a reference pattern:
+- swain-box is harness-specific (opencode) but the *pattern* is generic
+- Cove's service model is Docker Compose / Colima containers, not Lima VMs
+- swain-box can keep evolving independently; Cove just documents the pattern
+- The Lima VM approach is heavier than necessary for most harnesses; Claude Code Remote Control means you don't need tier-2 for Claude
 
-**For now: Tier-1 only.** Run opencode server on the local machine as a Cove service. This gives us:
-- Session continuity (server stays up across terminal sessions)
-- Remote access via Tailscale (phone can reach laptop's opencode server)
-- Full filesystem access
-- No architectural complexity
+**Verdict:** Reference pattern, not service. Cove documents the pattern and provides parameterized compose services for harnesses. Operators who want kernel isolation use Lima manually; operators who want container isolation use Cove's compose.
 
-**Tier-2 opencode is not worth the complexity** until there's a clear use case that Tier-1 + Tailscale doesn't solve. The filesystem access problem is fundamental — an AI coding agent without filesystem access is severely limited.
+## Tier Placement Matrix
 
-### What Tier-1 as a Cove Service Looks Like
+| Harness | Tier 1 | Tier 2 | Web Surface |
+|---------|:---:|:---:|-------------|
+| **OpenCode** | ✅ Native server | ✅ Git-sync | Native web UI |
+| **Claude Code** | ✅ Container + bind mount | ⚠️ Files stay on laptop | `claude.ai/code` via Remote Control |
+| **Aider** | ✅ Container + bind mount | ⚠️ Git-sync (auto-commits) | ttyd or CloudCLI |
+| **Codex CLI** | ✅ Container + bind mount | ⚠️ Same as Aider | ttyd or CloudCLI |
+| **Gemini CLI** | ✅ Container + bind mount | ⚠️ Same as Aider | ttyd or CloudCLI |
+| **Cline** | ❌ IDE-only | ❌ | Editor |
+| **Continue** | ❌ IDE-only, unmaintained | ❌ | Editor |
+| **Cursor** | ❌ IDE-only | ❌ | Editor |
+| **OpenHands** | ❌ | ✅ Sandbox agent platform | Web |
+| **OpenClaw** | ⚠️ Local install | ✅ Self-host gateway | Messaging apps |
+| **CloudCLI** | ✅ Container | ✅ Container | Native web UI |
+
+## Deployment Recommendations
+
+### Tier 1 (local laptop)
 
 ```yaml
-# compose/opencode/compose.yaml
+# OpenCode — native server, compose service
 services:
   opencode:
     image: ghcr.io/anomalyco/opencode:latest
-    container_name: cove-opencode
-    ports:
-      - "127.0.0.1:4096:4096"
+    ports: ["127.0.0.1:4096:4096"]
     volumes:
-      - ~/Documents/code:/home/code:ro  # read-only access to projects
-      - ~/Documents/cove/opencode:/home/opencode  # session persistence
+      - ~/Documents/code:/home/code:rw
+      - ~/Documents/projects:/home/projects:rw
+      - ~/Documents/cove/opencode:/home/opencode:rw
     environment:
       - OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD}
-      - OPENCODE_SERVER_HOSTNAME=0.0.0.0
-      - OPENCODE_SERVER_PORT=4096
     restart: unless-stopped
 ```
 
 Behind nginx at `opencode.cove` with HTTPS, accessible from phone via Tailscale.
 
-### Multi-Harness Cove Service Pattern
-
-For the broader harness catalog, a generalized compose template:
-
 ```yaml
-# compose/harness/compose.yaml — parameterized for any harness
+# Claude Code — container with bind mount, Remote Control for web
 services:
-  harness:
-    image: ${HARNESS_IMAGE}  # e.g., ghcr.io/anomalyco/opencode, anthropic/claude-code, aider-ai/aider
-    container_name: cove-${HARNESS_NAME}
-    ports:
-      - "127.0.0.1:${HARNESS_PORT}:${HARNESS_PORT}"
+  claude-code:
+    image: node:22-slim
+    working_dir: /home/code
+    command: claude --remote-control
     volumes:
-      - ${HARNESS_CODE_DIR}:/home/code:ro  # or :rw depending on harness
-      - ~/Documents/cove/${HARNESS_NAME}:/home/${HARNESS_NAME}  # state persistence
-    environment:
-      - ${HARNESS_API_KEY}=${${HARNESS_API_KEY}}
-    restart: unless-stopped
+      - ~/.claude:/home/node/.claude:ro
+      - ~/Documents/code:/home/code:rw
+    # No port mapping — uses outbound bridge to claude.ai/code
 ```
 
-One compose file per harness, parameterized by `HARNESS_*` env vars. The operator runs `cove harness add claude` and gets a containerized Claude Code at `claude.cove`. Same for `aider`, `opencode`, etc.
+Phone access via claude.ai/code (web) or Claude mobile app. No port forwarding needed.
 
-### Open Questions
+```yaml
+# Aider, Codex CLI, Gemini CLI — container with bind mount, ttyd for web
+services:
+  aider:
+    image: python:3.12-slim
+    command: ttyd -p 4097 -c ${AIDER_USER}:${AIDER_PASS} aider --model sonnet
+    volumes:
+      - ~/Documents/code:/home/code:rw
+    ports: ["127.0.0.1:4097:4097"]
+```
 
-1. **Read-only vs read-write filesystem?** Read-only is safer but limits the agent. Read-write means the agent can modify files on the host.
-2. **Which directories to mount?** `~/Documents/code/` covers Cove projects. What about other code locations?
-3. **LLM API keys?** Stored in Vault, injected as env vars. The agent needs access to Anthropic/OpenAI APIs.
-4. **Resource limits?** LLM calls are expensive. Need to prevent runaway token usage.
-5. **Multiple projects?** OpenCode works on one project at a time. The web UI lets you switch, but sessions are per-project.
-6. **Web terminal for CLI harnesses?** ttyd vs wetty vs gotty — which is the best fit for a phone browser? ttyd is the most popular and supports authentication.
-7. **Split-tier for any harness?** OpenCode is the best candidate but unsolved. Should we wait for an upstream session-sync feature, or build it?
-8. **OpenHands tier-2 deployment?** Worth the infrastructure overhead for unattended agentic work?
+Phone access via `https://aider.cove` (nginx in front of ttyd).
+
+### Tier 2 (always-online box)
+
+- **OpenCode**: same container, git-sync filesystem access. Reference: swain-box pattern (Lima VM) or compose with periodic `git pull`. Session data on a known mount.
+- **Claude Code**: not necessary. Remote Control bridges to the local CLI session. Tier-2 doesn't add value — the session must run on a machine with filesystem access.
+- **Aider, Codex CLI, Gemini CLI**: stateless, can run on tier-2 with git-sync. Output is commits. Limited value — just runs in CI.
+- **OpenClaw**: could be self-hosted on tier-2 for 24/7 availability via messaging apps. Different use case than coding.
+
+## Open Questions
+
+1. **Lima VM vs Docker container for kernel isolation?** swain-box uses Lima. Cove uses Colima (Docker). Can we offer both, or pick one?
+2. **Multiple harnesses on the same laptop?** Can OpenCode and Claude Code coexist? They both want `~/.claude` and `~/.config/opencode` mounts. Conflicts?
+3. **Session sharing across harnesses?** CloudCLI promises multi-harness session management. Does that actually work in practice?
+4. **Tailscale vs nginx auth?** Tiers 1 and 2 both expose web surfaces. Tailscale gives zero-config auth. nginx + basic auth + TLS gives broader access. Which to standardize on?
+5. **Resource limits per harness?** LLM calls are expensive. Need per-harness rate limits or token budgets.
+6. **OpenClaw integration?** The user mentioned it as a possible drop-in. Should Cove provide a tier-2 OpenClaw service, or is it out of scope?
+
+## Next Steps
+
+- Pick the v1 harness set: OpenCode (native) + Claude Code (Remote Control) covers most needs
+- Write a parameterized compose template for the CLI harness pattern (Aider/Codex/Gemini)
+- Test Claude Code Remote Control on the local laptop
+- Evaluate CloudCLI as a multi-harness dashboard
+- Document the Lima VM pattern in the swain-box repo so operators can replicate
+- Decide: should `cove up` include Lima VM setup, or only Compose services?
+
+## Sources
+
+Full evidence trail in [`docs/troves/harness-catalog/sources/`](../troves/harness-catalog/sources/):
+
+- `claude-code-remote-control/` — code.claude.com official docs, snapshotted
+- `claudecodeui/` — siteboon/claudecodeui GitHub
+- `ttyd/` — tsl0922/ttyd GitHub
+- `openclaw/` — openclaw/openclaw GitHub
+- `swain-box/` — 10 files from ~/code/swain-box/ (ARCHITECTURE, PURPOSE, AGENTS, TECH-STACK, DEVELOPER-WORKFLOWS, USER-EXPERIENCE, opencode-dev.yaml, Caddyfile, plus 2 musings)
+
+Synthesis: [`docs/troves/harness-catalog/synthesis.md`](../troves/harness-catalog/synthesis.md)
