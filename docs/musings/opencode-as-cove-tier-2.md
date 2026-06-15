@@ -110,7 +110,7 @@ Arguments for keeping it as a reference pattern:
 - swain-box can keep evolving independently; Cove just documents the pattern
 - The Lima VM approach is heavier than necessary for most harnesses; Claude Code Remote Control means you don't need tier-2 for Claude
 
-**Verdict:** Reference pattern, not service. Cove documents the pattern and provides parameterized compose services for harnesses. Operators who want kernel isolation use Lima manually; operators who want container isolation use Cove's compose.
+**Verdict:** Reference pattern, not service. Cove provides Docker containers via Colima as the default tier-1 deployment. swain-box's Lima VM pattern is documented as a reference for operators who want to replicate it outside of Cove. Cove does not bundle Lima VM orchestration into `cove up`.
 
 ## Tier Placement Matrix
 
@@ -179,95 +179,18 @@ Phone access via `https://aider.cove` (nginx in front of ttyd).
 
 ### Tier 2 (always-online box)
 
-- **OpenCode**: same container, git-sync filesystem access. Reference: swain-box pattern (Lima VM) or compose with periodic `git pull`. Session data on a known mount.
+- **OpenCode**: same container, git-sync filesystem access. Compose with periodic `git pull` for filesystem changes. Session data on a known mount.
 - **Claude Code**: not necessary. Remote Control bridges to the local CLI session. Tier-2 doesn't add value — the session must run on a machine with filesystem access.
 - **Aider, Codex CLI, Gemini CLI**: stateless, can run on tier-2 with git-sync. Output is commits. Limited value — just runs in CI.
 - **OpenClaw**: could be self-hosted on tier-2 for 24/7 availability via messaging apps. Different use case than coding.
 
-## Hardening: Should Cove Adopt the swain-box Pattern?
-
-The previous section said "reference pattern, not service." That was about whether to bundle Lima VM orchestration into `cove up`. A separate question: should Cove *adopt* the swain-box pattern as the recommended tier-1 deployment, for hardening reasons?
-
-### Threat Model
-
-What are we actually hardening against?
-
-| Threat | Mitigation |
-|--------|-----------|
-| Compromised MCP server (executes arbitrary code) | Process isolation: container, VM |
-| Prompt injection → malicious tool calls | Tool allowlist, not isolation |
-| Compromised harness install (npm/pip supply chain) | Same: process isolation |
-| Stolen laptop | Full-disk encryption (FileVault/LUKS) |
-| Compromised LLM API key | API rate limits, key rotation |
-| Kernel exploit from inside harness | Kernel isolation: VM |
-
-The first three are the realistic threats. Prompt injection is the most common — an LLM that exfiltrates env vars, writes to `~/.ssh/`, or runs `curl | sh`. The harness executes whatever the LLM decides to call. If the harness has host filesystem access (bind mount rw), so does the injection.
-
-### Isolation Layers
-
-| Layer | Provides | Cost | swain-box status |
-|-------|----------|------|------------------|
-| Bare host (no isolation) | None | Free | Not used |
-| Docker container | Process + filesystem + network | ~50MB overhead | Not used |
-| Colima (Lima + Docker) | Same as Docker | ~300MB idle, macOS native | Available, not default |
-| Lima VM (no Docker) | Separate kernel | 1.7 GiB idle, 4 GiB allocated | **Current** |
-| Hardware VM (KVM, Hyper-V) | Separate kernel + firmware | Full hypervisor, 8+ GiB | Not used |
-
-**The gap is between Colima and Lima VM.** Docker gives you process isolation. A container escape CVE means host kernel access — rare, but real (CVE-2024-21626 etc.). Lima VM gives you a separate kernel. No process can escape a VM to the host without a kernel exploit in the hypervisor (Apple VZ or QEMU), which is a much smaller attack surface.
-
-### What swain-box Actually Buys You
-
-Running OpenCode in a Lima VM means:
-- MCP servers run inside the VM, not the host
-- Filesystem access is via 9p/virtiofs mounts, not direct host fs
-- A compromised harness or MCP server can't `rm -rf ~/Documents/code` on the host
-- Network namespace is isolated (the VM has its own network stack)
-- ccusage (host) reads SQLite from a shared mount — VM is sole writer, no corruption
-
-**For MCP server security specifically:** MCP servers are the highest-risk surface. They're npm/pip packages that the LLM invokes. A prompt-injected server can `process.exit(0)` after `exec("rm -rf /")`. In a container, that wipes the container. In a Lima VM, it wipes the VM's filesystem. In neither case does it touch the host. **Both are acceptable outcomes** — the damage is contained.
-
-The difference is: if the attacker pivots inside the container (via CVE), they reach the host kernel. From a Lima VM, they have to escape the VM entirely, which is a much higher bar.
-
-### What It Costs
-
-- **Operational complexity**: `brew install lima`, `limactl start/stop`, separate lifecycle from `cove up`
-- **Resource overhead**: 4 GiB RAM allocated, 1.7 GiB actual usage. On an 8 GiB laptop, this is half the memory.
-- **Mount friction**: 9p/virtiofs is slower than native fs. Large git operations feel sluggish inside the VM.
-- **Single-harness proven**: swain-box works for OpenCode. Generalizing to Claude Code (with Remote Control), Aider, etc. is theoretical — would need new Lima YAMLs.
-
-### Recommendation
-
-**Document swain-box as the hardened tier-1 option, not the default.** Three tiers of isolation, three deployment stories:
-
-1. **Default (Cove Compose)**: OpenCode + harnesses in Docker containers via Colima. Process isolation, shared kernel. Sufficient for most operators.
-2. **Hardened (swain-box / Lima VM)**: OpenCode in a Lima VM. Kernel isolation, separate filesystem, MCP server containment. For operators who care about prompt injection pivoting to kernel exploits.
-3. **Remote (Claude Code Remote Control)**: No local process — claude.ai/code is the window, the laptop is the host. Hardened by definition: nothing to compromise locally except the session.
-
-The operator picks. `cove up` does the default. `cove up --hardened` does Lima VM setup. `cove up --remote` configures Claude Code for Remote Control.
-
-**For most operators, the right answer is the default.** Prompt injection is the realistic threat, and tool allowlists handle that. Kernel isolation is defense-in-depth for a low-probability, high-impact scenario.
-
-**For operators who explicitly accept MCP server risk** (running third-party MCP servers, or MCP servers from untrusted sources), the Lima VM pattern is worth the operational cost.
-
-### What This Means for swain-box
-
-swain-box stays as a standalone repo at `~/code/swain-box/`. Cove:
-1. Documents the pattern (this musing)
-2. Provides a `--hardened` flag that links to swain-box's Lima YAML
-3. Does not maintain the Lima YAML itself — swain-box owns the deployment
-4. Tracks the swain-box repo as a reference; operators clone and follow its docs
-
-This keeps swain-box evolving independently (its own concerns: Apple VZ vs QEMU, mount topology, ccusage integration) while making the pattern available to Cove operators.
-
 ## Open Questions
 
-1. **Lima VM vs Docker container for kernel isolation?** swain-box uses Lima. Cove uses Colima (Docker). The answer above: both, with `--hardened` flag for Lima.
-2. **Multiple harnesses on the same laptop?** Can OpenCode and Claude Code coexist? They both want `~/.claude` and `~/.config/opencode` mounts. Conflicts?
-3. **Session sharing across harnesses?** CloudCLI promises multi-harness session management. Does that actually work in practice?
-4. **Tailscale vs nginx auth?** Tiers 1 and 2 both expose web surfaces. Tailscale gives zero-config auth. nginx + basic auth + TLS gives broader access. Which to standardize on?
-5. **Resource limits per harness?** LLM calls are expensive. Need per-harness rate limits or token budgets.
-6. **OpenClaw integration?** The user mentioned it as a possible drop-in. Should Cove provide a tier-2 OpenClaw service, or is it out of scope?
-7. **MCP server allowlist as first-line defense?** If we restrict which MCP servers can be invoked, the kernel isolation question becomes academic. What's the allowlist story?
+1. **Multiple harnesses on the same laptop?** Can OpenCode and Claude Code coexist? They both want `~/.claude` and `~/.config/opencode` mounts. Conflicts?
+2. **Session sharing across harnesses?** CloudCLI promises multi-harness session management. Does that actually work in practice?
+3. **Tailscale vs nginx auth?** Tiers 1 and 2 both expose web surfaces. Tailscale gives zero-config auth. nginx + basic auth + TLS gives broader access. Which to standardize on?
+4. **Resource limits per harness?** LLM calls are expensive. Need per-harness rate limits or token budgets.
+5. **OpenClaw integration?** The user mentioned it as a possible drop-in. Should Cove provide a tier-2 OpenClaw service, or is it out of scope?
 
 ## Next Steps
 
@@ -275,10 +198,7 @@ This keeps swain-box evolving independently (its own concerns: Apple VZ vs QEMU,
 - Write a parameterized compose template for the CLI harness pattern (Aider/Codex/Gemini)
 - Test Claude Code Remote Control on the local laptop
 - Evaluate CloudCLI as a multi-harness dashboard
-- Document the Lima VM pattern in the swain-box repo so operators can replicate
-- Decide: should `cove up` include Lima VM setup, or only Compose services?
-- Build `cove up --hardened` flag that points to swain-box's Lima YAML
-- Define MCP server allowlist mechanism (first-line defense before isolation matters)
+- Document the Lima VM pattern in the swain-box repo so operators can replicate if they want kernel isolation outside Cove
 
 ## Sources
 
