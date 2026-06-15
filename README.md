@@ -60,6 +60,10 @@ cove up
 
 All data lives in `~/Documents/cove-data/`. TLS via mkcert with wildcard `*.cove` certificates. Tailscale Serve provides HTTPS access from any device on your tailnet via pf NAT forwarding (`127.0.0.1:443` → `8443`).
 
+## Forgejo CLI
+
+Cove uses Forgejo as its Git forge. The `fj` CLI manages repositories, pull requests, and more. See [Forgejo CLI Guide](docs/fj-guide.md) for draft PR workflow and conventions.
+
 ## Architecture Docs
 
 - [Architecture](docs/architecture.md) — system boundaries, bounded contexts, service topology, DNS strategy, data persistence
