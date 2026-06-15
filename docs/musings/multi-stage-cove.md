@@ -637,7 +637,22 @@ jobs:
 
 This is simpler than a daemon — no process to manage, no webhook endpoint, no routing. The Action runs on Forgejo's CI runner (which Cove already provisions), has access to the repo, and can push bug refs directly.
 
-**Conversely: if an issue starts with `PR:`, create a Forgejo PR.** The inverse direction — git-bug issue → Forgejo PR — can also work via a Forgejo Action triggered by `push` to `refs/bugs/`. When a new bug is created with a title matching `PR: {title}` and `forgejo-branch: feature-x` metadata, the Action creates the corresponding PR via the Forgejo API. The branch must already exist on Forgejo for the PR to be created (a PR requires a real source branch), but that's the normal workflow anyway — you push the branch first, then create the PR. The Action just automates the "then create the PR" step.
+**Conversely: if an issue starts with `PR:` or `Sashay:`, create a Forgejo PR.** The inverse direction — git-bug issue → Forgejo PR — can also work via a Forgejo Action triggered by `push` to `refs/bugs/`. When a new bug is created with a title matching `PR: {title}` or `Sashay: {title}` and `forgejo-branch: feature-x` metadata, the Action creates the corresponding PR via the Forgejo API.
+
+**If the branch doesn't exist yet, the Action can create it.** Forgejo's API supports creating branches via `POST /repos/{owner}/{repo}/git/refs`. The Action can:
+1. Parse the bug title for `PR:` or `Sashay:` prefix
+2. Extract the branch name from `forgejo-branch:` metadata
+3. Check if the branch exists on Forgejo
+4. If not, create it from the default branch via the API
+5. Create the PR (with `WIP:` prefix for sashays, without for regular PRs)
+
+This means the operator can create a bug while offline, push when online, and get a PR number immediately — no manual `fj pr create` step. For the sashay workflow, this is elegant:
+1. Operator creates a bug: `git bug bug new -t "Sashay: refactor vault" -m "PR discussion for refactor-vault"`
+2. Operator pushes: `git bug push; git push cove main` (the plan commit triggers the sashay)
+3. Action detects the bug, creates branch `refactor-vault` from `main`, creates WIP PR
+4. Operator has a PR number and URL immediately
+
+The branch starts as an empty branch from `main`. The operator then pushes their work onto it and the PR updates normally.
 
 **For v1, start with the one-way bridge (PR opened → git-bug issue).** The inverse (bug → PR) can wait until the workflow is proven.
 
@@ -650,6 +665,10 @@ Events the bridge handles:
 | PR merged | Close git-bug issue, add `merged` label |
 | PR title updated | Update git-bug issue title |
 | PR labels changed | Sync labels to git-bug issue |
+
+| git-bug Event | Forgejo Action |
+|---------------|----------------|
+| Bug created with `PR:` or `Sashay:` prefix | Create branch (if needed) + create PR (`WIP:` prefix for sashays) |
 
 The bridge does NOT sync:
 - PR inline code review comments (stay in Forgejo)
@@ -799,8 +818,8 @@ Branching comment threads are an edge case, not an architecture driver. A sync a
 ## Open Questions (D3)
 
 1. **Same repo or separate repo?** — git-bug stores issues in `refs/bugs/` within the code repo. Same repo means issues travel with code and are visible when you clone the project. Evaluate whether this is the right UX or whether a separate bug repo is better.
-2. **PR ↔ issue linking** — Forgejo Action (PR opened → git-bug issue created with `pr` label and `forgejo-pr-url` metadata) for v1. Inline code review stays in Forgejo. General PR discussion lives in the git-bug issue.
-3. **Inverse linking (bug → PR)** — if an issue starts with `PR:` or has `forgejo-branch:` metadata, should a Forgejo Action create the PR? Needs the branch to already exist. Deferred to v2.
+2. **PR ↔ issue linking** — Forgejo Action (PR opened → git-bug issue created with `pr` label and `forgejo-pr-url` metadata) for v1. Inverse direction: bug with `PR:` or `Sashay:` prefix → Action creates branch + PR (`WIP:` for sashays). Inline code review stays in Forgejo. General PR discussion lives in the git-bug issue.
+3. **Inverse linking (bug → PR)** — if the branch doesn't exist yet, the Action creates it from the default branch via `POST /repos/{owner}/{repo}/git/refs`. The operator gets a PR number immediately. Sashay integration: `Sashay:` prefix creates a WIP PR automatically.
 4. **Phone workflow** — git-bug's web UI on tier-2 supports full CRUD (create, comment, label, close). The phone can create issues and comment. The web UI needs write access to the git repo on tier-2.
 5. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has a Forgejo/Gitea bridge in progress (PR #1565, import-only). A one-time migration script would read Forgejo's API and create issues in git-bug.
 6. **CI status on issues** — Forgejo Action could add CI status as git-bug labels (`ci-passing`, `ci-failing`) or metadata. Cross-system but not complex. Skip for v1.
