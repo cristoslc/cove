@@ -1,0 +1,6 @@
+# Caddyfile — reverse proxy opencode server
+# Place inside the VM at a known path (e.g., ~/Caddyfile or /etc/caddy/Caddyfile)
+
+:4097 {
+    reverse_proxy 127.0.0.1:8848
+}

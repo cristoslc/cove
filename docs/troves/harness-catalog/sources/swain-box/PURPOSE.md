@@ -1,0 +1,1 @@
+Run opencode in server mode in a Lima VM on macOS behind Caddy, with MCP configuration and ccusage data sharing — isolated kernel, portable to Linux.
