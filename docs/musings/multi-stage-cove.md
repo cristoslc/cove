@@ -555,7 +555,7 @@ git-bug is the right fit. It's already what D3 describes: a git-based issue trac
 
 - **Offline-first by construction.** git-bug stores issues in git. Git works offline. Create issues, comment, close — all work offline. Sync when online via `git push`.
 - **No Forgejo API to fight.** Issues are git objects, not rows in Forgejo's SQLite. No API calls, no webhooks, no event logs.
-- **No threading problem.** git-bug can implement threading natively (it's not constrained by Forgejo's flat comment model).
+- **No sync protocol to build.** Git IS the sync protocol. git-bug already uses it.
 - **No sync protocol to build.** Git IS the sync protocol. git-bug already uses it.
 - **No mapping.json.** Issues have stable IDs (git object hashes). No per-instance numeric ID translation.
 - **No race conditions beyond git's own.** git-bug's storage model (edit operations in a linear commit chain) is conflict-free by design.
@@ -569,6 +569,123 @@ git-bug is the right fit. It's already what D3 describes: a git-based issue trac
 - **CI status on issues.** If CI runs locally and reports to Forgejo, git-bug needs to display CI status from Forgejo. Cross-system data flow or skip for v1.
 - **git-bug maturity.** v0.10.1 is pre-1.0. The API may change. The web UI may not be polished enough for phone use. Need to evaluate before committing.
 
+### git-bug + Forgejo PR Integration
+
+git-bug has **no PR support at all** — no PR entity type, no PR data model, no PR workflow. This is by design: git-bug is an issue tracker, and PRs are code review workflows that belong in the forge. The integration needs to bridge these two systems.
+
+#### What Lives Where
+
+| Concern | Lives In | Why |
+|---------|----------|-----|
+| Issue tracking (bugs, features, tasks) | git-bug | Offline-first, distributed, syncs via git |
+| PR metadata (branch, diff, merge status) | Forgejo | Forgejo is the git host; PRs are git operations |
+| PR inline code review (comment on specific lines) | Forgejo | This is a code review feature, not an issue feature |
+| PR general discussion (should we merge? design feedback) | git-bug | This is issue-style discussion, belongs in the tracker |
+| CI status | Forgejo | CI reports to Forgejo via webhooks |
+| Labels | git-bug | git-bug has full label support |
+| Milestones | git-bug (when implemented) | git-bug doesn't have milestones yet; track them as labels for v1 |
+| Assignees | Forgejo | git-bug doesn't have assignees; single-operator doesn't need them |
+
+#### Linking Issues and PRs
+
+A PR in Forgejo references an issue in git-bug by convention. Three approaches:
+
+**Approach 1: Forgejo metadata.** The PR description contains a reference like `git-bug: abc1234` (using git-bug's human-readable ID). A Cove-side hook reads this reference and links the PR to the issue in the web UI. Simple, but requires manual entry.
+
+**Approach 2: git-bug metadata.** When a PR is created in Forgejo, a git-bug issue is automatically created with a `SetMetadataOp` linking it to the Forgejo PR URL (`forgejo-pr-url=https://git.cove/owner/repo/pulls/5`). This is how git-bug's bridges work — they use metadata to track the mapping between local and remote entities. The git-bug issue becomes the discussion thread for the PR.
+
+**Approach 3: Both.** git-bug metadata links the issue to the PR, and Forgejo's PR description links back to the git-bug issue. Bidirectional linking via Cove's web UI or a small bridge daemon.
+
+**Recommendation: Approach 2 for v1.** git-bug's metadata system already exists and is designed for exactly this. The bridge daemon creates a git-bug issue when a Forgejo PR is opened, links them via metadata, and the operator discusses the PR in git-bug's issue (which syncs offline). Inline code review stays in Forgejo.
+
+#### Bridge Daemon: `cove-bridge`
+
+A small daemon that watches Forgejo for PR events and creates/updates corresponding git-bug issues:
+
+```
+Forgejo webhook → cove-bridge → git-bug issue (with metadata linking to PR)
+```
+
+Events the bridge handles:
+
+| Forgejo Event | git-bug Action |
+|---------------|----------------|
+| PR opened | Create git-bug issue with title, body, `forgejo-pr-url` metadata, `pr` label |
+| PR closed (not merged) | Close git-bug issue |
+| PR merged | Close git-bug issue, add `merged` label |
+| PR title updated | Update git-bug issue title |
+| PR labels changed | Sync labels to git-bug issue |
+
+The bridge does NOT sync:
+- PR inline code review comments (stay in Forgejo)
+- PR diff/merge operations (stay in Forgejo)
+- CI status (stays in Forgejo)
+
+This is a one-way bridge (Forgejo → git-bug). The operator creates issues in git-bug (which syncs offline) and discusses PRs in git-bug issues (which also syncs offline). Forgejo is the source of truth for PR state; git-bug is the source of truth for discussion.
+
+#### Offline PR Creation
+
+When the operator creates a PR offline (on a plane), the workflow is:
+
+1. Push the branch to Forgejo (when online) — `git push cove feature-x`
+2. Create the PR in Forgejo — `fj pr create "feature-x"`
+3. The bridge creates a git-bug issue for the PR
+
+But what if the operator wants to start discussing a PR while offline? They can:
+
+1. Create a git-bug issue with a `pr` label and a title matching the branch name: `git bug bug new -t "feature-x: refactor vault" -m "PR discussion for feature-x"`
+2. Add `forgejo-branch: feature-x` metadata to the issue
+3. When online, create the PR in Forgejo, and the bridge links the existing git-bug issue to the new PR
+
+This is manual but works. A future improvement could detect branches with matching names and auto-link.
+
+#### Forgejo Bridge for git-bug
+
+git-bug already has a Forgejo/Gitea bridge in progress (PR #1565, draft, import-only). This bridge syncs Forgejo issues to git-bug. For Cove, we need:
+
+1. **Import (Forgejo → git-bug):** Already in progress via PR #1565. Handles issues, comments, labels, status.
+2. **Export (git-bug → Forgejo):** Not yet built. Needed for v1 if we want git-bug issues to also appear in Forgejo's issue tracker (for phone access via Forgejo's web UI).
+3. **PR sync (Forgejo → git-bug):** New. Creates git-bug issues for Forgejo PRs with metadata linking.
+
+The import bridge (PR #1565) gives us Forgejo issue → git-bug sync. We'd need to add export and PR sync. The export is the harder part — it needs to create Forgejo issues from git-bug bugs, handle comment creation, and keep state in sync.
+
+**For v1, we may skip export.** The operator accesses issues via git-bug's web UI on tier-2 (phone-friendly) and git-bug CLI (local, offline). Forgejo's issue tracker is secondary. If the operator never uses Forgejo's issue UI, export is unnecessary.
+
+#### Identity Mapping
+
+git-bug has its own identity system (stored in `refs/identities/`). Forgejo has its user system. For Cove's single-operator use case, these are trivially mapped: one identity (`cristos`) in git-bug, one account (`cristos`) in Forgejo. The bridge maps them by name/email.
+
+#### Sync Topology (Updated for git-bug)
+
+```
+┌─ local machine (MacBook, offline) ─┐
+│  git: code repos                    │
+│  git-bug: issue tracker             │──┐
+│  (create issues, comment, close)    │  │
+└─────────────────────────────────────┘  │
+                                         │ git push/pull (when online)
+┌─ local machine (Linux, offline) ────┐  │
+│  git: code repos                    │──┤
+│  git-bug: issue tracker            │  │
+│  (create issues, comment, close)    │  │
+└─────────────────────────────────────┘  │
+                                         ▼
+┌─ tier-2 (always online) ───────────────┘
+│  Forgejo: git hosting, PRs            │
+│  git-bug web UI: issue tracking       │
+│  cove-bridge: PR → issue linking       │
+└───────────────────────────────────────┘
+                    ▲
+                    │ HTTPS
+┌───────────────────┴────┐
+│  Phone (browser)      │
+│  git-bug web UI       │
+│  Forgejo web UI       │
+└───────────────────────┘
+```
+
+The `cove-bridge` daemon runs on tier-2, watches Forgejo PR webhooks, and creates/updates git-bug issues accordingly. This is the only component that needs to be built — everything else is git-bug + Forgejo + git.
+
 **The key insight: git already solves distributed sync.** The problem is that Forgejo's issue/PR data doesn't live in git. git-bug already solved this — it stores issues in git. By using git-bug alongside Forgejo, we inherit git's distributed sync for free. Forgejo keeps doing what it's good at (git hosting, PRs, CI) without being forced into a sync model it wasn't designed for.
 
 ### Branching Comment Threads: Edge Case, Not Architecture Driver
@@ -580,11 +697,13 @@ The musing's race condition analysis (R5) spends significant effort on comment b
 - NTP keeps clocks close enough that the order approximates wall-clock intent.
 - The operator wrote all the comments. They know what they meant.
 
+**Note: git-bug also has flat comments (no threading).** This is the same constraint as Forgejo. But git-bug uses Lamport clocks for ordering, which provides a deterministic total order regardless of concurrent edits. Two machines writing comments offline will have a deterministic order after sync — not necessarily wall-clock order, but a consistent order that both machines agree on. This is better than Forgejo's `created_at` timestamps, which depend on wall clocks.
+
 **How to handle it as an edge case:**
 - **Do nothing.** The operator sees the interleaved order, recognizes it's misleading, and moves on. They wrote the comments — they know the context.
 - **Clarifying comment.** The operator adds "To clarify, I wrote the above before seeing the Linux box's comment." Simple, human, works.
-- **Sync layer annotation.** The sync daemon appends a note to comments that were created offline: "Written offline on MacBook, synced at 2026-06-14T10:15:00Z." The operator sees the note and knows the comment may be out of order.
-- **Edit/delete.** Forgejo supports comment editing and deletion via API. If the ordering is truly confusing, the operator can reorder or delete comments.
+- **Lamport clock ordering.** git-bug's Lamport clocks provide deterministic ordering. After sync, both machines agree on the order. It may not match wall-clock intent, but it's consistent and unambiguous.
+- **Edit/delete.** git-bug supports comment editing and deletion. If the ordering is truly confusing, the operator can edit or delete comments.
 
 None of these require a custom event log, per-node event streams, or a replay engine. The simplest fix — a sync annotation — is a single field in the comment metadata. The event-log architecture was solving a problem that doesn't need solving at the architecture level.
 
@@ -633,28 +752,29 @@ Branching comment threads are an edge case, not an architecture driver. A sync a
 
 ## Implementation Path (D3)
 
-1. **Evaluate git-bug** — install on MacBook, test CLI (`git bug create`, `git bug comment`), test TUI (`git bug termui`), test web UI (`git bug web`). Verify offline workflow: create issues on the plane, push when online.
-2. **Set up git-bug on tier-2** — run `git bug web` as a system service behind nginx. This is the phone-accessible issue tracker.
-3. **Set up git-bug on each local machine** — `git bug` CLI. Issues are stored in the same git repo as the code (or a separate bug repo — evaluate both).
-4. **Configure sync** — `git push` / `git pull` on the bug refs. git-bug stores issues in `refs/bugs/` — these need to be pushed/pulled alongside code refs. This may mean a separate remote or a custom push spec.
-5. **Build the Forgejo bridge (optional v1)** — when a PR is created/merged on Forgejo, create/update the corresponding issue in git-bug. This is the only cross-system integration. Skip for v1 if the operator can manually link.
+1. **Evaluate git-bug** — install on MacBook, test CLI (`git bug bug new`, `git bug bug comment new`), test TUI (`git bug termui`), test web UI (`git bug webui`). Verify offline workflow: create issues on the plane, push when online.
+2. **Set up git-bug on tier-2** — run `git bug webui` as a system service behind Cove's nginx. This is the phone-accessible issue tracker.
+3. **Set up git-bug on each local machine** — `git bug` CLI. Issues are stored in the code repo's `refs/bugs/` namespace (same repo, not a separate repo — issues travel with code).
+4. **Configure sync** — `git bug push` / `git bug pull` on the bug refs. git-bug stores issues in `refs/bugs/` and identities in `refs/identities/`. These are pushed/pulled alongside code refs.
+5. **Build `cove-bridge`** — a small daemon on tier-2 that watches Forgejo PR webhooks and creates/updates git-bug issues with `SetMetadataOp` linking to the PR. This is the only component that needs to be built.
 6. **Test offline convergence** — create issues on MacBook, push to tier-2, view on phone. Verify both sides converge.
 7. **Test hub-and-spoke** — MacBook and Linux both sync to tier-2. Verify issues from both machines appear on tier-2 and on each other's next pull.
+8. **Evaluate git-bug's Forgejo bridge (PR #1565)** — assess whether the import-only Forgejo bridge can be extended for export and PR sync.
 
 ## Open Questions (D3)
 
-1. **Separate bug repo or same repo?** — git-bug can store issues in the same repo as code (in `refs/bugs/`) or in a separate repo. Same repo means issues travel with code (good for project context). Separate repo means issues can be synced independently (good for multi-machine). Evaluate both.
-2. **PR ↔ issue linking** — how does a Forgejo PR reference a git-bug issue? Convention in commit messages (`closes bug: <id>`)? A bridge that updates the issue when the PR merges?
-3. **Phone workflow** — git-bug's web UI on tier-2. Can the phone create issues? git-bug web supports this if the web UI has write access to the git repo. Evaluate.
-4. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has bridges for GitHub and GitLab but not Forgejo. A one-time migration script would need to read Forgejo's API and create issues in git-bug.
-5. **CI status on issues** — if CI runs locally and reports to Forgejo, git-bug needs to display CI status. Cross-system data flow or skip for v1?
-6. **git-bug maturity** — v0.10.1, pre-1.0. Evaluate stability, API compatibility, and community activity before committing.
+1. **Same repo or separate repo?** — git-bug stores issues in `refs/bugs/` within the code repo. Same repo means issues travel with code and are visible when you clone the project. Evaluate whether this is the right UX or whether a separate bug repo is better.
+2. **PR ↔ issue linking** — Approach 2 (git-bug metadata) for v1: when a PR is created in Forgejo, `cove-bridge` creates a git-bug issue with `forgejo-pr-url` metadata. The operator discusses the PR in git-bug's issue. Inline code review stays in Forgejo.
+3. **Phone workflow** — git-bug's web UI on tier-2 supports full CRUD (create, comment, label, close). The phone can create issues and comment. The web UI needs write access to the git repo on tier-2.
+4. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has a Forgejo/Gitea bridge in progress (PR #1565, import-only). A one-time migration script would read Forgejo's API and create issues in git-bug.
+5. **CI status on issues** — `cove-bridge` could add CI status as git-bug metadata or labels (e.g., `ci-passing`, `ci-failing`). This is cross-system data flow but not complex. Skip for v1.
+6. **git-bug maturity** — v0.10.1, pre-1.0. No milestones, no assignees, no PR support, no attachments in UI. The web UI is alpha. Evaluate whether these gaps are acceptable for v1.
+7. **`cove-bridge` scope** — v1: PR webhook → git-bug issue creation with metadata. v2: bidirectional issue sync (git-bug → Forgejo export). v3: CI status, label sync, milestone sync.
 
 ## Next Steps
 
 - Install git-bug on MacBook and test the full workflow (create, comment, close, push, pull, web UI)
 - Evaluate git-bug's web UI on a phone browser
 - Decide: same repo or separate repo for bug data
-- Decide: PR ↔ issue linking convention
-- Decide: phone write capability (read-only or full CRUD via git-bug web)
+- Design `cove-bridge` webhook handler (PR events → git-bug issue creation)
 - If git-bug passes evaluation, write a SPEC for the integration architecture
