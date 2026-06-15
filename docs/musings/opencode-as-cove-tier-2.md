@@ -16,20 +16,26 @@ The key insight from research: **most harnesses don't have a native server mode*
 
 This musing catalogs the harnesses I've considered for Cove, their tier-1/tier-2 viability, and recommends a deployment model. A detailed evidence-backed comparison is in the [`harness-catalog` trove](../troves/harness-catalog/synthesis.md).
 
+## Roadmap
+
+- **MVP** = the first thing shipped. One harness (OpenCode), tier 1 only. Proven end-to-end.
+- **v1** = full tier-1 coverage. Multiple harnesses, all on the user workstation.
+- **v2** = tier 2. Always-online box deployments, git-sync filesystem access, session replication.
+
 ## MVP Definition
 
-**v1 is OpenCode only, on tier 1 only.**
+**MVP is OpenCode only, on tier 1 only.**
 
 - **Harness:** OpenCode. Native server mode, fits Cove's compose model without modification.
-- **Tier:** 1 (user workstation). No tier-2 deployment in v1. Tier-2 is v2.
+- **Tier:** 1 (user workstation). No tier-2 deployment in MVP. Tier-2 is v2.
 - **Container runtime:** Docker via Colima. Cove's existing default.
-- **Bind mounts:** OpenCode needs three categories of mount:
+- **Bind mounts:**
   - **Code (rw):** `~/Documents/code` — source repos the agent reads/writes
   - **Projects (rw):** `~/Documents/projects` — working directories outside the code repos
-  - **OpenCode data (rw):** a persistent location for SQLite sessions, e.g. `~/Documents/cove/opencode` — must survive container restarts
+  - **OpenCode data (rw):** persistent location for SQLite sessions, e.g. `~/Documents/cove/opencode` — must survive container restarts
   - **Config (ro):** `~/.config/opencode` — opencode.jsonc, MCP server definitions, AGENTS.md
   - **Agent skills (ro):** `~/.agents` — skills, memories, AGENTS.md detail files (hot-reloaded at runtime)
-  - **Claude skills (ro):** `~/.claude` — shared skill definitions (optional, for cross-harness use later)
+  - **Claude skills (ro):** `~/.claude` — shared skill definitions (for future cross-harness use)
 
 ```yaml
 # MVP compose service for OpenCode on tier 1
@@ -62,7 +68,7 @@ Behind nginx at `opencode.cove` with HTTPS, accessible from phone via Tailscale.
 
 **What MVP explicitly is not:**
 - No tier-2 deployment. OpenCode on the always-online box is v2.
-- No Claude Code, Aider, Codex CLI, Gemini CLI, or OpenClaw. Other harnesses are v2+.
+- No Claude Code, Aider, Codex CLI, Gemini CLI, or OpenClaw. Other harnesses are v1+.
 - No kernel isolation (Lima VM). Container isolation via Colima is sufficient for MVP.
 - No MCP server allowlist mechanism beyond what OpenCode provides natively.
 
@@ -82,18 +88,16 @@ Behind nginx at `opencode.cove` with HTTPS, accessible from phone via Tailscale.
 - Tier-2 deployment of OpenCode (git-sync filesystem access, session replication)
 - Tier-2 deployments of the v1 harnesses where they make sense
 - swain-box-style Lima VM as a reference for operators who want kernel isolation
-- Possibly Aider, Codex CLI, Gemini CLI (ttyd-wrapped)
-- swain-box-style Lima VM as a reference for operators who want kernel isolation
 
-## The Four Patterns
+## Catalog of Harnesses
 
-### Pattern A: Server-First (OpenCode)
+### Pattern A: Server-First (OpenCode) — MVP
 
 OpenCode's TUI is a client to a local HTTP server. The server is the primary surface; the TUI is one of many possible clients. Designed for containerization — `ghcr.io/anomalyco/opencode` is the official image. Sessions in SQLite.
 
 This is the v1 pattern. It's also the only one where tier-2 is genuinely useful (the server can run anywhere, session state is a known mount).
 
-### Pattern B: CLI with Filesystem Dependency (Claude Code, Aider, Codex CLI, Gemini CLI)
+### Pattern B: CLI with Filesystem Dependency (Claude Code, Aider, Codex CLI, Gemini CLI) — v1
 
 The harness needs direct filesystem access to work. Containerize it; bind-mount `~/Documents/code` and `~/Documents/projects`. The CLI is the entry point; web/remote access is bolted on through one of:
 
@@ -103,11 +107,11 @@ The harness needs direct filesystem access to work. Containerize it; bind-mount 
 
 For tier-2, these harnesses are mostly stateless — each invocation reads the working tree, does work, writes commits. Filesystem access on tier-2 is the hard problem (git sync or proxied I/O).
 
-### Pattern C: IDE-Extension (Cline, Continue, Cursor)
+### Pattern C: IDE-Extension (Cline, Continue, Cursor) — out of scope
 
 Run inside an editor. No standalone server. Not a drop-in for Cove. Skip for tier-2.
 
-### Pattern D: Local-First Agent Platform (OpenClaw)
+### Pattern D: Local-First Agent Platform (OpenClaw) — out of scope
 
 Not a coding harness. A multi-channel personal-assistant platform (250K+ GitHub stars, formerly Clawdbot/Moltbot) with its own gateway, session model, and node pairing. WhatsApp/Telegram/Slack/Discord/iMessage/Signal as UI. Created by Peter Steinberger (who joined OpenAI in Feb 2026).
 
@@ -148,10 +152,6 @@ A web/GUI for Claude Code, OpenCode, Cursor CLI, Codex, and Gemini-CLI. "Use it 
 
 More harness-aware than ttyd — knows about sessions, projects, and the differences between harnesses. A real multi-harness dashboard.
 
-### Claude Code UI (claudecodeui)
-
-Same project (the README uses both names). Live projects, session history, mobile-friendly.
-
 ## swain-box — The Reference Pattern
 
 [`~/code/swain-box/`](https://git.cove/~/code/swain-box) is a real, working deployment of **kernel-isolated harness deployment** using OpenCode:
@@ -164,22 +164,9 @@ Same project (the README uses both names). Live projects, session history, mobil
 
 **The pattern is portable across harnesses.** Replace `opencode serve` with `claude --remote-control`, `aider`, or any CLI. The Caddyfile, mount topology, and lifecycle are harness-agnostic.
 
-**Full evidence:** [`swain-box/`](../troves/harness-catalog/sources/swain-box/) in the harness-catalog trove.
-
-## Does swain-box Become a Cove Service?
-
-Arguments for making it a Cove service:
-- swain-box already has the deployment figured out (mounts, ports, lifecycle)
-- `cove up` could include a `limactl start opencode-dev` step
-- The Lima YAML + Caddyfile are versioned in swain-box; they'd move to cove
-
-Arguments for keeping it as a reference pattern:
-- swain-box is harness-specific (opencode) but the *pattern* is generic
-- Cove's service model is Docker Compose / Colima containers, not Lima VMs
-- swain-box can keep evolving independently; Cove just documents the pattern
-- The Lima VM approach is heavier than necessary for most harnesses; Claude Code Remote Control means you don't need tier-2 for Claude
-
 **Verdict:** Reference pattern, not service. Cove provides Docker containers via Colima as the default tier-1 deployment. swain-box's Lima VM pattern is documented as a reference for operators who want to replicate it outside of Cove. Cove does not bundle Lima VM orchestration into `cove up`.
+
+**Full evidence:** [`swain-box/`](../troves/harness-catalog/sources/swain-box/) in the harness-catalog trove.
 
 ## Tier Placement Matrix
 
@@ -196,12 +183,6 @@ Arguments for keeping it as a reference pattern:
 | **Cursor** | — | ❌ IDE-only | ❌ | Editor |
 | **OpenHands** | — | ❌ | ⏳ v2: sandbox agent platform | Web |
 | **OpenClaw** | — | ⚠️ Local install | ⏳ v2: self-host gateway | Messaging apps |
-
-**Versioning:**
-- **MVP** = the first thing shipped. One harness, proven end-to-end.
-- **v1** = full tier-1 coverage. Multiple harnesses, all on the user workstation.
-- **v2** = tier-2. Always-online box deployments, git-sync filesystem access.
-- **—** = not in scope. IDE-only, unmaintained, or different product class.
 
 ## Deployment Recommendations
 
