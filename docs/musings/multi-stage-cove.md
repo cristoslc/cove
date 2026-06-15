@@ -740,6 +740,34 @@ git-bug has its own identity system (stored in `refs/identities/`). Forgejo has 
 
 No separate daemon needed. Forgejo Actions run `git bug` commands when PRs are opened/closed, creating and updating git-bug issues automatically.
 
+### git-bug Web UI on Tier-2
+
+The web UI (`git bug webui`) is a Go HTTP server that serves a React+GraphQL frontend, embedded in the git-bug binary. It reads from and writes to the git repo's `refs/bugs/` namespace. Configuration: `--host`, `--port`, `--open` (auto-open browser). Authentication is local-only (uses git config identity, no OAuth).
+
+**Critical constraint: git-bug does not work with bare repositories** (Issue #178). Forgejo stores repos as bare repos. Running `git bug webui` inside Forgejo's bare repo fails with "git-bug must be run from within a git repo."
+
+**Solution: non-bare mirror clone on tier-2.**
+
+```
+Forgejo bare repo (/data/gitea/repositories/owner/project.git)
+    │
+    │  post-receive hook (or Forgejo Action on push)
+    │  triggers: cd /opt/cove/project && git pull && git bug pull
+    ▼
+Non-bare clone (/opt/cove/project/)
+    │
+    │  git bug webui --host 0.0.0.0 --port 41935
+    │  behind nginx: bugs.project.cove → 127.0.0.1:41935
+    ▼
+Phone browser: https://bugs.project.cove/
+```
+
+The non-bare clone stays in sync with Forgejo's bare repo via a post-receive hook. When code (or bug refs) are pushed to Forgejo, the hook pulls into the clone and the web UI serves the updated state. For a single-project Cove instance, one clone and one web UI process is sufficient.
+
+**For multi-project Cove:** each project needs its own clone and its own `git bug webui` process (or a reverse proxy that routes by project). This is a scaling concern for later.
+
+**Local machines don't need the web UI.** The operator uses `git bug` CLI locally. The web UI is for the phone and any browser-based access to tier-2.
+
 **The key insight: git already solves distributed sync.** The problem is that Forgejo's issue/PR data doesn't live in git. git-bug already solved this — it stores issues in git. By using git-bug alongside Forgejo, we inherit git's distributed sync for free. Forgejo keeps doing what it's good at (git hosting, PRs, CI) without being forced into a sync model it wasn't designed for.
 
 ### Branching Comment Threads: Edge Case, Not Architecture Driver
@@ -807,7 +835,7 @@ Branching comment threads are an edge case, not an architecture driver. A sync a
 ## Implementation Path (D3)
 
 1. **Evaluate git-bug** — install on MacBook, test CLI (`git bug bug new`, `git bug bug comment new`), test TUI (`git bug termui`), test web UI (`git bug webui`). Verify offline workflow: create issues on the plane, push when online.
-2. **Set up git-bug on tier-2** — run `git bug webui` as a system service behind Cove's nginx. This is the phone-accessible issue tracker.
+2. **Set up git-bug on tier-2** — create a non-bare mirror clone of each project, set up a Forgejo post-receive hook to `git pull && git bug pull` into the clone, run `git bug webui --host 0.0.0.0 --port 41935` as a system service behind Cove's nginx (e.g., `bugs.project.cove`). This is the phone-accessible issue tracker.
 3. **Set up git-bug on each local machine** — `git bug` CLI. Issues are stored in the code repo's `refs/bugs/` namespace (same repo, not a separate repo — issues travel with code).
 4. **Configure sync** — `git bug push` / `git bug pull` on the bug refs. git-bug stores issues in `refs/bugs/` and identities in `refs/identities/`. These are pushed/pulled alongside code refs.
 5. **Write Forgejo Action** — `.forgejo/workflows/bug-sync.yaml` that triggers on `pull_request` events and runs `git bug` commands to create/close/link git-bug issues. No separate daemon needed.
@@ -820,8 +848,9 @@ Branching comment threads are an edge case, not an architecture driver. A sync a
 1. **Same repo or separate repo?** — git-bug stores issues in `refs/bugs/` within the code repo. Same repo means issues travel with code and are visible when you clone the project. Evaluate whether this is the right UX or whether a separate bug repo is better.
 2. **PR ↔ issue linking** — Forgejo Action (PR opened → git-bug issue created with `pr` label and `forgejo-pr-url` metadata) for v1. Inverse direction: bug with `PR:` or `Sashay:` prefix → Action creates branch + PR (`WIP:` for sashays). Inline code review stays in Forgejo. General PR discussion lives in the git-bug issue.
 3. **Inverse linking (bug → PR)** — if the branch doesn't exist yet, the Action creates it from the default branch via `POST /repos/{owner}/{repo}/git/refs`. The operator gets a PR number immediately. Sashay integration: `Sashay:` prefix creates a WIP PR automatically.
-4. **Phone workflow** — git-bug's web UI on tier-2 supports full CRUD (create, comment, label, close). The phone can create issues and comment. The web UI needs write access to the git repo on tier-2.
-5. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has a Forgejo/Gitea bridge in progress (PR #1565, import-only). A one-time migration script would read Forgejo's API and create issues in git-bug.
+4. **Phone workflow** — git-bug's web UI on tier-2 supports full CRUD (create, comment, label, close). The phone can create issues and comment. The web UI needs write access to the non-bare clone on tier-2.
+5. **Bare repo constraint** — git-bug doesn't work with bare repos (Issue #178). Forgejo stores repos as bare. Solution: non-bare mirror clone kept in sync via post-receive hook. Each project needs its own clone and web UI process. Scaling to multi-project Cove means multiple processes or a reverse proxy that routes by project.
+6. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has a Forgejo/Gitea bridge in progress (PR #1565, import-only). A one-time migration script would read Forgejo's API and create issues in git-bug.
 6. **CI status on issues** — Forgejo Action could add CI status as git-bug labels (`ci-passing`, `ci-failing`) or metadata. Cross-system but not complex. Skip for v1.
 7. **git-bug maturity** — v0.10.1, pre-1.0. No milestones, no assignees, no PR support, no attachments in UI. The web UI is alpha. Evaluate whether these gaps are acceptable for v1.
 8. **Forgejo Action authentication** — the Action needs to push bug refs back to the repo. The automatic `GITHUB_TOKEN` has write permission, but it needs `git bug` installed on the runner. Verify the runner image has git-bug available or add an install step.
@@ -831,5 +860,5 @@ Branching comment threads are an edge case, not an architecture driver. A sync a
 - Install git-bug on MacBook and test the full workflow (create, comment, close, push, pull, web UI)
 - Evaluate git-bug's web UI on a phone browser
 - Decide: same repo or separate repo for bug data
-- Design `cove-bridge` webhook handler (PR events → git-bug issue creation)
+- Design the Forgejo post-receive hook to sync bare repo → non-bare clone for git-bug web UI
 - If git-bug passes evaluation, write a SPEC for the integration architecture
