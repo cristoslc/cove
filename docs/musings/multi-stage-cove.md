@@ -1,6 +1,7 @@
 ---
-title: "Multi-Stage .cove — Operator-Centric with Always-Online Tier-2"
+title: "Multi-Stage .cove — git-bug + Forgejo"
 created: 2026-06-13
+revised: 2026-06-15
 authored-by: deepseek-v4-flash:cloud, glm-5.1:cloud
 status: Draft
 ---
@@ -9,707 +10,23 @@ status: Draft
 
 ## Hard Constraints
 
-These are non-negotiable, set by the project worldview:
-
 1. **PR/Issue sync is the whole point.** Without it, multi-stage is just "git push to a remote," which is trivial and solved. The hard part — keeping PRs, issues, and their comments in sync across instances — is the actual feature.
 2. **Offline-first is immutable.** Local Coves must work fully without the always-online tier. Disconnected operation is the normal mode, not degraded mode.
 3. **No public forge dependency.** No Codeberg, no GitHub, no shared external service. The operator owns all instances end-to-end.
 
-## Use Cases (Operator-Centric, No External Collaborators)
-
-Multi-stage Cove is not about collaboration with other people. It's about the operator's own operational needs:
+## Use Cases
 
 ### 1. Phone Access
 
-The operator wants to read and comment on issues and PRs from their phone. The phone is a **read-and-comment client**, not a development surface. It uses Forgejo's web UI (mobile-friendly) or a mobile browser pointed at the always-online tier-2. The phone does not run a local Cove, does not run a sync daemon, does not store state — it just makes HTTPS requests to tier-2.
+The operator wants to read and comment on issues and PRs from their phone. The phone is a **read-and-comment client**, not a development surface. It uses git-bug's web UI and Forgejo's web UI on tier-2 via HTTPS. The phone does not run a local Cove, does not run a sync daemon, does not store state.
 
 ### 2. Always-Online Tier-2 (Laptop Independence)
 
-Laptops are not always online — they sleep, the lid closes, they go in a bag. Tier-2 cove is a **standby copy that's always reachable**. It can run on:
-- A Raspberry Pi at home
-- An old laptop repurposed as a home server
-- A low-cost VPS (if the operator accepts the cloud dependency for tier-2 only)
-- A desktop that's always on
-
-The operator can check their PRs from their phone, tablet, or any device — even when all their laptops are asleep. Tier-2 is the single point of presence when the operator is "away from their desk."
+Laptops are not always online — they sleep, the lid closes, they go in a bag. Tier-2 is a **standby copy that's always reachable**. It can run on a Raspberry Pi, an old laptop, or a desktop that's always on. The operator checks their issues and PRs from their phone even when all laptops are asleep.
 
 ### 3. Multiple Local Nodes, One Project
 
-The operator has multiple machines (MacBook, Linux desktop, home server, etc.) that may all work on the same project with different branches. Each machine runs its own local Cove. All local Coves sync to the same tier-2.
-
-```
-┌─ local cove (MacBook) ─────────┐
-│  forgejo: branches, PRs        │──┐
-│  runner: local CI              │  │
-└────────────────────────────────┘  │
-                                    │  sync (push/pull)
-┌─ local cove (Linux box) ────────┐  │
-│  forgejo: branches, PRs        │──┤
-│  runner: local CI              │  │
-└────────────────────────────────┘  │
-                                    ▼
-                    ┌─ tier-2 cove (always online) ─┐
-                    │  forgejo: aggregated state    │
-                    │  Pages: public preview        │
-                    │  Notifications: enabled       │
-                    └───────────────────────────────┘
-                                    ▲
-                                    │ HTTPS (read+comment)
-                    ┌────────────────────────────────┐
-                    │  Phone (browser or app)        │
-                    │  No local state, no sync       │
-                    └────────────────────────────────┘
-```
-
-#### PR-Sashaying: Nodes + Branches
-
-PR-sashaying means each machine makes branches. Git is good at branches. With a handful of machines (not thousands of users), collision is trivially avoided by prefixing branch names with a per-node identifier rather than requiring a global registry.
-
-```
-macbook/feature-x       # MacBook's work on feature-x
-linux/feature-x         # Linux box's work on feature-x (same feature, different branch)
-server/docs-update      # Server's work on documentation
-```
-
-Each node creates PRs from its own prefixed branches. Tier-2 receives all branches from all nodes. No collision at the git level — different branch names, different git refs. No collision at the PR level — different source branches, different PRs (one per node per feature).
-
-#### The Rebase Step
-
-When MacBook and Linux both work on `feature-x`, they may diverge. The operator's normal git workflow handles this: `git fetch`, `git rebase`, resolve conflicts. What does the sync layer need to do?
-
-**Nothing.** The sync layer pushes branches and PRs. It does not rebase. The operator rebases on whichever machine they sit down at. The sync layer just mirrors the state after the operator resolves:
-
-1. MacBook pushes `macbook/feature-x` to tier-2
-2. Linux pushes `linux/feature-x` to tier-2
-3. Tier-2 has both branches (and potentially two PRs for the same feature)
-4. Operator sits down at MacBook, `git fetch tier2`, sees both branches
-5. Operator rebases `macbook/feature-x` onto `main`, merges `linux/feature-x` work if desired
-6. MacBook pushes rebased branch; sync layer mirrors to tier-2
-7. Operator closes the PRs or merges them
-
-The sync layer doesn't touch branches. It mirrors git refs. Git already solves the distributed branching problem — the sync layer just ensures all refs are visible everywhere.
-
-#### No CI on Tier-2 (V1 Scope)
-
-Tier-2 has no runner and no Vault in v1. CI runs locally on each node. The phone sees PR status only when it was computed on a local runner and synced as part of the event log. If a PR has CI status from MacBook's runner, that status syncs to tier-2 so the phone sees "CI passed." If no local runner has run CI for a given PR, the phone sees "no status."
-
-Vault stays local too — each local node has its own Vault for secrets. Tier-2 doesn't need Vault for PR/issue sync. This keeps the scope tight: v1 is about PRs, issues, and comments on Forgejo instances. Vault and CI can be added later.
-
-## Identity Model (Single-Operator)
-
-The operator has one account (`cristos`) on every surface. That's it.
-
-| Surface | Account | Scope |
-|---------|---------|-------|
-| Local Cove (MacBook) | `cristos` | Operator |
-| Local Cove (Linux box) | `cristos` | Operator |
-| Tier-2 Cove | `cristos` | Operator |
-| Phone (web client on tier-2) | `cristos` | Operator (session) |
-
-The operator logs in as `cristos` on whichever surface they're using. The same string is the author of every event everywhere. No mapping, no translation, no collision, no ghost users.
-
-**Why this works:**
-- The Forgejo foreign key constraint (every comment needs a real `poster_id`) is trivially satisfied: there's exactly one author, who is a real account on every instance.
-- No `[bot]` convention, no machine-scoped accounts, no origin-instance tagging.
-- No trust boundary — everything is "us."
-
-**Lost: machine provenance.** We can't tell from an event whether it was authored on the MacBook or the Linux box. That information lives in the operator's local knowledge (which machine they were sitting at), not in the event log. If provenance matters, the operator adds it to the comment body ("tested on M2 MacBook Pro").
-
-## Sync Architecture: Event Log via Git
-
-PRs and issues are stored in Forgejo's database (SQLite for local Cove). To sync them between instances without modifying Forgejo, we extract state as an **append-only event log** and use a git repo as the log's storage. Git is offline-first by design, handles distributed sync via push/pull, and is already part of the Cove toolchain.
-
-### Data Model
-
-For each repository, a sync repo contains:
-
-```
-sync.git/
-├── issues/
-│   ├── 2026-06-13T09-42Z-macbook-crash-on-large-repos/
-│   │   ├── comments/
-│   │   │   ├── 042-macbook-cristos-2026-06-13T10-15Z.json
-│   │   │   ├── 017-linux-cristos-2026-06-13T10-20Z.json
-│   │   │   └── ...
-│   │   └── logs/
-│   │       ├── macbook-events.log    # append-only, owned by MacBook node
-│   │       ├── linux-events.log      # append-only, owned by Linux node
-│   │       └── tier2-events.log      # append-only, owned by tier-2 node
-│   └── 2026-06-13T11-00Z-linux-slow-ci-on-arm/
-│       └── ...
-├── pulls/
-│   ├── 2026-06-12T14-30Z-macbook-refactor-vault/
-│   │   ├── comments/
-│   │   ├── reviews/
-│   │   └── logs/
-│   │       ├── macbook-events.log
-│   │       └── tier2-events.log
-│   └── ...
-├── mapping.json          # sync-dir-name → per-instance numeric IDs
-└── refs/
-    ├── heads/sync
-    └── remotes/tier2/main
-```
-
-Each issue and PR has:
-- A globally unique directory name — `{creation-timestamp}-{node}-{slug}`. No two nodes can create the same issue at the same timestamp with the same slug on the same project.
-- Immutable comment files in `comments/` — each is a file, never edited, only added
-- Per-node `logs/` — each node owns its own `{node}-events.log`, append-only, committed only by that node
-- `mapping.json` at the repo root — maps each sync-dir-name to per-instance numeric issue/PR IDs
-
-**No `meta.json` is committed.** The current state of an issue or PR is a derived cache computed by replaying all per-node event logs sorted by timestamp. Storing `meta.json` in git would create real merge conflicts — two nodes editing the same issue produce two different `meta.json` files. By keeping it derived, git only contains immutable additions (comment files) and append-only logs (events). Both are conflict-free under merge.
-
-### Why Files Instead of Notes
-
-Git notes tie metadata to commits. Issues and PRs aren't tied to commits — they're tied to branches (PRs) or independent of commits (issues). Files in a git tree are a more natural fit. Each comment is an immutable file; each state change is an event in a log. Append-only by construction.
-
-### Sync Topology (Hub-and-Spoke)
-
-Tier-2 is the hub. Every local Cove syncs bidirectionally with tier-2. Local-to-local sync does not happen directly.
-
-```
-local A ──┐
-          ├──→ tier-2 ◀── phone (read-only via HTTPS)
-local B ──┘
-```
-
-**Local → Tier-2 (push):**
-1. Operator opens a PR on MacBook local
-2. MacBook sync daemon detects the new event (via Forgejo webhook or DB poll)
-3. Daemon writes a new comment file and appends to the event log
-4. Daemon commits to the local sync repo
-5. Daemon pushes to tier-2's sync repo (via SSH or HTTPS)
-6. Tier-2 sync daemon pulls, reads new events, applies them to its Forgejo database
-
-**Tier-2 → Local (pull):**
-1. Operator comments on a PR from their phone via tier-2
-2. Tier-2 sync daemon detects the comment
-3. Daemon writes the comment file and appends to its event log
-4. MacBook local sync daemon pulls from tier-2 (periodically, or on demand)
-5. Daemon applies new events to its Forgejo database
-
-**Linux box syncs the same way:** push to tier-2 when it has new events, pull from tier-2 when it comes online (laptop wakes, lid opens, etc.).
-
-**Phone does not sync.** It's a thin HTTPS client on tier-2. No local state, no sync daemon, no event log. The phone's browser/app talks directly to tier-2's Forgejo web UI.
-
-### Race Conditions and Resolution
-
-**R1: Meta.json merge conflict.** Solved by removing `meta.json` from git entirely. The current state of an issue is a derived cache computed by replaying all per-node event logs sorted by timestamp. Only immutable additions (comment files) and append-only data (per-node event logs) live in git. Both are conflict-free under merge — a rebase just adds the other node's files and appends to the rebased node's log.
-
-**R2: Git push contention.** Two nodes push to tier-2 simultaneously. One gets non-fast-forward. The sync daemon pulls with rebase (which is always clean — only additions, no edits), then retries push. Three-way retry loop; contention is rare with a handful of machines.
-
-**R3: Comment ordering drift.** Nodes have independent clocks. If MacBook's clock is 5 minutes ahead, its comments sort after Linux's in replay order even though they were written first in wall-clock time. Mitigation: NTP on all Cove nodes. For a single operator, sub-second drift is the norm; second-level drift is visible but the operator can mentally reorder what they themselves wrote. If this becomes a problem in practice, tier-2 can assign a monotonic `received_at` timestamp on processing each event, which provides a global total order at the cost of complexity.
-
-**R4: Two nodes independently replying to the same comment.** Forgejo's comment model is flat — no threading, no `in_reply_to`, no parent/child hierarchy. A "reply" is just a new comment. If both nodes post a comment referencing the same prior comment, they appear in `created_at` timestamp order. There is no notion of "indenting under the parent" because Forgejo doesn't do threads.
-
-**R5: Comment branching — the big one.** Forgejo has no threading, so every comment is top-level in chronological order. The real problem: two nodes writing comments offline that, when merged, interleave in misleading ways:
-
-```
-MacBook offline:
-  10:00 "I think this is a race condition."
-  10:02 "A deadlock is a kind of race condition."  (still offline, hasn't seen Linux's comment)
-
-Linux offline:
-  10:01 "No, it's a deadlock."
-```
-
-When merged on tier-2 and sorted by `created_at`:
-```
-1. macbook: "I think this is a race condition."        (10:00)
-2. linux:   "No, it's a deadlock."                      (10:01)
-3. macbook: "A deadlock is a kind of race condition."   (10:02)
-```
-
-Comment 3 appears to respond to comment 2, but MacBook hadn't seen comment 2 when writing it. The converged order implies a causal chain that doesn't exist.
-
-**For a single operator, this is acceptable.** The operator wrote all three comments. They know what they were thinking. NTP keeps clocks close enough that the order approximates wall-clock intent. The operator can mentally separate "follow-up to my earlier thought" from "reply to something the other machine wrote."
-
-There is no threading fix because Forgejo doesn't support it. The only mitigation is that the tier-2 `received_at` timestamp could provide a causal order (when did tier-2 first learn of each comment?), but this is a different order than author intent and arguably more useful — it reflects the order in which the operator actually discovered information.
-
-**R6: Two nodes create the same issue slug simultaneously.** Unlikely (human-written slugs), but possible. Mitigation: the sync-dir-name includes `{creation-timestamp}-{node}-{slug}`. If two nodes create `my-bug-report` at the exact same second, the timestamps and node IDs differ. The sync-dir-names are unique. The operator sees two issues with similar slugs and can close or link them. This is a UX concern, not a data integrity problem.
-
-**R7: Tier-2 applies events slower than locals push.** A local pushes, then immediately pulls expecting to see its own events. Tier-2 hasn't finished applying them yet — the pull returns stale state. Mitigation: locals push and apply their own events to their local Forgejo before pushing. The pull-after-push is for OTHER nodes' events, not self-verification. If the local wants to verify its events are on tier-2, it checks the sync repo's HEAD (its commit is there) rather than Forgejo's API.
-
-**R8: Per-node event log corruption.** An event log line is truncated due to a crash during write. Replay on tier-2 skips the corrupted line and logs a warning. The node's next push contains a repaired copy (or the node detects the corruption on its own next startup via CRC/length check and rewrites).
-
-### Conflict Resolution Summary
-
-| Conflict | Resolution |
-|----------|-----------|
-| Same comment file from two nodes | Impossible — filenames include `{seq}-{node}` prefix |
-| Same event ID from two nodes | Impossible — IDs include `{node}` prefix |
-| Same issue slug from two nodes | Different sync-dir-names due to `{timestamp}-{node}` prefix |
-| Same issue edited by two nodes | Replay by timestamp — last write wins per field |
-| Comment ordering across nodes | Sort by `created_at` timestamp; NTP for clock sync |
-| Tier-2 push contention | Pull --rebase + retry (always clean due to additive-only git) |
-| Flat comments (no threading in Forgejo) | No reply-to hierarchy; all comments are chronological |
-| Comment branching (fake causal chains) | Tolerated for single operator; tier-2 `received_at` order as fallback |
-
-### Forgejo Forks — Evaluated
-
-Forgejo supports forks via `POST /repos/{owner}/{repo}/forks` (REST API) and a fork button in the UI. Forks are independent repos with their own issue tracker, branches, and PRs. They can open PRs against the parent repo.
-
-### Alternative Architecture: Trunk + Machine-Controlled Forks
-
-An alternative to the shared-event-log model: make tier-2 the canonical trunk, and give each machine its own fork of the trunk. Each machine writes comments to its fork, not the trunk. The trunk only receives consolidated git state (branches, commits, merged PR metadata), not every machine's comment thread.
-
-When sync detects divergent comment paths (two machines commenting on the same issue independently), it splits them into separate issues on tier-2 rather than trying to merge the threads.
-
-**What this solves:**
-
-- Comment branching disappears — each machine's comments live in its own fork, no interleaving
-- No per-node event log naming needed — forks are naturally namespaced
-- Trunk is clean — only git state and merged metadata
-- Phone sees a clean trunk without machine-scoped noise
-
-**What it breaks:**
-
-- **Forgejo forks don't share issues.** An issue in MacBook's fork is NOT the same issue as an issue in the trunk or in Linux's fork. There's no cross-fork issue linking. The operator sees scattered issues across N+1 repos.
-- **The operator loses unified state.** "What's the status of issue #42?" depends on which fork you're looking at. The trunk might show "open" while MacBook's fork shows it closed with a comment.
-- **Every issue splits by default.** Since machines can't share issues across forks, every issue the operator creates on MacBook exists ONLY in MacBook's fork. There is no "same issue on multiple forks" — the issue IDs are different repos.
-- **Sequential workflow degraded.** The common case (operator works on MacBook, then moves to Linux) is worse — comments from the MacBook session live in MacBook's fork, invisible on Linux unless the operator navigates to a different repo.
-- **Phone writes orphaned.** The phone comments on the trunk, but machine comments are in forks. Comments on the same topic live in three different places.
-- **The "split out" trigger is unclear.** What constitutes divergent? Every comment from a different machine is in a different fork — all comments "diverge" by default. There's nothing to detect; the split is structural, not behavioral.
-- **Fork PRs create admin overhead.** For changes to flow back to the trunk, the operator must open PRs from each fork, review them, and merge — the full multi-repo fork workflow for what should be a single-project experience.
-
-**Verdict: the fork model makes the common case (sequential multi-machine work) worse while solving only the rare case (simultaneous offline work).** Most of the time, the operator works on one machine, syncs, then works on another. The shared-issue model handles this; the fork model degrades it.
-
-### Middle Ground: Manual Splits, Not Structural Forks
-
-Keep the current architecture (shared issues, merged comments) but add a **split command** in the Cove command center. If the operator notices misleading comment ordering (two machines wrote interleaved comments while offline), they can manually split the issue: "create two issues — one for MacBook's thread, one for Linux's thread." The sync layer preserves manual splits and reuses the issue prefix/directory structure. The split is an operator decision, not an automatic behavior.
-
-This preserves the common case (clean sequential sync) while giving the operator a tool for the rare case (confusing interleaving from simultaneous offline work).
-
-### Offline-First
-
-The operator can:
-- Shut down tier-2 (it's a standby, not a prerequisite)
-- Disconnect MacBook from the network
-- Work on MacBook for days
-- Open PRs, comment, change labels, close issues
-- All events are committed to the local sync repo
-
-When they bring tier-2 back online (or MacBook reconnects to tier-2):
-- MacBook local sync daemon pushes accumulated events to tier-2
-- Tier-2 applies them, exposes them
-- Any events from Linux box (or phone) that happened during the offline period are pulled
-- Both sides converge
-
-No data loss. No merge conflicts on most fields. The operator's offline work is preserved and synced.
-
-### Event Identity and Uniqueness
-
-Every event is authored by the same operator. But events from different nodes must be globally unique to avoid collisions when merged on tier-2. Include a node identifier and a node-local sequence number:
-
-```json
-{
-  "id": "macbook-evt-042",
-  "type": "comment.add",
-  "issue": 42,
-  "author": "cristos",
-  "timestamp": "2026-06-13T10:15:00Z",
-  "body": "I can reproduce this on M2 MacBook Pro."
-}
-```
-
-The `id` is `{node_id}-evt-{seq}` where `node_id` is a short string (e.g., `macbook`, `linux`, `server`) unique to each local node, and `seq` is a monotonically increasing counter per node. This guarantees global uniqueness across all nodes without coordination.
-
-Comment files follow the same pattern: `{seq}-{node_id}-cristos-{timestamp}.json`. Two nodes that generate comment `042` at the same second produce different filenames: `042-macbook-cristos-2026-06-13T10-15Z.json` vs `042-linux-cristos-2026-06-13T10-15Z.json`. Merging the sync repos is a clean union — no overwrite, no conflict.
-
-### Git Push Races on Tier-2
-
-Two locals pushing to the same sync repo on tier-2 simultaneously will cause one to get a non-fast-forward rejection. The sync daemon must handle this:
-
-1. Try `git push`
-2. If rejected (non-fast-forward), `git pull --rebase`
-3. Rebase applies the other node's commits cleanly (comment files are additive, no conflicts)
-4. Retry `git push`
-
-For the hub-and-spoke model, this is the only coordination the sync daemon needs. One retry loop per push. With a handful of machines, contention is rare and the retry is fast (git pull + rebase + push < 1 second).
-
-### Sync Repo: Shared or Per-Node?
-
-Each project gets one sync repo on tier-2. All local nodes push to and pull from the same repo. This is simpler than per-node repos (which would require tier-2 to aggregate) and matches the git workflow the operator already uses — one remote, multiple contributors (the operator's own machines).
-
-### Forgejo API Integration
-
-The sync daemon reads and writes Forgejo state via its REST API. Forgejo provides a Swagger-documented API at `https://instance/api/swagger` with stable endpoints across each major version. The key endpoints for PR/issue sync:
-
-| Operation | Endpoint | Auth |
-|-----------|----------|------|
-| List issues | `GET /repos/{owner}/{repo}/issues` | Token (scoped to repo) |
-| Get issue | `GET /repos/{owner}/{repo}/issues/{idx}` | Token |
-| Create issue | `POST /repos/{owner}/{repo}/issues` | Token (write) |
-| Edit issue | `PATCH /repos/{owner}/{repo}/issues/{idx}` | Token (write) |
-| List PRs | `GET /repos/{owner}/{repo}/pulls` | Token |
-| Get PR | `GET /repos/{owner}/{repo}/pulls/{idx}` | Token |
-| Create PR | `POST /repos/{owner}/{repo}/pulls` | Token (write) |
-| List comments (issue) | `GET /repos/{owner}/{repo}/issues/{idx}/comments` | Token |
-| Create comment | `POST /repos/{owner}/{repo}/issues/{idx}/comments` | Token (write) |
-| List PR reviews | `GET /repos/{owner}/{repo}/pulls/{idx}/reviews` | Token |
-| List labels | `GET /repos/{owner}/{repo}/labels` | Token |
-| List reactions | Part of comment/issue response body | Token |
-
-All endpoints use `Authorization: token {sha1}` headers. Tokens are scoped per-repo (generated via `POST /users/{name}/tokens`). Pagination is cursor-based with `page` and `limit` parameters, defaulting to 30 items per page, max 50. The sync daemon needs a `read:issue` + `write:issue` token for each repo on each instance.
-
-**Detection strategy:** webhooks, not polling. Configure Forgejo to fire a webhook to the sync daemon on issue/PR/comment events. Each event has a payload with the affected resource ID and action. The sync daemon then fetches the full resource via API (for completeness — the webhook body may be truncated). Webhooks are more efficient than polling and give near-real-time sync.
-
-**Bulk export for initial sync:** `GET /repos/{owner}/{repo}/issues` and `GET /repos/{owner}/{repo}/pulls` with pagination to export all state from local. Import to tier-2 with `POST` endpoints. Initial sync is a one-time import; after that, webhook-driven incremental.
-
-**Write path (events to Forgejo):** when the sync daemon receives an event that creates/modifies an issue or comment, it calls the corresponding POST/PATCH endpoint on the target Forgejo. If the target Forgejo already has the event (idempotency check via event log position), skip. If the event fails (API error), retry with backoff.
-
-**Scope note:** Forgejo projects (kanban boards) have limited API support as of 2025 — a merged PR adds basic project management via REST. Reactions, milestones, and fine-grained assignee management are available. The sync daemon doesn't need to cover every Forgejo feature in v1 — issues, PRs, and comments are the core.
-
-## What This Doesn't Solve
-
-- **Real-time sync** — sync is eventual, not real-time. Local events are visible on tier-2 within seconds; tier-2 events (from phone or other locals) are visible on local within the next pull cycle (default 60 seconds).
-- **Conflict resolution for rapid simultaneous edits** — if the operator edits the same issue title on MacBook and Linux within seconds, last-writer-wins by timestamp. The "loser" sees a brief flash before the "winner" overwrites. Acceptable for solo dev.
-- **Rich text / attachments** — comments can include images, attachments, mentions. All need to be encoded as files in the sync repo. The format handles this but adds complexity.
-- **Forgejo-specific features** — reactions, project boards, milestones, labels with descriptions — all need explicit support in the event format. The format is extensible but each feature needs an event type.
-- **External collaborators** — this design does not support friends, reviewers, or other people. If the operator needs to share a PR with someone, they push to a public forge (out of scope for this musing) or share a read-only tier-2 URL.
-
-## Why This Differs from Existing Forgejo PR Mirroring Tools
-
-The cove troves document the `forgejo-pr-mirror` research [synthesis](../../docs/troves/forgejo-pr-mirror/synthesis.md). The fundamental finding: **Forgejo's API cannot create real PR objects from external sources where the source branch doesn't exist on the target instance.** This kills Forgejo ↔ GitHub PR sync, and every existing tool works around it:
-
-- **Forgesync** — one-way metadata sync (Forgejo → GitHub). PR state as metadata, not full conversation threads.
-- **Gitea Mirror** — GitHub PRs imported as "enriched issues" with labels, not native PRs with diff/merge.
-- **Forgejo issue #7556** (full two-way mirroring) — opened April 2025, no activity, not on roadmap.
-
-Multi-stage cove avoids this limitation entirely because **branches exist on both instances**. The sync layer mirrors git refs (branches are everywhere), so when tier-2 calls `POST /repos/{owner}/{repo}/pulls` with `head: "macbook/feature-x"`, that branch already exists on tier-2. This is a standard Forgejo PR creation, not a cross-forge PR import. The API works.
-
-Forgejo ↔ Forgejo sync with co-located branches is a different problem than Forgejo ↔ GitHub sync with absent source repos. The trove confirms no existing tool solves this, but the technical limitation (missing source branches) doesn't apply to our case.
-
-Forgejo federation (ActivityPub/ForgeFed) is in progress. As of late 2025:
-- **Stars federation** is built
-- **User following** via ActivityPub has a merged PR passing end-to-end tests
-- **PR/issue federation** is future work
-
-The federation model assumes **one user, one home instance** — federation is for many operators across many instances. Our use case is **one operator, multiple home instances** — the same person with multiple primary forges. This isn't a supported federation pattern. The user model would fight us: each instance thinks its user is the canonical one.
-
-Building atop federation would mean either:
-- Waiting for upstream to add the pattern (multi-year, out of our control)
-- Forking Forgejo to add it (significant maintenance burden)
-- Implementing our own sync layer anyway (defeats the purpose)
-
-Git-based event log sync sidesteps federation entirely. We don't need Forgejo to understand it — we just read/write the database via Forgejo's API and sync via our own protocol.
-
-## Why Not Database Replication
-
-SQLite (used by local Cove) supports some replication modes, but multi-master is not one of them. Replicating Forgejo's database directly would require:
-- Single-writer (only one instance accepts writes at a time)
-- Or conflict resolution at the database level (not Forgejo's domain)
-
-Single-writer defeats the offline-first guarantee: if tier-2 is the single writer, locals can't work offline and sync back. Database-level conflict resolution is a much harder project than application-level event log sync.
-
-## Critical Evaluation
-
-The prior version of this musing was written by an agent that got the facts right but missed the soul. It built a distributed database on top of git and called it a sync protocol. It was thorough, correct on the technical details, and architecturally wrong for Cove.
-
-### What It Got Right
-
-1. **Offline-first as immutable.** Local Coves must work fully without tier-2. This is Cove's guiding principle applied correctly.
-2. **Single-operator identity.** One account (`cristos`) everywhere. No RBAC, no ghost users, no `[bot]` convention. Matches Cove's "one person" constraint.
-3. **PR/issue sync as the core problem.** Git sync is solved (Forgejo push mirrors handle it). PRs, issues, and comments are the actual feature. This framing is correct.
-4. **Forgejo federation doesn't help.** Federation is for many operators across instances. We have one operator across instances. Different problem.
-5. **Branch-mirroring advantage.** Existing tools fail because source branches don't exist on the target. Our architecture mirrors branches, avoiding this entirely.
-6. **The fork model is wrong.** Correctly evaluated and rejected. Forks fragment issues across repos, degrade the sequential workflow, and don't solve anything the shared model doesn't solve better.
-
-### What It Got Wrong
-
-**1. The event log is over-engineered.** Per-node event logs, immutable comment files, a replay engine, mapping.json for ID translation — this is a full event sourcing system built on git. Cove's PURPOSE says "if it needs you to configure three things before it runs, it is not done." The event log requires configuring: sync repos, daemon processes, webhook endpoints, ID mapping, replay engines. That's five things before it runs. The musing built a distributed database and used git as the replication layer.
-
-**2. Git is the wrong transport for operational data.** PRs and issues change frequently, have mutable state, and need arbitrary queries. Git is for immutable, content-addressed, branch-merging workflows. The musing acknowledged this without confronting it: "No meta.json is committed because two nodes would conflict on it." That's the data model telling you it doesn't fit the transport.
-
-**3. The sync daemon is essentially a distributed database.** Event sourcing, replay, conflict resolution, ID mapping, multi-master convergence — all on top of git. Cove's PURPOSE says "opinionated" — Cove makes choices so you don't have to. The musing didn't make a choice; it invented a new distributed database protocol and called it "sync."
-
-**4. Missing: the simplest thing that could work.** The musing leapt to event sourcing without considering direct API sync. Local Forgejo has a REST API. Tier-2 Forgejo has a REST API. A process that reads from one and writes to the other, bidirectionally, with last-writer-wins for conflicting mutations. No event logs, no git transport for operational data, no replay engine. Stateless. Restartable from scratch at any time.
-
-**5. Missing: what Forgejo already provides.** Forgejo has built-in push mirrors for git. It has webhooks for event detection. It has a full REST API for issues/PRs/comments. The musing proposed a parallel system instead of using what Forgejo already gives.
-
-**6. Missing: the harbor principle applied to tier-2.** Cove is a harbor — one command, everything inside. The musing treats tier-2 as a sync target but doesn't establish that tier-2 IS a Cove instance. If tier-2 is also a Cove, then `cove up` on tier-2 gives you Forgejo + Vault + runner + registry + pages. The sync is between two Cove instances, not between a Cove and a bespoke sync target.
-
-**7. The phone is overspecified.** PURPOSE says "single developer does not mean single machine." Any device on the Tailscale network can access any Cove instance directly. The phone doesn't need tier-2 as a special case — it can hit the laptop's Cove via Tailscale when the laptop is online. Tier-2 is for when no laptop is online. The phone case is "access my Cove from elsewhere," not "access a special tier-2 Cove."
-
-**8. The race conditions are self-inflicted.** R1-R8 are thorough, but most are problems created by the event log architecture, not inherent to multi-stage Cove. A simpler architecture (direct API sync) has fewer races because there's no intermediate representation to get out of sync.
-
-## Alternative Approaches
-
-Five approaches that supplement the event-log findings:
-
-### A1. Direct API Sync (Bidirectional Forgejo API Bridge)
-
-Forget event logs. A daemon reads issues/PRs/comments from one Forgejo instance via REST API and writes them to another. Bidirectional. Last-writer-wins for conflicts (compare `updated_at` timestamps). No event logs, no git transport for operational data, no replay engine. Git handles branches/commits via Forgejo's built-in push mirrors. The API bridge handles issues/PRs/comments.
-
-**Advantage:** Stateless. Restart from scratch at any time by re-reading the source. No mapping.json, no per-node logs, no replay. Forgejo is the source of truth on each instance; the bridge keeps them consistent.
-
-**Challenge:** Detecting changes. Poll the API (simple but wasteful) or webhooks (efficient but require the daemon to be reachable). For offline-first, webhook delivery fails when the target is down. Polling with `since` timestamps is more robust.
-
-### A2. Forgejo Database Sync (SQLite Replication)
-
-Instead of building a parallel system, sync Forgejo's own SQLite databases. Forgejo uses one SQLite file per repo. Rsync or Litestream could replicate these files. Application-level conflict resolution (last-writer-wins on rows) when both instances modified the same issue.
-
-**Advantage:** No custom event format, no mapping, no API bridge. Forgejo stays the source of truth. The sync layer is a file-level operation with row-level conflict resolution.
-
-**Challenge:** SQLite is not designed for multi-master replication. Two instances writing to the same DB file will corrupt it. The replication would need to be stop-sync-start: stop Forgejo on both sides, sync the DB files, restart. This defeats "always available."
-
-### A3. ForgeFed as Transport (Repurposed)
-
-Forgejo's federation layer uses ActivityPub for inter-instance communication. Even though it's designed for multi-operator, the transport and object model (Ticket, Comment, Review) could be repurposed for same-operator multi-instance. All instances trust all others because they're all `cristos`.
-
-**Advantage:** Leverages Forgejo's own federation work. Standard object types. No custom event format.
-
-**Challenge:** ForgeFed is incomplete (as of late 2025, only stars federation is built). Building on an incomplete foundation means either waiting or contributing upstream. And the trust model is wrong — ForgeFed assumes different operators, so it has authentication and authorization that we'd need to bypass or simplify for same-operator use.
-
-### A4. Shared Storage (NFS/SMB Mount)
-
-All local Coves share the same Forgejo data directory on tier-2 via network mount. Only the active instance writes. Needs a coordination layer (which Cove is active?) but eliminates sync entirely — there's one database.
-
-**Advantage:** No sync protocol at all. One Forgejo instance, one set of data.
-
-**Challenge:** Requires network connectivity for writes. Defeats offline-first. Only works for the "always-online tier-2" use case, not the "laptop in a café" use case. Also, SQLite over NFS is famously unreliable. This approach is a non-starter for Cove's offline-first principle.
-
-### A5. Single Forgejo, Multiple Git Remotes
-
-Run one Forgejo on tier-2. Local machines push/pull git directly (via SSH/HTTPS). Issues/PRs/comments live on tier-2 only. When offline, local machines work on git branches and accumulate local commits. When online, they push. The "multi-stage" problem reduces to "how do I use Forgejo when offline" — which Cove already handles (local git works offline, Forgejo is read-only until you're back online).
-
-**Advantage:** Simplest possible architecture. No sync protocol. One Forgejo. Issues and PRs are always in one place.
-
-**Challenge:** No offline issue/PR creation. If you want to file an issue while offline, you can't — Forgejo is on tier-2 and you can't reach it. This is the core use case that multi-stage Cove is supposed to solve. This approach reduces multi-stage Cove to "git push from multiple machines," which is already solved.
-
-## Going in a Different Direction
-
-Two alternatives that rethink the problem entirely:
-
-### D1. Don't Sync Forgejo — Build a Cove-Native Issue Tracker
-
-The hardest part of multi-stage is Forgejo's issue/PR model (no threading, no external API for creating real PRs from absent branches, SQLite-only). Why fight it? Build a Cove-native issue tracker that stores issues in git (like git-bug) and renders them in a web UI. No Forgejo API to fight, no database to sync, no event log to replay. Issues are git objects, synced the same way branches are synced. Comments are files in the repo. PR metadata (title, body, labels, state) are files too. The web UI reads from the git repo and renders issues/PRs.
-
-This makes multi-stage trivial: `git push` already handles distribution. The issue tracker is just another git-based tool. No daemon, no sync protocol, no mapping.
-
-**Advantage:** Eliminates the entire sync problem. Git IS the sync. Offline-first by construction.
-
-**Challenge:** You lose Forgejo's issue/PR UI and all its features (reviews, CI integration, merge buttons). You'd need to build a web UI that's good enough to replace Forgejo's. That's a significant product investment. And you'd need a PR creation flow that creates real Forgejo PRs (with diff, merge) from git data, which brings back the API limitation.
-
-### D2. Don't Multi-Stage — Single Instance, Remote Access
-
-Instead of N Forgejo instances, run one Forgejo (on tier-2 or on the laptop) and access it from everywhere via Tailscale.
-
-**This is wrong for Cove's primary use case.** Cove is for "someone who writes code on planes, in cafés, at cabins." The laptop being offline — lid closed, asleep in a bag, on a plane with WiFi off — is the NORMAL mode, not an edge case. D2 solves phone access and always-on availability but fails the airplane test. The operator can't create issues, comment on PRs, or see CI status when the laptop is offline and Forgejo is on tier-2.
-
-D2 is not a viable starting point. It solves the wrong problem.
-
-## Decomposing Further: Maybe Forgejo Isn't Where Issues Should Live
-
-The core tension: Forgejo's data model (SQLite, flat comments, no threading) is not designed for distributed sync. Every approach that syncs Forgejo instances fights Forgejo's architecture. What if we stop fighting it?
-
-### D3. Separate the Concerns: Forgejo for Git + PRs, Git-Based Tracker for Issues
-
-Forgejo handles what it's good at: git hosting, PRs (which are git operations — branches, diffs, merges), and CI status display. Issues and comments move to a **git-based issue tracker** that's designed for distributed sync from the ground up.
-
-**What already exists:** This isn't a greenfield build. The most mature option is **[git-bug](https://github.com/git-bug/git-bug)** (v0.10.1, May 2025, 9.9k stars, active development as of 2026). It's a standalone, distributed, offline-first issue tracker that embeds issues and comments as git objects in a separate ref namespace (`refs/bugs/`). It has:
-- CLI, TUI (`git bug termui`), and a web UI (`webui/`)
-- Bridges to GitHub and GitLab for bidirectional sync
-- Conflict-free merge by construction (issues are stored as edit operations in git blobs, assembled in a linear chain of commits)
-- Go binary, single-file install, no database
-
-Other options: **git-issue** (dspinellis, decentralized issue management), **bug** (driusan, filesystem-based with `issues/` directory), **Fossil** (built-in issue tracker but not git-based — would replace git entirely).
-
-git-bug is the right fit. It's already what D3 describes: a git-based issue tracker that's offline-first, distributed, and syncs via `git push`/`git pull`. No custom protocol, no event log, no daemon. The question isn't "build or buy" — it's "integrate git-bug alongside Forgejo."
-
-**How it works:**
-
-- **Tier-2** runs Forgejo (git hosting, PRs) + git-bug web UI (issue tracking)
-- **Local machines** run git (for code) + git-bug CLI (for offline issue work)
-- **Phone** accesses tier-2's git-bug web UI for issues, tier-2's Forgejo for PRs
-- **Sync:** `git push` / `git pull` on the bug repo. Same as code. No daemon.
-
-```
-┌─ local machine (MacBook, offline) ─┐
-│  git: code repos                    │
-│  git-bug: issue tracker             │──┐
-│  (create issues, comment, close)    │  │
-└─────────────────────────────────────┘  │
-                                         │ git push/pull (when online)
-┌─ local machine (Linux, offline) ────┐  │
-│  git: code repos                    │──┤
-│  git-bug: issue tracker            │  │
-│  (create issues, comment, close)    │  │
-└─────────────────────────────────────┘  │
-                                         ▼
-┌─ tier-2 (always online) ───────────────┘
-│  Forgejo: git hosting, PRs            │
-│  git-bug web UI: issue tracking       │
-│  (both read from the same git repos)  │
-└───────────────────────────────────────┘
-                    ▲
-                    │ HTTPS
-┌───────────────────┴────┐
-│  Phone (browser)      │
-│  git-bug web UI       │
-│  Forgejo web UI       │
-└───────────────────────┘
-```
-
-**What this solves:**
-
-- **Offline-first by construction.** git-bug stores issues in git. Git works offline. Create issues, comment, close — all work offline. Sync when online via `git push`.
-- **No Forgejo API to fight.** Issues are git objects, not rows in Forgejo's SQLite. No API calls, no webhooks, no event logs.
-- **No sync protocol to build.** Git IS the sync protocol. git-bug already uses it.
-- **No sync protocol to build.** Git IS the sync protocol. git-bug already uses it.
-- **No mapping.json.** Issues have stable IDs (git object hashes). No per-instance numeric ID translation.
-- **No race conditions beyond git's own.** git-bug's storage model (edit operations in a linear commit chain) is conflict-free by design.
-- **Existing project, active community.** 9.9k stars, 2,627 commits, v0.10.1 released May 2025. Not a prototype — a real tool.
-
-**What this loses:**
-
-- **Split UX.** Issues live in git-bug's web UI. PRs live in Forgejo's web UI. The operator switches between two interfaces. This is the main cost.
-- **Cross-references.** A commit message saying "closes #42" needs to reference git-bug's issue ID, not Forgejo's. This is a convention, not a technical problem, but it needs to be consistent.
-- **PR comments.** Inline code review comments live in Forgejo. General PR discussion could live in git-bug. This split needs a clear UX convention.
-- **CI status on issues.** If CI runs locally and reports to Forgejo, git-bug needs to display CI status from Forgejo. Cross-system data flow or skip for v1.
-- **git-bug maturity.** v0.10.1 is pre-1.0. The API may change. The web UI may not be polished enough for phone use. Need to evaluate before committing.
-
-### git-bug + Forgejo PR Integration
-
-git-bug has **no PR support at all** — no PR entity type, no PR data model, no PR workflow. This is by design: git-bug is an issue tracker, and PRs are code review workflows that belong in the forge. The integration needs to bridge these two systems.
-
-#### What Lives Where
-
-| Concern | Lives In | Why |
-|---------|----------|-----|
-| Issue tracking (bugs, features, tasks) | git-bug | Offline-first, distributed, syncs via git |
-| PR metadata (branch, diff, merge status) | Forgejo | Forgejo is the git host; PRs are git operations |
-| PR inline code review (comment on specific lines) | Forgejo | This is a code review feature, not an issue feature |
-| PR general discussion (should we merge? design feedback) | git-bug | This is issue-style discussion, belongs in the tracker |
-| CI status | Forgejo | CI reports to Forgejo via webhooks |
-| Labels | git-bug | git-bug has full label support |
-| Milestones | git-bug (when implemented) | git-bug doesn't have milestones yet; track them as labels for v1 |
-| Assignees | Forgejo | git-bug doesn't have assignees; single-operator doesn't need them |
-
-#### Linking Issues and PRs
-
-A PR in Forgejo references an issue in git-bug by convention. Three approaches:
-
-**Approach 1: Forgejo metadata.** The PR description contains a reference like `git-bug: abc1234` (using git-bug's human-readable ID). A Cove-side hook reads this reference and links the PR to the issue in the web UI. Simple, but requires manual entry.
-
-**Approach 2: git-bug metadata.** When a PR is created in Forgejo, a git-bug issue is automatically created with a `SetMetadataOp` linking it to the Forgejo PR URL (`forgejo-pr-url=https://git.cove/owner/repo/pulls/5`). This is how git-bug's bridges work — they use metadata to track the mapping between local and remote entities. The git-bug issue becomes the discussion thread for the PR.
-
-**Approach 3: Both.** git-bug metadata links the issue to the PR, and Forgejo's PR description links back to the git-bug issue. Bidirectional linking via Cove's web UI or a small bridge daemon.
-
-**Recommendation: Approach 2 for v1.** git-bug's metadata system already exists and is designed for exactly this. The bridge daemon creates a git-bug issue when a Forgejo PR is opened, links them via metadata, and the operator discusses the PR in git-bug's issue (which syncs offline). Inline code review stays in Forgejo.
-
-#### Bridge: Forgejo Actions (Not a Daemon)
-
-Instead of a separate daemon, use Forgejo Actions to create git-bug issues when PRs are opened. Forgejo Actions supports `pull_request` events (opened, synchronized, closed) and the automatic token has write permission to the repository. A Forgejo Action can run `git bug` commands directly — no separate daemon needed.
-
-```yaml
-# .forgejo/workflows/bug-sync.yaml
-name: Bug Sync
-on:
-  pull_request:
-    types: [opened, closed, reopened]
-jobs:
-  sync:
-    runs-on: docker
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install git-bug
-        run: |
-          curl -sL https://github.com/git-bug/git-bug/releases/latest/download/git-bug_linux_amd64.tar.gz | tar xz
-          sudo mv git-bug /usr/local/bin/
-      - name: Create bug for new PR
-        if: github.event.action == 'opened'
-        run: |
-          git bug bug new \
-            -t "PR: ${{ github.event.pull_request.title }}" \
-            -m "Discussion for PR #${{ github.event.pull_request.number }}" \
-            -l pr
-          git bug push
-      - name: Close bug when PR closes
-        if: github.event.action == 'closed'
-        run: |
-          BUG_ID=$(git bug bug -f id -l pr --no | head -1)
-          if [ -n "$BUG_ID" ]; then
-            git bug bug status close "$BUG_ID"
-            git bug push
-          fi
-```
-
-This is simpler than a daemon — no process to manage, no webhook endpoint, no routing. The Action runs on Forgejo's CI runner (which Cove already provisions), has access to the repo, and can push bug refs directly.
-
-**Conversely: if an issue starts with `PR:` or `Sashay:`, create a Forgejo PR.** The inverse direction — git-bug issue → Forgejo PR — can also work via a Forgejo Action triggered by `push` to `refs/bugs/`. When a new bug is created with a title matching `PR: {title}` or `Sashay: {title}` and `forgejo-branch: feature-x` metadata, the Action creates the corresponding PR via the Forgejo API.
-
-**If the branch doesn't exist yet, the Action can create it.** Forgejo's API supports creating branches via `POST /repos/{owner}/{repo}/git/refs`. The Action can:
-1. Parse the bug title for `PR:` or `Sashay:` prefix
-2. Extract the branch name from `forgejo-branch:` metadata
-3. Check if the branch exists on Forgejo
-4. If not, create it from the default branch via the API
-5. Create the PR (with `WIP:` prefix for sashays, without for regular PRs)
-
-This means the operator can create a bug while offline, push when online, and get a PR number immediately — no manual `fj pr create` step. For the sashay workflow, this is elegant:
-1. Operator creates a bug: `git bug bug new -t "Sashay: refactor vault" -m "PR discussion for refactor-vault"`
-2. Operator pushes: `git bug push; git push cove main` (the plan commit triggers the sashay)
-3. Action detects the bug, creates branch `refactor-vault` from `main`, creates WIP PR
-4. Operator has a PR number and URL immediately
-
-The branch starts as an empty branch from `main`. The operator then pushes their work onto it and the PR updates normally.
-
-**For v1, start with the one-way bridge (PR opened → git-bug issue).** The inverse (bug → PR) can wait until the workflow is proven.
-
-Events the bridge handles:
-
-| Forgejo Event | git-bug Action |
-|---------------|----------------|
-| PR opened | Create git-bug issue with title, body, `forgejo-pr-url` metadata, `pr` label |
-| PR closed (not merged) | Close git-bug issue |
-| PR merged | Close git-bug issue, add `merged` label |
-| PR title updated | Update git-bug issue title |
-| PR labels changed | Sync labels to git-bug issue |
-
-| git-bug Event | Forgejo Action |
-|---------------|----------------|
-| Bug created with `PR:` or `Sashay:` prefix | Create branch (if needed) + create PR (`WIP:` prefix for sashays) |
-
-The bridge does NOT sync:
-- PR inline code review comments (stay in Forgejo)
-- PR diff/merge operations (stay in Forgejo)
-- CI status (stays in Forgejo)
-
-This is a one-way bridge (Forgejo → git-bug). The operator creates issues in git-bug (which syncs offline) and discusses PRs in git-bug issues (which also syncs offline). Forgejo is the source of truth for PR state; git-bug is the source of truth for discussion.
-
-#### Offline PR Creation
-
-When the operator creates a PR offline (on a plane), the workflow is:
-
-1. Push the branch to Forgejo (when online) — `git push cove feature-x`
-2. Create the PR in Forgejo — `fj pr create "feature-x"`
-3. The bridge creates a git-bug issue for the PR
-
-But what if the operator wants to start discussing a PR while offline? They can:
-
-1. Create a git-bug issue with a `pr` label and a title matching the branch name: `git bug bug new -t "feature-x: refactor vault" -m "PR discussion for feature-x"`
-2. Add `forgejo-branch: feature-x` metadata to the issue
-3. When online, create the PR in Forgejo, and the bridge links the existing git-bug issue to the new PR
-
-This is manual but works. A future improvement could detect branches with matching names and auto-link.
-
-#### Forgejo Bridge for git-bug
-
-git-bug already has a Forgejo/Gitea bridge in progress (PR #1565, draft, import-only). This bridge syncs Forgejo issues to git-bug. For Cove, we need:
-
-1. **Import (Forgejo → git-bug):** Already in progress via PR #1565. Handles issues, comments, labels, status.
-2. **Export (git-bug → Forgejo):** Not yet built. Needed for v1 if we want git-bug issues to also appear in Forgejo's issue tracker (for phone access via Forgejo's web UI).
-3. **PR sync (Forgejo → git-bug):** New. Creates git-bug issues for Forgejo PRs with metadata linking.
-
-The import bridge (PR #1565) gives us Forgejo issue → git-bug sync. We'd need to add export and PR sync. The export is the harder part — it needs to create Forgejo issues from git-bug bugs, handle comment creation, and keep state in sync.
-
-**For v1, we may skip export.** The operator accesses issues via git-bug's web UI on tier-2 (phone-friendly) and git-bug CLI (local, offline). Forgejo's issue tracker is secondary. If the operator never uses Forgejo's issue UI, export is unnecessary.
-
-#### Identity Mapping
-
-git-bug has its own identity system (stored in `refs/identities/`). Forgejo has its user system. For Cove's single-operator use case, these are trivially mapped: one identity (`cristos`) in git-bug, one account (`cristos`) in Forgejo. The bridge maps them by name/email.
-
-#### Sync Topology (Updated for git-bug)
+The operator has multiple machines (MacBook, Linux desktop, home server) that may all work on the same project with different branches. Each machine runs git-bug CLI locally. All machines sync to the same tier-2.
 
 ```
 ┌─ local machine (MacBook, offline) ─┐
@@ -738,21 +55,180 @@ git-bug has its own identity system (stored in `refs/identities/`). Forgejo has 
 └───────────────────────┘
 ```
 
-No separate daemon needed. Forgejo Actions run `git bug` commands when PRs are opened/closed, creating and updating git-bug issues automatically.
+### 4. PR-Sashaying: Nodes + Branches
 
-### git-bug Web UI on Tier-2
+Each machine creates branches with a per-node prefix. No collision at the git level — different branch names, different git refs. No collision at the PR level — different source branches, different PRs.
 
-The web UI (`git bug webui`) is a Go HTTP server that serves a React+GraphQL frontend, embedded in the git-bug binary. It reads from and writes to the git repo's `refs/bugs/` namespace. Configuration: `--host`, `--port`, `--open` (auto-open browser). Authentication is local-only (uses git config identity, no OAuth).
+```
+macbook/feature-x       # MacBook's work on feature-x
+linux/feature-x         # Linux box's work on feature-x (same feature, different branch)
+```
 
-**Critical constraint: git-bug does not work with bare repositories** (Issue #178). Forgejo stores repos as bare repos. Running `git bug webui` inside Forgejo's bare repo fails with "git-bug must be run from within a git repo."
+The sync layer doesn't rebase or merge. It mirrors git refs. The operator rebases on whichever machine they sit down at.
+
+### 5. Offline-First Issue Work
+
+The operator can:
+- Shut down tier-2 (it's a standby, not a prerequisite)
+- Disconnect MacBook from the network
+- Work on MacBook for days: create issues, comment, change labels, close issues
+- All via `git bug` CLI, stored locally in `refs/bugs/`
+- When online again: `git bug push` syncs to tier-2, `git bug pull` gets other machines' changes
+
+No data loss. No merge conflicts on issue data (git-bug uses event sourcing with Lamport clocks). The operator's offline work is preserved and synced.
+
+## Identity Model
+
+One account (`cristos`) on every surface. No mapping, no translation, no ghost users, no `[bot]` convention. git-bug has its own identity system (`refs/identities/`), but for a single operator, it's one identity everywhere.
+
+**Lost: machine provenance.** We can't tell from an issue whether it was created on the MacBook or the Linux box. If provenance matters, the operator adds it to the comment body ("tested on M2 MacBook Pro").
+
+## Architecture: git-bug + Forgejo
+
+**Forgejo handles what it's good at:** git hosting, PRs (which are git operations — branches, diffs, merges), and CI. **git-bug handles what Forgejo can't sync offline:** issues, comments, labels. **Git handles distributed sync for both.**
+
+git-bug is a distributed, offline-first issue tracker that stores issues as git objects under `refs/bugs/`. It syncs via regular `git push`/`git pull`. It has CLI, TUI, and web UI interfaces. It bridges to GitHub and GitLab (but not PRs). A Forgejo bridge is in progress (draft PR #1565).
+
+### What git-bug Supports
+
+| Feature | Core | CLI | TUI | WebUI |
+|---------|:----:|:---:|:---:|:-----:|
+| Issues | ✅ | ✅ | ✅ | ✅ |
+| Comments | ✅ | ✅ | ✅ | ✅ |
+| Labels | ✅ | ✅ | ✅ | ✅ |
+| Title edits | ✅ | ✅ | ✅ | ✅ |
+| Status (open/close) | ✅ | ✅ | ✅ | ✅ |
+| Metadata | ✅ | ✅ | — | — |
+| Pull requests | ❌ | ❌ | ❌ | ❌ |
+| Milestones | ❌ | ❌ | ❌ | ❌ |
+| Assignees | ❌ | ❌ | ❌ | ❌ |
+| Threading | ❌ | ❌ | ❌ | ❌ |
+
+### What Lives Where
+
+| Concern | Lives In | Why |
+|---------|----------|-----|
+| Issue tracking (bugs, features, tasks) | git-bug | Offline-first, distributed, syncs via git |
+| PR metadata (branch, diff, merge status) | Forgejo | PRs are git operations, belong in the forge |
+| PR inline code review | Forgejo | Code review feature, not an issue feature |
+| PR general discussion | git-bug | Issue-style discussion, belongs in the tracker |
+| CI status | Forgejo | CI reports to Forgejo via webhooks |
+| Labels | git-bug | Full label support |
+| Milestones | git-bug (as labels for v1) | git-bug doesn't have milestones yet |
+
+### What This Costs
+
+- **Split UX.** Issues in git-bug's web UI, PRs in Forgejo's web UI. The operator switches between two interfaces.
+- **Cross-references.** "closes #42" references git-bug IDs, not Forgejo issue numbers. A convention, not a technical problem.
+- **git-bug maturity.** v0.10.1, pre-1.0. No milestones, no assignees, no PR support, no attachments in UI. The web UI is alpha.
+
+### Why Not Alternatives
+
+**Event log on git:** Over-engineered. Builds a distributed database on top of git. Five things to configure before it runs. Violates Cove's PURPOSE principle ("if it needs you to configure three things before it runs, it's not done").
+
+**Single Forgejo instance + Tailscale:** Fails the airplane test. The laptop being offline is the normal mode.
+
+**Forgejo forks:** Forks don't share issues. Every issue the operator creates on one fork is invisible on others. Degrades the sequential workflow.
+
+**Database replication:** SQLite doesn't support multi-master. Single-writer defeats offline-first.
+
+**CRDTs:** Complex to implement, don't integrate with Forgejo's SQLite, and still need a bridge. git-bug already provides the right abstraction.
+
+**Email:** Primitive UX, no integration with Forgejo PRs.
+
+## git-bug + Forgejo PR Integration
+
+### Linking Issues and PRs
+
+git-bug has no PR support. The integration bridges these two systems:
+
+**PR → bug (Forgejo Action):** When a PR is opened in Forgejo, a Forgejo Action creates a corresponding git-bug issue with a `pr` label and `forgejo-pr-url` metadata. This is the v1 direction.
+
+**Bug → PR (client-side notification):** When a bug is created with a `PR:` or `Sashay:` prefix and `forgejo-branch:` metadata, a client-side notification (curl after push) tells tier-2 to create a branch and PR. Forgejo Actions can't trigger on `refs/bugs/` pushes, so this direction uses a lightweight HTTP call instead.
+
+```yaml
+# .forgejo/workflows/bug-sync.yaml
+name: Bug Sync
+on:
+  pull_request:
+    types: [opened, closed, reopened]
+jobs:
+  sync:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch bug refs
+        run: |
+          git config remote.origin.fetch '+refs/bugs/*:refs/remotes/origin/bugs/*'
+          git config remote.origin.fetch '+refs/identities/*:refs/remotes/origin/identities/*'
+          git fetch origin
+      - name: Install git-bug
+        run: |
+          curl -sL https://github.com/git-bug/git-bug/releases/latest/download/git-bug_linux_amd64.tar.gz | tar xz
+          sudo mv git-bug /usr/local/bin/
+      - name: Create bug for new PR
+        if: github.event.action == 'opened'
+        run: |
+          git bug bug new \
+            -t "PR: ${{ github.event.pull_request.title }}" \
+            -m "Discussion for PR #${{ github.event.pull_request.number }}" \
+            -l pr
+          git bug push
+      - name: Close bug when PR closes
+        if: github.event.action == 'closed'
+        run: |
+          BUG_ID=$(git bug bug -f id -l pr --no | head -1)
+          if [ -n "$BUG_ID" ]; then
+            git bug bug status close "$BUG_ID"
+            git bug push
+          fi
+```
+
+### Bidirectional Events
+
+| Forgejo Event | git-bug Action |
+|---------------|----------------|
+| PR opened | Create git-bug issue with title, body, `forgejo-pr-url` metadata, `pr` label |
+| PR closed (not merged) | Close git-bug issue |
+| PR merged | Close git-bug issue, add `merged` label |
+| PR title updated | Update git-bug issue title |
+| PR labels changed | Sync labels to git-bug issue |
+
+| git-bug Event | Forgejo Action |
+|---------------|----------------|
+| Bug created with `PR:` or `Sashay:` prefix | Create branch (if needed) + create PR (`WIP:` for sashays) |
+
+### Offline PR Creation
+
+When the operator wants to start discussing a PR while offline:
+
+1. Create a git-bug issue with a `pr` label: `git bug bug new -t "feature-x: refactor vault" -m "PR discussion for feature-x"`
+2. Add `forgejo-branch: feature-x` metadata
+3. When online, push: `git bug push; git push cove feature-x`
+4. Client-side notification triggers branch/PR creation on tier-2
+
+### Sashay Integration
+
+The operator creates a bug titled `Sashay: refactor vault` with `forgejo-branch: refactor-vault` metadata. After pushing, tier-2 creates the branch from `main` and opens a WIP PR. The operator has a PR number immediately — no manual `fj pr create` step.
+
+### Identity Mapping
+
+Single operator: one identity (`cristos`) in git-bug, one account (`cristos`) in Forgejo. Trivial mapping by name/email.
+
+## git-bug Web UI on Tier-2
+
+The web UI (`git bug webui`) is a Go HTTP server with React+GraphQL frontend, embedded in the git-bug binary. Authentication is local-only (git config identity, no OAuth).
+
+**Critical constraint: git-bug does not work with bare repositories** (Issue #178). Forgejo stores repos as bare repos. Running `git bug webui` inside Forgejo's bare repo fails.
 
 **Solution: non-bare mirror clone on tier-2.**
 
 ```
 Forgejo bare repo (/data/gitea/repositories/owner/project.git)
     │
-    │  post-receive hook (or Forgejo Action on push)
-    │  triggers: cd /opt/cove/project && git pull && git bug pull
+    │  post-receive hook
+    │  triggers: cd /opt/cove/project && git pull &&
+    │    git fetch origin '+refs/bugs/*:refs/bugs/*' '+refs/identities/*:refs/identities/*'
     ▼
 Non-bare clone (/opt/cove/project/)
     │
@@ -762,303 +238,166 @@ Non-bare clone (/opt/cove/project/)
 Phone browser: https://bugs.project.cove/
 ```
 
-The non-bare clone stays in sync with Forgejo's bare repo via a post-receive hook. When code (or bug refs) are pushed to Forgejo, the hook pulls into the clone and the web UI serves the updated state. For a single-project Cove instance, one clone and one web UI process is sufficient.
+The non-bare clone stays in sync with Forgejo's bare repo via a post-receive hook. For multi-project Cove, each project needs its own clone and web UI process.
 
-**For multi-project Cove:** each project needs its own clone and its own `git bug webui` process (or a reverse proxy that routes by project). This is a scaling concern for later.
+Local machines use `git bug` CLI — they don't need the web UI.
 
-**Local machines don't need the web UI.** The operator uses `git bug` CLI locally. The web UI is for the phone and any browser-based access to tier-2.
+## Branching Comment Threads: Edge Case, Not Architecture Driver
 
-**The key insight: git already solves distributed sync.** The problem is that Forgejo's issue/PR data doesn't live in git. git-bug already solved this — it stores issues in git. By using git-bug alongside Forgejo, we inherit git's distributed sync for free. Forgejo keeps doing what it's good at (git hosting, PRs, CI) without being forced into a sync model it wasn't designed for.
+Two machines writing comments offline that interleave misleadingly when merged is a real problem, but for a single operator it's an edge case. Single operator works on one machine at a time. NTP keeps clocks close. The operator wrote all the comments — they know the context.
 
-### Branching Comment Threads: Edge Case, Not Architecture Driver
+git-bug uses Lamport clocks for ordering, which provides a deterministic total order regardless of concurrent edits. After sync, both machines agree on the order. It may not match wall-clock intent, but it's consistent and unambiguous.
 
-The musing's race condition analysis (R5) spends significant effort on comment branching — two machines writing comments offline that interleave misleadingly when merged. This is a real problem, but for a single operator it's an edge case, not an architecture driver.
+**Mitigations:** do nothing (the operator understands the context), add a clarifying comment, rely on Lamport ordering, or edit/delete the confusing comments. None of these require a custom event log or replay engine.
 
-**Why it's low likelihood:**
-- Single operator works on one machine at a time. Simultaneous offline work on two machines is rare.
-- NTP keeps clocks close enough that the order approximates wall-clock intent.
-- The operator wrote all the comments. They know what they meant.
+## Happy Path Journeys
 
-**Note: git-bug also has flat comments (no threading).** This is the same constraint as Forgejo. But git-bug uses Lamport clocks for ordering, which provides a deterministic total order regardless of concurrent edits. Two machines writing comments offline will have a deterministic order after sync — not necessarily wall-clock order, but a consistent order that both machines agree on. This is better than Forgejo's `created_at` timestamps, which depend on wall clocks.
-
-**How to handle it as an edge case:**
-- **Do nothing.** The operator sees the interleaved order, recognizes it's misleading, and moves on. They wrote the comments — they know the context.
-- **Clarifying comment.** The operator adds "To clarify, I wrote the above before seeing the Linux box's comment." Simple, human, works.
-- **Lamport clock ordering.** git-bug's Lamport clocks provide deterministic ordering. After sync, both machines agree on the order. It may not match wall-clock intent, but it's consistent and unambiguous.
-- **Edit/delete.** git-bug supports comment editing and deletion. If the ordering is truly confusing, the operator can edit or delete comments.
-
-None of these require a custom event log, per-node event streams, or a replay engine. The simplest fix — a sync annotation — is a single field in the comment metadata. The event-log architecture was solving a problem that doesn't need solving at the architecture level.
-
-### D4. Email-Based Issue Workflow
-
-Before web-based forges, open source development ran on email. Patches were emailed. Bug reports were emailed. Discussion happened on mailing lists. Email is offline-first by design — you compose offline, send when connected, receive when connected.
-
-**How it works:**
-
-- Issues are filed by emailing a dedicated address on tier-2
-- Comments are replies to the email thread
-- PRs are email patches (git format-patch / git send-email)
-- Local machines use their email client for issue/PR workflow
-- Tier-2 runs a mail-to-issue bridge that converts emails to Forgejo issues/PRs
-- Phone uses its email client (already installed) for reading and replying
-
-**Advantage:** Email is the most battle-tested offline-first communication protocol. Every device has an email client. No sync daemon, no event log, no custom protocol. The operator composes an issue on the plane, it sends when the laptop reconnects.
-
-**Challenge:** Email threading is primitive (subject-line-based). Forgejo's flat comment model maps well to email (each reply is a new comment), but the UX is worse than a web UI. And email patches (git send-email) are a different workflow from Forgejo PRs — the operator would need to learn a new PR workflow or the bridge would need to create Forgejo PRs from emailed patches (which brings back the API limitation).
-
-### D5. CRDT-Based Issue Sync
-
-Instead of git or event logs, use CRDTs (Conflict-free Replicated Data Types) for issue/comment state. Each machine maintains a local CRDT store. Sync is a pairwise merge of CRDT state — no conflict resolution needed because CRDTs converge by construction.
-
-**How it works:**
-
-- Each issue is a CRDT document (title, body, labels, state, comments)
-- Each comment is a CRDT within the issue document
-- Local edits are applied immediately to the local CRDT store
-- Sync is a CRDT merge between instances (push/pull the CRDT state)
-- No conflict resolution, no last-writer-wins, no event log
-
-**Advantage:** CRDTs eliminate the entire conflict resolution problem. No races, no branching, no last-writer-wins. The math guarantees convergence.
-
-**Challenge:** CRDTs are complex to implement correctly. The CRDT store needs to be embedded in the sync daemon (or use an existing library like Automerge or Yjs). CRDT state can grow large (every edit is preserved for merge history). And CRDTs don't integrate with Forgejo's SQLite — you'd still need a bridge to convert CRDT state to Forgejo API calls on tier-2.
-
-## Where This Leaves Us
-
-The event-log architecture is over-engineered. D2 (single instance) fails the airplane test. The most promising direction is **D3 (separate concerns)** — use **git-bug** alongside Forgejo. Forgejo handles git hosting and PRs. git-bug handles issues and comments. Git handles distributed sync for both.
-
-D3's cost is a split UX (issues in git-bug's web UI, PRs in Forgejo's web UI) and the integration work (PR ↔ issue linking, CI status display). But the cost of the event-log approach is also a new component (sync daemon with event log, replay engine, mapping, webhooks) — and it fights Forgejo's data model the whole way. git-bug already solved the hard problem (distributed issue tracking in git). We don't need to build it.
-
-Branching comment threads are an edge case, not an architecture driver. A sync annotation ("Written offline on MacBook, synced at...") is sufficient. No event log, no replay engine, no per-node event streams.
-
-**Recommendation:** Evaluate git-bug. Install it, test the offline workflow, test the web UI on a phone. If the UX is acceptable, this is the architecture. If the split UX is too confusing, the event-log approach is the fallback — but it should be designed as a distributed database, not a git-based event system.
-
-## Happy Path Journeys (D3)
-
-The following journeys exercise every permutation of the key variables: laptop online/offline, user home/away, access device (laptop/phone), and action type. All assume git-bug for issues and Forgejo for PRs.
-
-### J1: Laptop Online, At Home — Normal Workflow
-
-The operator is at their desk. Laptop is online. Tier-2 is on the local network.
+### J1: Laptop Online, At Home
 
 ```
-Operator creates issue:  git bug bug new -t "Slow startup" -m "Takes 30s on cold boot"
+Operator creates issue:  git bug bug new -t "Slow startup" -m "Takes 30s"
 Operator pushes:          git push cove main && git bug push
-Tier-2 updates:           Forgejo post-receive hook → git pull && git bug pull
-Phone sees it:            https://bugs.project.cove/ → issue "Slow startup" appears
+Tier-2 updates:           post-receive hook → git pull + fetch bug refs
+Phone sees it:            https://bugs.project.cove/ → issue appears
 Operator creates PR:      fj pr create "Fix slow startup"
-Action fires:             bug-sync creates git-bug issue with pr label, forgejo-pr-url metadata
-Operator views PR:        https://git.cove/owner/project/pulls/42
+Action fires:             bug-sync creates git-bug issue with pr label
 ```
 
-Everything syncs immediately. The operator uses git-bug CLI for issues, Forgejo for PRs. Both are visible on the phone.
-
-### J2: Laptop Offline, At Home — Airplane/Cabin Mode
-
-The operator is working without internet. Laptop is offline. All changes are local.
+### J2: Laptop Offline — Airplane/Cabin Mode
 
 ```
-Operator creates issue:  git bug bug new -t "Slow startup" -m "Takes 30s on cold boot"
-Operator adds comment:   git bug bug comment new <id> -m "Profiled: vault init is the bottleneck"
+Operator creates issue:  git bug bug new -t "Slow startup"
+Operator adds comment:   git bug bug comment new <id> -m "Profiled: vault init"
 Operator labels it:      git bug bug label new <id> performance
-Operator closes it:      git bug bug status close <id>
-
   (all stored locally in refs/bugs/, no network needed)
 
 Operator goes back online:
 Operator pushes:          git push cove main && git bug push
-Tier-2 updates:           hook → git pull && git bug pull
+Tier-2 updates:           hook → git pull + fetch bug refs
 Phone sees it:            all changes appear at once
 ```
 
-No network needed for any issue operation. git-bug stores everything locally. Sync is just `git push`.
-
-### J3: Laptop Offline, Phone Only — Away From Desk
-
-The operator is away. Laptop is in a bag, asleep. Phone has internet access.
+### J3: Phone Only — Away From Desk
 
 ```
 Phone opens:              https://bugs.project.cove/
 Phone creates issue:      "Slow startup" via git-bug web UI on tier-2
-Phone comments:           "Profiled: vault init is the bottleneck" via web UI
-Phone checks PRs:         https://git.cove/owner/project/pulls (Forgejo web UI)
-Phone reviews PR:         Leaves a comment on PR #42 via Forgejo
-
-  (phone can't push code or create branches — read+comment only)
+Phone comments:           "Profiled: vault init" via web UI
+Phone checks PRs:         https://git.cove/owner/project/pulls (Forgejo)
 
 Operator returns to laptop, goes online:
 Operator pulls:           git pull cove main && git bug pull
-Laptop sees phone's issue: git bug bug show <id> — includes phone's comments
-Laptop sees phone's PR review: fj pr view 42 — includes phone's comment
+Laptop sees phone's issue: includes phone's comments
 ```
 
-Phone uses tier-2's web UIs (git-bug for issues, Forgejo for PRs). The laptop pulls changes when it reconnects.
-
 ### J4: Phone Creates Issue, Laptop Pulls Later
-
-Phone creates an issue while the laptop is offline. Laptop syncs when back online.
 
 ```
 Phone creates:            "Slow startup" on bugs.project.cove
   → written to tier-2's non-bare clone
-  → stored in refs/bugs/ on tier-2
+  → cron pushes refs/bugs/* back to Forgejo
+  → post-receive hook pulls into clone (idempotent)
 
 Laptop comes online:
 Laptop pulls:             git bug pull
-Laptop sees issue:        git bug bug show <id> — "Slow startup", with phone's comment
-Laptop responds:          git bug bug comment new <id> -m "Fixed in commit abc123"
+Laptop sees issue:        includes phone's comments
+Laptop responds:          git bug bug comment new <id> -m "Fixed"
 Laptop pushes:            git bug push
-Phone sees response:      refresh bugs.project.cove — comment appears
+Phone sees response:      refresh bugs.project.cove
 ```
 
-git-bug's Lamport clocks ensure the phone's comment and the laptop's comment merge deterministically. No conflict.
-
-### J5: Sashay Workflow — Bug → PR Automatically
-
-The operator starts a sashay (branch + worktree + draft PR) from a git-bug issue.
+### J5: Sashay — Bug → PR Automatically
 
 ```
-Operator creates bug:     git bug bug new -t "Sashay: refactor vault" -m "PR for vault refactor"
+Operator creates bug:     git bug bug new -t "Sashay: refactor vault"
   → adds forgejo-branch: refactor-vault metadata
-
 Operator creates branch:  git checkout -b refactor-vault
-Operator writes plan:     docs/plans/vault-refactor.md
-Operator commits:          git commit -m "plan: vault refactor"
 Operator pushes:           git push cove refactor-vault && git bug push
 
-Forgejo Action fires:
-  1. Detects new bug with "Sashay:" prefix
-  2. Reads forgejo-branch: refactor-vault metadata
-  3. Branch already exists (just pushed) → no need to create
-  4. Creates WIP PR via Forgejo API: "WIP: refactor vault"
-  5. Links bug to PR via forgejo-pr-url metadata
-
-Operator has PR number immediately — no manual `fj pr create` step.
+Client-side notification triggers:
+  1. Bug has "Sashay:" prefix
+  2. Branch refactor-vault exists on Forgejo (just pushed)
+  3. Creates WIP PR: "WIP: refactor vault"
+  4. Links bug to PR via forgejo-pr-url metadata
 ```
 
 ### J6: PR Created Manually, Bug Created Automatically
-
-The operator creates a PR the normal way (not from a bug). The Action creates a corresponding bug.
 
 ```
 Operator pushes branch:   git push cove feature-x
 Operator creates PR:      fj pr create "Fix memory leak"
 
 Forgejo Action fires (pull_request: opened):
-  1. Detects new PR #43 "Fix memory leak"
-  2. Runs: git bug bug new -t "PR: Fix memory leak" -m "Discussion for PR #43" -l pr
-  3. Adds forgejo-pr-url metadata pointing to PR #43
-  4. Pushes bug refs: git bug push
+  1. Fetches bug refs from origin
+  2. Creates bug: "PR: Fix memory leak" with pr label
+  3. Adds forgejo-pr-url metadata
+  4. Pushes bug refs
 
-Post-receive hook fires:
-  5. Tier-2's non-bare clone pulls the new bug
-
-Phone sees:               New issue "PR: Fix memory leak" with pr label on bugs.project.cove
-Operator discusses:       Comments on the bug via CLI or web UI — not on Forgejo's PR
+Post-receive hook syncs bug refs to non-bare clone.
+Phone sees:               new issue "PR: Fix memory leak" with pr label
 ```
-
-PR discussion (inline code review) stays in Forgejo. General discussion lives in the git-bug issue.
 
 ### J7: Two Laptops, Both Offline, Then Both Sync
 
-MacBook and Linux both work offline. They create issues independently. Both sync to tier-2.
-
 ```
 MacBook (offline):        git bug bug new -t "Slow startup"
-MacBook (offline):        git bug bug comment new <id-mac> -m "Reproduced on macOS"
+MacBook (offline):        git bug bug comment new <id> -m "Reproduced on macOS"
 
 Linux (offline):           git bug bug new -t "CI flaky"
-Linux (offline):           git bug bug comment new <id-linux> -m "Fails on Ubuntu 24.04"
 
 MacBook goes online:       git bug push → pushes to tier-2
 Linux goes online:         git bug pull → gets MacBook's issue
-                           git bug push → pushes its issue
-                           (or vice versa — order doesn't matter)
+                          git bug push → pushes its issue
 
-Tier-2:                    Both issues appear, both comments present.
-                          Lamport clocks ensure deterministic merge order.
-                          No conflicts — each issue is a separate entity.
+Lamport clocks ensure deterministic merge. No conflicts.
 ```
-
-Even if both machines comment on the same issue while offline, git-bug's DAG-based merge resolves the comments deterministically via Lamport clocks.
 
 ### J8: Phone Comments on PR, Laptop Reviews Later
 
-Phone is for reading and commenting on PRs via Forgejo's web UI. PR comments live in Forgejo, not git-bug.
-
 ```
-Phone opens PR #42:       https://git.cove/owner/project/pulls/42
-Phone reviews code:        Leaves inline comment on line 47 of vault.go
-Phone approves:            "LGTM, just fix the typo"
+Phone reviews PR #42:    Leaves inline comment on line 47 via Forgejo web UI
+Phone approves:           "LGTM, just fix the typo"
 
 Laptop goes online:
-Laptop reviews PR:          fj pr view 42 — sees phone's comment
-Laptop merges PR:           fj pr merge 42
-Action fires (pull_request: closed):
-  → git bug bug status close <id> — closes the linked bug
-  → git bug bug label new <id> merged
+Laptop reviews PR:         fj pr view 42 — sees phone's comment
+Laptop merges PR:          fj pr merge 42
+Action fires:              closes linked git-bug issue, adds merged label
 ```
 
-PR inline comments live in Forgejo. They don't sync to git-bug. The bug issue is for general discussion; the PR is for code review.
-
-### J9: CI Updates Bug
-
-A Forgejo Action runs CI and updates the associated git-bug issue with status.
+### J9: CI Updates Bug (Future)
 
 ```
 Operator pushes code:      git push cove feature-x
-CI Action runs:            Forgejo Actions pipeline starts
 CI fails:                   Tests fail on line 47
-
-CI update Action fires:
-  1. Finds git-bug issue with forgejo-pr-url matching PR #43
-  2. Runs: git bug bug label new <id> ci-failing
-  3. Runs: git bug bug comment new <id> -m "CI failed: test_vault_init on line 47"
-  4. Pushes: git bug push
-
-Operator sees:             git bug bug show <id> — label ci-failing, comment from CI
+CI Action finds linked bug, adds ci-failing label and comment
+Operator sees:              git bug bug show <id> — label ci-failing
 ```
 
-This is a future enhancement (not v1), but demonstrates how Actions can bridge CI state into git-bug.
-
-### J10: Offline Issue Creation, Online PR Creation, Manual Linking
-
-The operator creates an issue offline, then creates a PR for it online. Two separate bugs exist — the original and the PR-linked one. The operator links them.
+### J10: Offline Bug, Online PR, Manual Linking
 
 ```
 MacBook (offline):         git bug bug new -t "Fix memory leak" → bug #a1b2
-MacBook (offline):         git bug bug comment new a1b2 -m "Happens under load"
-
 MacBook goes online:        git push cove fix-memory-leak && git bug push
 MacBook creates PR:        fj pr create "Fix memory leak"
-Action fires:              Creates bug "PR: Fix memory leak" → bug #c3d4 with pr label
+Action creates:            bug "PR: Fix memory leak" → bug #c3d4 with pr label
 
 Operator links them:        git bug bug label new a1b2 tracked-by-pr
-                           git bug bug comment new a1b4 -m "Related: bug #a1b2"
-
-  (or the operator could have created the bug with a PR: prefix from the start,
-   and the Action would have created the branch + PR automatically — see J5)
 ```
 
-### J11: Phone-Only, Reading Issues and PRs
-
-The operator is at a café. Laptop is at home, asleep. Phone is the only device.
+### J11: Phone-Only, Reading and Commenting
 
 ```
-Phone opens:               https://bugs.project.cove/
-Phone reads issues:        Browses open issues, reads comments
-Phone reads PRs:           https://git.cove/owner/project/pulls
-Phone comments on issue:   Adds comment to bug "Slow startup" via git-bug web UI
+Phone opens:               https://bugs.project.cove/ → browses issues
+Phone comments on issue:    Adds comment via web UI
+Phone reviews PRs:          https://git.cove/owner/project/pulls
 
-  (phone can't push code, create branches, or merge PRs — read+comment only)
-
-At home later:
 Laptop wakes, goes online:  git pull cove main && git bug pull
-Laptop sees phone's comment: git bug bug show <id> — includes café comment
+Laptop sees phone's comment
 ```
 
 ### Summary of What Works Where
 
-| Action | Laptop Online | Laptop Offline | Phone (always online) |
+| Action | Laptop Online | Laptop Offline | Phone |
 |--------|:---:|:---:|:---:|
 | Create issue (git-bug) | ✅ | ✅ | ✅ (web UI) |
 | Comment on issue (git-bug) | ✅ | ✅ | ✅ (web UI) |
@@ -1066,140 +405,89 @@ Laptop sees phone's comment: git bug bug show <id> — includes café comment
 | View PRs (Forgejo) | ✅ | ❌ | ✅ (web UI) |
 | Comment on PR (Forgejo) | ✅ | ❌ | ✅ (web UI) |
 | Create PR (Forgejo) | ✅ | ❌ | ❌ |
-| Create PR (sashay) | ✅ auto via Action | ✅ bug created offline | ❌ |
+| Create PR (sashay) | ✅ auto | ✅ bug offline | ❌ |
 | Push code | ✅ | ✅ (queued) | ❌ |
-| Review code (inline) | ✅ | ❌ | ✅ (web UI) |
 | Merge PR (Forgejo) | ✅ | ❌ | ✅ (web UI) |
 | CI status on bug | ✅ via Action | — | ✅ (web UI) |
 
-### Gap Analysis: Journeys vs Architecture
+## Gap Analysis: Journeys vs Architecture
 
-Tracing each journey against the current architecture reveals four gaps.
+### G1: Forgejo Actions Can't Trigger on refs/bugs/ Pushes
 
-#### G1: Forgejo Actions Can't Trigger on `refs/bugs/` Pushes
+J5 (bug→PR) assumes a Forgejo Action fires when `refs/bugs/` are pushed. Actions only trigger on branch/tag pushes, `pull_request`, `issues`, `schedule`, and `workflow_dispatch`. Pushing `refs/bugs/` triggers nothing.
 
-J5 (sashay: bug → PR) assumes a Forgejo Action fires when `refs/bugs/` are pushed. **This doesn't work.** Forgejo Actions trigger on `push` (branches/tags only), `pull_request`, `issues`, `schedule`, and `workflow_dispatch`. Pushing `refs/bugs/` to Forgejo does NOT trigger any Action.
+**Fix:** Client-side notification. After `git bug push`, a post-push hook or `cove` CLI command sends an HTTP request to tier-2 to check for bugs with `PR:`/`Sashay:` prefixes and create branches/PRs.
 
-The bug→PR direction needs a different trigger mechanism. Options:
+### G2: One-Way Sync (Bare → Clone Only)
 
-- **A: Webhook to a small HTTP listener.** Forgejo fires a webhook on any push (including refs/bugs/). A lightweight listener on tier-2 receives the webhook, inspects the payload, and runs `git bug` commands. This is essentially the `cove-bridge` daemon the musing originally proposed — but simpler, since it only handles bug→PR, not all sync.
-- **B: Polling.** A cron job on tier-2 runs `git bug pull` periodically, scans for new bugs with `PR:` or `Sashay:` prefixes, and creates branches/PRs. Simple but has latency.
-- **C: Local hook.** The operator's local git post-push hook runs `git bug push && curl ...` to notify tier-2. The operator is already online when pushing. This makes the bug→PR direction a client-side responsibility — the push to Forgejo triggers a side-channel notification.
+The post-receive hook syncs Forgejo's bare repo → non-bare clone. But the web UI writes to the clone (J3, J4 — phone creates issues). Those writes never reach Forgejo, so laptops pulling from Forgejo never see phone-created issues.
 
-**Recommendation:** Option C for v1. The operator pushes bugs, then an HTTP call to tier-2 triggers the branch/PR creation. No Forgejo Action needed for this direction. The Forgejo Action still handles the PR→bug direction (triggered by `pull_request` events, which Actions DO support).
+**Fix:** A cron on tier-2 that pushes `refs/bugs/*` and `refs/identities/*` from the clone back to Forgejo every 30 seconds. The post-receive hook then pulls them back (idempotent loop).
 
-#### G2: Bidirectional Sync Between Bare Repo and Non-Bare Clone
+### G3: Actions Checkout Doesn't Include Bug Refs
 
-The current design has one-way sync: Forgejo's bare repo → non-bare clone (via post-receive hook). But the web UI writes to the non-bare clone (J3, J4 — phone creates/comments on issues). Those writes stay in the clone and never reach Forgejo's bare repo.
+`actions/checkout@v4` only fetches the tested branch. `refs/bugs/` won't be in the checkout. `git bug bug new` operates on an empty bug database.
 
-**Without this, phone-created issues are invisible to laptops.** The laptop pulls from Forgejo (`git bug pull` pulls from the Forgejo remote), not from the non-bare clone. If the phone's comment only exists in the clone, the laptop never sees it.
-
-**Fix: a bidirectional sync hook.** After the web UI writes to the clone, a post-write hook pushes the changes back to Forgejo:
-
-```
-Non-bare clone (/opt/cove/project/)
-    │
-    │  git bug webui writes (phone creates issue)
-    │  → post-write hook (or inotify watcher on refs/bugs/)
-    │  → git push origin refs/bugs/* refs/identities/*
-    ▼
-Forgejo bare repo
-    │
-    │  post-receive hook
-    │  → cd /opt/cove/project && git pull && git bug pull
-    ▼
-Non-bare clone (updated)
-```
-
-The web UI's writes push back to Forgejo. Then the post-receive hook (which fires on the push from the clone) pulls the changes back into the clone. This creates a loop, but it's idempotent — the second pull is a no-op since the clone already has the data.
-
-**Implementation:** git-bug's web UI doesn't have a post-write hook. Options:
-- Wrap `git bug webui` in a script that watches `refs/bugs/` changes (inotify/FSEvents)
-- Add a periodic `git push origin refs/bugs/* refs/identities/*` cron on the clone
-- Patch git-bug to call a webhook after mutations (upstream contribution)
-
-**For v1:** a cron job running every 30 seconds that pushes bug refs from the clone to Forgejo is sufficient. The latency is acceptable for phone use. The post-receive hook on Forgejo handles the reverse direction (bare → clone) immediately.
-
-#### G3: Actions Checkout Doesn't Include `refs/bugs/`
-
-J6 (PR → bug) assumes the Action can run `git bug bug new` in the checkout. But `actions/checkout@v4` only fetches the branch being tested. `refs/bugs/` won't be in the checkout. `git bug bug new` would create a bug in a checkout with no existing bugs, and `git bug push` would try to push bug refs that may conflict.
-
-**Fix: fetch bug refs explicitly in the Action.**
-
+**Fix:** Explicit fetch in the Action:
 ```yaml
-- uses: actions/checkout@v4
 - name: Fetch bug refs
   run: |
     git config remote.origin.fetch '+refs/bugs/*:refs/remotes/origin/bugs/*'
     git config remote.origin.fetch '+refs/identities/*:refs/remotes/origin/identities/*'
     git fetch origin
-- name: Install git-bug
-  run: |
-    curl -sL https://github.com/git-bug/git-bug/releases/latest/download/git-bug_linux_amd64.tar.gz | tar xz
-    sudo mv git-bug /usr/local/bin/
-- name: Create bug for new PR
-  run: |
-    git bug bug new -t "PR: ${{ github.event.pull_request.title }}" ...
-    git bug push
 ```
 
-This ensures the Action has the full bug state before creating new bugs.
+### G4: Post-Receive Hook Doesn't Pull Bug Refs
 
-#### G4: Post-Receive Hook Doesn't Pull Bug Refs
+`git pull` only pulls the tracked branch. Bug refs are under `refs/bugs/`, not `refs/heads/`.
 
-The post-receive hook runs `git pull && git bug pull` in the non-bare clone. But `git pull` only pulls the currently tracked branch. It doesn't pull `refs/bugs/` or `refs/identities/`. And `git bug pull` pulls bug refs from a remote — but which remote? The non-bare clone's remote is Forgejo's bare repo.
-
-**Fix: the post-receive hook must fetch bug refs explicitly.**
-
+**Fix:** The hook must also fetch bug refs explicitly:
 ```bash
-#!/bin/bash
 cd /opt/cove/project
 git pull
 git fetch origin '+refs/bugs/*:refs/bugs/*' '+refs/identities/*:refs/identities/*'
 ```
 
-`git bug pull` would also work here (it fetches bug refs from the configured remote), but `git fetch` is more explicit and doesn't require git-bug to be installed on the tier-2 server running the hook. Since the web UI process already has git-bug, `git bug pull` is fine too.
-
-### Summary of Fixes
-
 | Gap | Journey Broken | Fix |
 |-----|----------------|-----|
-| G1: Actions can't trigger on refs/bugs/ | J5 (bug→PR) | Client-side notification after push (curl to tier-2) |
-| G2: One-way sync (bare→clone only) | J3, J4 (phone writes) | Cron pushes clone→Forgejo every 30s + post-receive pulls back |
-| G3: Actions missing bug refs | J6 (PR→bug) | Fetch refs/bugs/* and refs/identities/* in Action before git bug commands |
-| G4: Post-receive hook doesn't pull bugs | All journeys | Hook must fetch refs/bugs/* and refs/identities/*, not just git pull |
+| G1: Actions can't trigger on refs/bugs/ | J5 (bug→PR) | Client-side notification after push |
+| G2: One-way sync (bare→clone only) | J3, J4 (phone writes) | Cron pushes clone→Forgejo every 30s |
+| G3: Actions missing bug refs | J6 (PR→bug) | Fetch refs/bugs/* and refs/identities/* in Action |
+| G4: Post-receive hook doesn't pull bugs | All journeys | Hook must fetch bug refs, not just git pull |
 
-## Implementation Path (D3)
+## Implementation Path
 
-1. **Evaluate git-bug** — install on MacBook, test CLI (`git bug bug new`, `git bug bug comment new`), test TUI (`git bug termui`), test web UI (`git bug webui`). Verify offline workflow: create issues on the plane, push when online.
-2. **Set up git-bug on tier-2** — create a non-bare mirror clone of each project, set up a Forgejo post-receive hook to `git pull && git fetch origin '+refs/bugs/*:refs/bugs/*' '+refs/identities/*:refs/identities/*'` (G4), run `git bug webui --host 0.0.0.0 --port 41935` as a system service behind Cove's nginx (e.g., `bugs.project.cove`).
-3. **Set up bidirectional sync** — add a cron job on tier-2 that runs every 30 seconds: `cd /opt/cove/project && git push origin refs/bugs/* refs/identities/*` (G2). This pushes phone-created issues back to Forgejo. The post-receive hook then pulls them back (idempotent loop).
-4. **Set up git-bug on each local machine** — `git bug` CLI. Issues are stored in the code repo's `refs/bugs/` namespace (same repo, not a separate repo — issues travel with code).
-5. **Configure sync** — `git bug push` / `git bug pull` on the bug refs. git-bug stores issues in `refs/bugs/` and identities in `refs/identities/`. These are pushed/pulled alongside code refs.
-6. **Write Forgejo Action for PR→bug** — `.forgejo/workflows/bug-sync.yaml` that triggers on `pull_request` events, fetches bug refs explicitly (G3), installs git-bug, and runs `git bug` commands to create/close/link git-bug issues.
-7. **Write client-side notification for bug→PR** — a local git hook (or `cove` CLI command) that, after `git bug push`, notifies tier-2 to check for bugs with `PR:` or `Sashay:` prefixes and create branches/PRs. This avoids the limitation of Actions not triggering on `refs/bugs/` pushes (G1).
-8. **Test offline convergence** — create issues on MacBook, push to tier-2, view on phone. Verify both sides converge.
-9. **Test bidirectional sync** — create an issue on the phone (web UI), verify it appears in Forgejo's bare repo (via cron push), verify it appears on laptop (via `git bug pull`).
-10. **Test hub-and-spoke** — MacBook and Linux both sync to tier-2. Verify issues from both machines appear on tier-2 and on each other's next pull.
-11. **Test PR → bug linking** — create a PR in Forgejo, verify the Action creates a corresponding git-bug issue with `pr` label and metadata.
-12. **Test bug → PR linking** — create a bug with `Sashay:` prefix, push, notify tier-2, verify branch and WIP PR are created.
+1. **Evaluate git-bug** — install on MacBook, test CLI, TUI, web UI. Verify offline workflow.
+2. **Set up git-bug on tier-2** — non-bare mirror clone, post-receive hook with bug ref fetching (G4), `git bug webui` behind nginx.
+3. **Set up bidirectional sync** — cron pushes clone→Forgejo every 30s (G2). Post-receive hook pulls back (idempotent).
+4. **Set up git-bug on each local machine** — `git bug` CLI. Issues stored in `refs/bugs/` alongside code.
+5. **Configure sync** — `git bug push` / `git bug pull`. Bug refs pushed/pulled alongside code.
+6. **Write Forgejo Action for PR→bug** — `bug-sync.yaml` with explicit bug ref fetching (G3).
+7. **Write client-side notification for bug→PR** — post-push hook or CLI command notifies tier-2 (G1).
+8. **Test offline convergence** — create issues on MacBook, push, view on phone.
+9. **Test bidirectional sync** — create issue on phone, verify it reaches Forgejo and laptop.
+10. **Test hub-and-spoke** — MacBook and Linux both sync to tier-2.
+11. **Test PR→bug linking** — create a PR, verify Action creates corresponding bug.
+12. **Test bug→PR linking** — create Sashay bug, push, verify branch and WIP PR created.
 
-## Open Questions (D3)
+## Open Questions
 
-1. **Same repo or separate repo?** — git-bug stores issues in `refs/bugs/` within the code repo. Same repo means issues travel with code and are visible when you clone the project. Evaluate whether this is the right UX or whether a separate bug repo is better.
-2. **PR ↔ issue linking** — Forgejo Action handles PR→bug (triggered by `pull_request` events). Bug→PR needs a client-side notification since Actions can't trigger on `refs/bugs/` pushes (G1). For v1: the operator runs `git bug push && curl https://git.cove/api/bug-sync` after pushing, or a post-push hook does it automatically.
-3. **Inverse linking (bug → PR)** — Action can't trigger on refs/bugs/ pushes. Client-side notification (curl after push) or a lightweight HTTP listener on tier-2. Branch creation via Forgejo API (`POST /repos/{owner}/{repo}/git/refs`) if branch doesn't exist. Sashay integration: `Sashay:` prefix creates a WIP PR automatically.
-4. **Phone workflow** — git-bug's web UI on tier-2 supports full CRUD (create, comment, label, close). The phone can create issues and comment. The web UI needs write access to the non-bare clone on tier-2.
-5. **Bare repo constraint** — git-bug doesn't work with bare repos (Issue #178). Forgejo stores repos as bare. Solution: non-bare mirror clone kept in sync via post-receive hook. Each project needs its own clone and web UI process. Scaling to multi-project Cove means multiple processes or a reverse proxy that routes by project.
-6. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has a Forgejo/Gitea bridge in progress (PR #1565, import-only). A one-time migration script would read Forgejo's API and create issues in git-bug.
-6. **CI status on issues** — Forgejo Action could add CI status as git-bug labels (`ci-passing`, `ci-failing`) or metadata. Cross-system but not complex. Skip for v1.
-7. **git-bug maturity** — v0.10.1, pre-1.0. No milestones, no assignees, no PR support, no attachments in UI. The web UI is alpha. Evaluate whether these gaps are acceptable for v1.
-8. **Forgejo Action authentication** — the Action needs to push bug refs back to the repo. The automatic `GITHUB_TOKEN` has write permission, but it needs `git bug` installed on the runner. Verify the runner image has git-bug available or add an install step.
+1. **Same repo or separate repo?** — git-bug stores issues in `refs/bugs/` within the code repo. Same repo means issues travel with code. Evaluate whether this is the right UX.
+2. **PR ↔ issue linking** — Forgejo Action for PR→bug (v1). Client-side notification for bug→PR. Inline code review stays in Forgejo.
+3. **Bug → PR inverse** — Client-side notification after push. Branch creation via Forgejo API if branch doesn't exist. Sashay prefix creates WIP PR automatically.
+4. **Phone workflow** — git-bug web UI on tier-2 supports full CRUD. Phone can create and comment. Needs write access to non-bare clone.
+5. **Bare repo constraint** — git-bug doesn't work with bare repos (Issue #178). Non-bare mirror clone + post-receive hook + bidirectional sync cron.
+6. **Multi-project scaling** — Each project needs its own clone and web UI process. Reverse proxy routes by project.
+7. **Migration path** — git-bug Forgejo bridge (PR #1565, import-only) can migrate existing Forgejo issues.
+8. **CI status on issues** — Future: Action adds `ci-failing`/`ci-passing` labels to linked bugs. Skip for v1.
+9. **git-bug maturity** — v0.10.1, pre-1.0. No milestones, assignees, PRs, attachments in UI. Web UI is alpha. Evaluate for v1 acceptability.
+10. **Forgejo Action prerequisites** — Action needs git-bug installed on runner and bug refs fetched before commands.
 
 ## Next Steps
 
-- Install git-bug on MacBook and test the full workflow (create, comment, close, push, pull, web UI)
-- Evaluate git-bug's web UI on a phone browser
+- Install git-bug on MacBook and test full workflow (create, comment, close, push, pull, web UI)
+- Evaluate git-bug web UI on a phone browser
 - Decide: same repo or separate repo for bug data
-- Design the Forgejo post-receive hook to sync bare repo → non-bare clone for git-bug web UI
+- Design post-receive hook for bare repo → non-bare clone sync (with bug ref fetching)
+- Design bidirectional sync cron (clone → Forgejo)
 - If git-bug passes evaluation, write a SPEC for the integration architecture
