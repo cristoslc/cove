@@ -637,7 +637,7 @@ jobs:
 
 This is simpler than a daemon — no process to manage, no webhook endpoint, no routing. The Action runs on Forgejo's CI runner (which Cove already provisions), has access to the repo, and can push bug refs directly.
 
-**Conversely: if an issue starts with `PR:`, create a Forgejo PR.** The inverse direction — git-bug issue → Forgejo PR — can also work via a Forgejo Action triggered by `push` to `refs/bugs/`. When a new bug is created with a title matching `PR: {title}`, the Action can use the Forgejo API to create a corresponding PR. But this requires knowing the branch, which isn't in the bug title. A better approach: the operator creates the branch first, then the bug with `forgejo-branch: feature-x` metadata. The Action reads the metadata and creates the PR.
+**Conversely: if an issue starts with `PR:`, create a Forgejo PR.** The inverse direction — git-bug issue → Forgejo PR — can also work via a Forgejo Action triggered by `push` to `refs/bugs/`. When a new bug is created with a title matching `PR: {title}` and `forgejo-branch: feature-x` metadata, the Action creates the corresponding PR via the Forgejo API. The branch must already exist on Forgejo for the PR to be created (a PR requires a real source branch), but that's the normal workflow anyway — you push the branch first, then create the PR. The Action just automates the "then create the PR" step.
 
 **For v1, start with the one-way bridge (PR opened → git-bug issue).** The inverse (bug → PR) can wait until the workflow is proven.
 
