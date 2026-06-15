@@ -598,13 +598,48 @@ A PR in Forgejo references an issue in git-bug by convention. Three approaches:
 
 **Recommendation: Approach 2 for v1.** git-bug's metadata system already exists and is designed for exactly this. The bridge daemon creates a git-bug issue when a Forgejo PR is opened, links them via metadata, and the operator discusses the PR in git-bug's issue (which syncs offline). Inline code review stays in Forgejo.
 
-#### Bridge Daemon: `cove-bridge`
+#### Bridge: Forgejo Actions (Not a Daemon)
 
-A small daemon that watches Forgejo for PR events and creates/updates corresponding git-bug issues:
+Instead of a separate daemon, use Forgejo Actions to create git-bug issues when PRs are opened. Forgejo Actions supports `pull_request` events (opened, synchronized, closed) and the automatic token has write permission to the repository. A Forgejo Action can run `git bug` commands directly — no separate daemon needed.
 
+```yaml
+# .forgejo/workflows/bug-sync.yaml
+name: Bug Sync
+on:
+  pull_request:
+    types: [opened, closed, reopened]
+jobs:
+  sync:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install git-bug
+        run: |
+          curl -sL https://github.com/git-bug/git-bug/releases/latest/download/git-bug_linux_amd64.tar.gz | tar xz
+          sudo mv git-bug /usr/local/bin/
+      - name: Create bug for new PR
+        if: github.event.action == 'opened'
+        run: |
+          git bug bug new \
+            -t "PR: ${{ github.event.pull_request.title }}" \
+            -m "Discussion for PR #${{ github.event.pull_request.number }}" \
+            -l pr
+          git bug push
+      - name: Close bug when PR closes
+        if: github.event.action == 'closed'
+        run: |
+          BUG_ID=$(git bug bug -f id -l pr --no | head -1)
+          if [ -n "$BUG_ID" ]; then
+            git bug bug status close "$BUG_ID"
+            git bug push
+          fi
 ```
-Forgejo webhook → cove-bridge → git-bug issue (with metadata linking to PR)
-```
+
+This is simpler than a daemon — no process to manage, no webhook endpoint, no routing. The Action runs on Forgejo's CI runner (which Cove already provisions), has access to the repo, and can push bug refs directly.
+
+**Conversely: if an issue starts with `PR:`, create a Forgejo PR.** The inverse direction — git-bug issue → Forgejo PR — can also work via a Forgejo Action triggered by `push` to `refs/bugs/`. When a new bug is created with a title matching `PR: {title}`, the Action can use the Forgejo API to create a corresponding PR. But this requires knowing the branch, which isn't in the bug title. A better approach: the operator creates the branch first, then the bug with `forgejo-branch: feature-x` metadata. The Action reads the metadata and creates the PR.
+
+**For v1, start with the one-way bridge (PR opened → git-bug issue).** The inverse (bug → PR) can wait until the workflow is proven.
 
 Events the bridge handles:
 
@@ -671,9 +706,9 @@ git-bug has its own identity system (stored in `refs/identities/`). Forgejo has 
 └─────────────────────────────────────┘  │
                                          ▼
 ┌─ tier-2 (always online) ───────────────┘
-│  Forgejo: git hosting, PRs            │
+│  Forgejo: git hosting, PRs, Actions   │
 │  git-bug web UI: issue tracking       │
-│  cove-bridge: PR → issue linking       │
+│  Forgejo Action: PR → bug linking     │
 └───────────────────────────────────────┘
                     ▲
                     │ HTTPS
@@ -684,7 +719,7 @@ git-bug has its own identity system (stored in `refs/identities/`). Forgejo has 
 └───────────────────────┘
 ```
 
-The `cove-bridge` daemon runs on tier-2, watches Forgejo PR webhooks, and creates/updates git-bug issues accordingly. This is the only component that needs to be built — everything else is git-bug + Forgejo + git.
+No separate daemon needed. Forgejo Actions run `git bug` commands when PRs are opened/closed, creating and updating git-bug issues automatically.
 
 **The key insight: git already solves distributed sync.** The problem is that Forgejo's issue/PR data doesn't live in git. git-bug already solved this — it stores issues in git. By using git-bug alongside Forgejo, we inherit git's distributed sync for free. Forgejo keeps doing what it's good at (git hosting, PRs, CI) without being forced into a sync model it wasn't designed for.
 
@@ -756,20 +791,21 @@ Branching comment threads are an edge case, not an architecture driver. A sync a
 2. **Set up git-bug on tier-2** — run `git bug webui` as a system service behind Cove's nginx. This is the phone-accessible issue tracker.
 3. **Set up git-bug on each local machine** — `git bug` CLI. Issues are stored in the code repo's `refs/bugs/` namespace (same repo, not a separate repo — issues travel with code).
 4. **Configure sync** — `git bug push` / `git bug pull` on the bug refs. git-bug stores issues in `refs/bugs/` and identities in `refs/identities/`. These are pushed/pulled alongside code refs.
-5. **Build `cove-bridge`** — a small daemon on tier-2 that watches Forgejo PR webhooks and creates/updates git-bug issues with `SetMetadataOp` linking to the PR. This is the only component that needs to be built.
+5. **Write Forgejo Action** — `.forgejo/workflows/bug-sync.yaml` that triggers on `pull_request` events and runs `git bug` commands to create/close/link git-bug issues. No separate daemon needed.
 6. **Test offline convergence** — create issues on MacBook, push to tier-2, view on phone. Verify both sides converge.
 7. **Test hub-and-spoke** — MacBook and Linux both sync to tier-2. Verify issues from both machines appear on tier-2 and on each other's next pull.
-8. **Evaluate git-bug's Forgejo bridge (PR #1565)** — assess whether the import-only Forgejo bridge can be extended for export and PR sync.
+8. **Test PR → bug linking** — create a PR in Forgejo, verify the Action creates a corresponding git-bug issue with `pr` label and metadata.
 
 ## Open Questions (D3)
 
 1. **Same repo or separate repo?** — git-bug stores issues in `refs/bugs/` within the code repo. Same repo means issues travel with code and are visible when you clone the project. Evaluate whether this is the right UX or whether a separate bug repo is better.
-2. **PR ↔ issue linking** — Approach 2 (git-bug metadata) for v1: when a PR is created in Forgejo, `cove-bridge` creates a git-bug issue with `forgejo-pr-url` metadata. The operator discusses the PR in git-bug's issue. Inline code review stays in Forgejo.
-3. **Phone workflow** — git-bug's web UI on tier-2 supports full CRUD (create, comment, label, close). The phone can create issues and comment. The web UI needs write access to the git repo on tier-2.
-4. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has a Forgejo/Gitea bridge in progress (PR #1565, import-only). A one-time migration script would read Forgejo's API and create issues in git-bug.
-5. **CI status on issues** — `cove-bridge` could add CI status as git-bug metadata or labels (e.g., `ci-passing`, `ci-failing`). This is cross-system data flow but not complex. Skip for v1.
-6. **git-bug maturity** — v0.10.1, pre-1.0. No milestones, no assignees, no PR support, no attachments in UI. The web UI is alpha. Evaluate whether these gaps are acceptable for v1.
-7. **`cove-bridge` scope** — v1: PR webhook → git-bug issue creation with metadata. v2: bidirectional issue sync (git-bug → Forgejo export). v3: CI status, label sync, milestone sync.
+2. **PR ↔ issue linking** — Forgejo Action (PR opened → git-bug issue created with `pr` label and `forgejo-pr-url` metadata) for v1. Inline code review stays in Forgejo. General PR discussion lives in the git-bug issue.
+3. **Inverse linking (bug → PR)** — if an issue starts with `PR:` or has `forgejo-branch:` metadata, should a Forgejo Action create the PR? Needs the branch to already exist. Deferred to v2.
+4. **Phone workflow** — git-bug's web UI on tier-2 supports full CRUD (create, comment, label, close). The phone can create issues and comment. The web UI needs write access to the git repo on tier-2.
+5. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has a Forgejo/Gitea bridge in progress (PR #1565, import-only). A one-time migration script would read Forgejo's API and create issues in git-bug.
+6. **CI status on issues** — Forgejo Action could add CI status as git-bug labels (`ci-passing`, `ci-failing`) or metadata. Cross-system but not complex. Skip for v1.
+7. **git-bug maturity** — v0.10.1, pre-1.0. No milestones, no assignees, no PR support, no attachments in UI. The web UI is alpha. Evaluate whether these gaps are acceptable for v1.
+8. **Forgejo Action authentication** — the Action needs to push bug refs back to the repo. The automatic `GITHUB_TOKEN` has write permission, but it needs `git bug` installed on the runner. Verify the runner image has git-bug available or add an install step.
 
 ## Next Steps
 
