@@ -60,21 +60,28 @@ services:
 
 Behind nginx at `opencode.cove` with HTTPS, accessible from phone via Tailscale.
 
-**What v1 explicitly is not:**
+**What MVP explicitly is not:**
 - No tier-2 deployment. OpenCode on the always-online box is v2.
 - No Claude Code, Aider, Codex CLI, Gemini CLI, or OpenClaw. Other harnesses are v2+.
 - No kernel isolation (Lima VM). Container isolation via Colima is sufficient for MVP.
 - No MCP server allowlist mechanism beyond what OpenCode provides natively.
 
-**Why OpenCode only for v1:**
+**Why OpenCode only for MVP:**
 - It's the only harness with a native server mode — fits Cove's compose model without modification
 - The operator already uses it (this musing's origin)
 - Sessions are portable across machines via the data mount
-- Other harnesses need web/remote surfaces (Claude Code Remote Control, ttyd, CloudCLI) that are research projects, not v1 features
+- One harness means one bind-mount contract, one nginx route, one auth flow — ship a small thing first
 
-**v2 will add:**
-- Tier-2 deployment of OpenCode (git-sync filesystem access, session replication)
+**v1 will add (still tier 1 only):**
 - Claude Code (Remote Control, no local server needed)
+- Aider, Codex CLI, Gemini CLI (ttyd-wrapped, same bind-mount contract)
+- CloudCLI as a multi-harness dashboard
+- Parameterized compose template so operators can pick which harnesses to run
+
+**v2 will add (tier 2):**
+- Tier-2 deployment of OpenCode (git-sync filesystem access, session replication)
+- Tier-2 deployments of the v1 harnesses where they make sense
+- swain-box-style Lima VM as a reference for operators who want kernel isolation
 - Possibly Aider, Codex CLI, Gemini CLI (ttyd-wrapped)
 - swain-box-style Lima VM as a reference for operators who want kernel isolation
 
@@ -178,27 +185,31 @@ Arguments for keeping it as a reference pattern:
 
 | Harness | Version | Tier 1 | Tier 2 | Web Surface |
 |---------|:---:|:---:|:---:|-------------|
-| **OpenCode** | **v1** | ✅ Native server | ⏳ v2: git-sync | Native web UI |
-| **Claude Code** | v2 | ✅ Container + bind mount | ⚠️ Files stay on laptop | `claude.ai/code` via Remote Control |
-| **Aider** | v2 | ✅ Container + bind mount | ⚠️ Git-sync (auto-commits) | ttyd or CloudCLI |
-| **Codex CLI** | v2 | ✅ Container + bind mount | ⚠️ Same as Aider | ttyd or CloudCLI |
-| **Gemini CLI** | v2 | ✅ Container + bind mount | ⚠️ Same as Aider | ttyd or CloudCLI |
+| **OpenCode** | **MVP** | ✅ Native server | ⏳ v2: git-sync | Native web UI |
+| **Claude Code** | v1 | ✅ Container + bind mount | ⏳ v2: not needed (files stay on laptop) | `claude.ai/code` via Remote Control |
+| **Aider** | v1 | ✅ Container + bind mount | ⏳ v2: git-sync (auto-commits) | ttyd or CloudCLI |
+| **Codex CLI** | v1 | ✅ Container + bind mount | ⏳ v2: same as Aider | ttyd or CloudCLI |
+| **Gemini CLI** | v1 | ✅ Container + bind mount | ⏳ v2: same as Aider | ttyd or CloudCLI |
+| **CloudCLI** | v1 | ✅ Container | ⏳ v2: same | Native web UI (multi-harness) |
 | **Cline** | — | ❌ IDE-only | ❌ | Editor |
 | **Continue** | — | ❌ IDE-only, unmaintained | ❌ | Editor |
 | **Cursor** | — | ❌ IDE-only | ❌ | Editor |
-| **OpenHands** | — | ❌ | ✅ Sandbox agent platform | Web |
-| **OpenClaw** | — | ⚠️ Local install | ✅ Self-host gateway | Messaging apps |
-| **CloudCLI** | v2 | ✅ Container | ✅ Container | Native web UI |
+| **OpenHands** | — | ❌ | ⏳ v2: sandbox agent platform | Web |
+| **OpenClaw** | — | ⚠️ Local install | ⏳ v2: self-host gateway | Messaging apps |
 
-v1 = in this musing's scope. v2 = documented for future work, not implemented yet.
+**Versioning:**
+- **MVP** = the first thing shipped. One harness, proven end-to-end.
+- **v1** = full tier-1 coverage. Multiple harnesses, all on the user workstation.
+- **v2** = tier-2. Always-online box deployments, git-sync filesystem access.
+- **—** = not in scope. IDE-only, unmaintained, or different product class.
 
 ## Deployment Recommendations
 
-### v1: OpenCode on Tier 1
+### MVP: OpenCode on Tier 1
 
 See the [MVP Definition](#mvp-definition) section above for the compose service. Single harness, single tier, Docker via Colima.
 
-### v2: Other Harnesses (For Future Reference)
+### v1: Multiple Harnesses on Tier 1
 
 **Tier 1 — Claude Code:**
 
@@ -230,7 +241,11 @@ services:
 
 Phone access via `https://aider.cove` (nginx in front of ttyd).
 
-**Tier 2 (v2):**
+**Tier 1 — CloudCLI (multi-harness dashboard):**
+
+A web UI that spans Claude Code, OpenCode, Cursor CLI, Codex, Gemini-CLI. Operators who want one dashboard for all harnesses add this in v1.
+
+### v2: Tier 2 (always-online box)
 
 - **OpenCode**: same container as v1, git-sync filesystem access. Compose with periodic `git pull` for filesystem changes. Session data on a known mount. Session replication via SQLite export/import or CRDT is an open question.
 - **Claude Code**: not necessary on tier-2. Remote Control bridges to the local CLI session. Tier-2 doesn't add value — the session must run on a machine with filesystem access.
@@ -239,32 +254,38 @@ Phone access via `https://aider.cove` (nginx in front of ttyd).
 
 ## Open Questions
 
-v1 questions (must resolve for MVP):
+MVP questions (must resolve before MVP ships):
 1. **Exact XDG path inside the container?** The compose mounts `~/Documents/cove/opencode` to `/home/opencode/.local/share/opencode` — verify this matches where the OpenCode server actually writes. May need to check the official image's `USER` and `HOME` directives.
-2. **nginx auth — Tailscale or basic auth + TLS?** Tailscale gives zero-config auth for the phone surface. Basic auth + TLS is broader. v1 picks one.
+2. **nginx auth — Tailscale or basic auth + TLS?** Tailscale gives zero-config auth for the phone surface. Basic auth + TLS is broader. MVP picks one.
 3. **Restart behavior on laptop wake?** When the laptop sleeps and wakes, does the OpenCode container restart cleanly? Sessions persist in the bind mount, so this should work, but the SQLite WAL needs to be consistent.
-4. **Resource limits?** LLM calls are expensive. v1 should set memory/CPU limits on the container.
+4. **Resource limits?** LLM calls are expensive. MVP should set memory/CPU limits on the container.
+
+v1 questions (resolve before adding more harnesses):
+5. **Bind-mount conflicts?** Multiple harnesses (OpenCode, Claude Code, Aider) all want `~/Documents/code` rw. Do they interfere, or can they coexist with the same mount?
+6. **CloudCLI integration with Cove's auth/nginx?** Does CloudCLI work behind Cove's nginx setup, or does it need its own routing?
 
 v2 questions (defer):
-5. **Tier-2 session replication?** OpenCode sessions are SQLite. How do you sync them between tier 1 and tier 2? Export/import? CRDT? Just accept that you can only have one active session per machine?
-6. **Claude Code Remote Control on tier 1?** Does the operator want a local `claude` container running with `--remote-control`, or do they use the native install?
-7. **OpenClaw integration?** Different product, different problem space. Not v1 or v2 unless the operator asks.
+7. **Tier-2 session replication?** OpenCode sessions are SQLite. How do you sync them between tier 1 and tier 2? Export/import? CRDT? Just accept that you can only have one active session per machine?
+8. **OpenClaw integration?** Different product, different problem space. Not MVP, v1, or v2 unless the operator asks.
 
 ## Next Steps
 
-v1 (MVP):
+MVP:
 - Verify the OpenCode data path inside the container (`/home/opencode/.local/share/opencode`)
 - Decide on auth model: Tailscale-only, or Tailscale + nginx basic auth
 - Write the `cove up` integration — add the opencode service to Cove's compose stack
 - Test: create a session, restart the container, verify session persists
 - Test: access from phone via Tailscale, verify web UI works
-- Document the v1 deployment in the Cove install docs
+- Document the MVP deployment in the Cove install docs
 
-v2 (future):
+v1:
+- Add Claude Code (Remote Control) — same bind-mount contract, different web surface
+- Add parameterized compose template for CLI harness pattern (Aider/Codex/Gemini with ttyd)
+- Evaluate CloudCLI as a multi-harness dashboard
+- Test multi-harness coexistence on the same laptop
+
+v2:
 - Tier-2 OpenCode deployment (git-sync, session replication)
-- Claude Code (Remote Control)
-- Parameterized compose template for CLI harness pattern (Aider/Codex/Gemini)
-- CloudCLI as multi-harness dashboard
 - swain-box Lima VM as a reference for operators who want kernel isolation
 
 ## Sources
