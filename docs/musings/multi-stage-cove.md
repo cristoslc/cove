@@ -832,6 +832,246 @@ Branching comment threads are an edge case, not an architecture driver. A sync a
 
 **Recommendation:** Evaluate git-bug. Install it, test the offline workflow, test the web UI on a phone. If the UX is acceptable, this is the architecture. If the split UX is too confusing, the event-log approach is the fallback — but it should be designed as a distributed database, not a git-based event system.
 
+## Happy Path Journeys (D3)
+
+The following journeys exercise every permutation of the key variables: laptop online/offline, user home/away, access device (laptop/phone), and action type. All assume git-bug for issues and Forgejo for PRs.
+
+### J1: Laptop Online, At Home — Normal Workflow
+
+The operator is at their desk. Laptop is online. Tier-2 is on the local network.
+
+```
+Operator creates issue:  git bug bug new -t "Slow startup" -m "Takes 30s on cold boot"
+Operator pushes:          git push cove main && git bug push
+Tier-2 updates:           Forgejo post-receive hook → git pull && git bug pull
+Phone sees it:            https://bugs.project.cove/ → issue "Slow startup" appears
+Operator creates PR:      fj pr create "Fix slow startup"
+Action fires:             bug-sync creates git-bug issue with pr label, forgejo-pr-url metadata
+Operator views PR:        https://git.cove/owner/project/pulls/42
+```
+
+Everything syncs immediately. The operator uses git-bug CLI for issues, Forgejo for PRs. Both are visible on the phone.
+
+### J2: Laptop Offline, At Home — Airplane/Cabin Mode
+
+The operator is working without internet. Laptop is offline. All changes are local.
+
+```
+Operator creates issue:  git bug bug new -t "Slow startup" -m "Takes 30s on cold boot"
+Operator adds comment:   git bug bug comment new <id> -m "Profiled: vault init is the bottleneck"
+Operator labels it:      git bug bug label new <id> performance
+Operator closes it:      git bug bug status close <id>
+
+  (all stored locally in refs/bugs/, no network needed)
+
+Operator goes back online:
+Operator pushes:          git push cove main && git bug push
+Tier-2 updates:           hook → git pull && git bug pull
+Phone sees it:            all changes appear at once
+```
+
+No network needed for any issue operation. git-bug stores everything locally. Sync is just `git push`.
+
+### J3: Laptop Offline, Phone Only — Away From Desk
+
+The operator is away. Laptop is in a bag, asleep. Phone has internet access.
+
+```
+Phone opens:              https://bugs.project.cove/
+Phone creates issue:      "Slow startup" via git-bug web UI on tier-2
+Phone comments:           "Profiled: vault init is the bottleneck" via web UI
+Phone checks PRs:         https://git.cove/owner/project/pulls (Forgejo web UI)
+Phone reviews PR:         Leaves a comment on PR #42 via Forgejo
+
+  (phone can't push code or create branches — read+comment only)
+
+Operator returns to laptop, goes online:
+Operator pulls:           git pull cove main && git bug pull
+Laptop sees phone's issue: git bug bug show <id> — includes phone's comments
+Laptop sees phone's PR review: fj pr view 42 — includes phone's comment
+```
+
+Phone uses tier-2's web UIs (git-bug for issues, Forgejo for PRs). The laptop pulls changes when it reconnects.
+
+### J4: Phone Creates Issue, Laptop Pulls Later
+
+Phone creates an issue while the laptop is offline. Laptop syncs when back online.
+
+```
+Phone creates:            "Slow startup" on bugs.project.cove
+  → written to tier-2's non-bare clone
+  → stored in refs/bugs/ on tier-2
+
+Laptop comes online:
+Laptop pulls:             git bug pull
+Laptop sees issue:        git bug bug show <id> — "Slow startup", with phone's comment
+Laptop responds:          git bug bug comment new <id> -m "Fixed in commit abc123"
+Laptop pushes:            git bug push
+Phone sees response:      refresh bugs.project.cove — comment appears
+```
+
+git-bug's Lamport clocks ensure the phone's comment and the laptop's comment merge deterministically. No conflict.
+
+### J5: Sashay Workflow — Bug → PR Automatically
+
+The operator starts a sashay (branch + worktree + draft PR) from a git-bug issue.
+
+```
+Operator creates bug:     git bug bug new -t "Sashay: refactor vault" -m "PR for vault refactor"
+  → adds forgejo-branch: refactor-vault metadata
+
+Operator creates branch:  git checkout -b refactor-vault
+Operator writes plan:     docs/plans/vault-refactor.md
+Operator commits:          git commit -m "plan: vault refactor"
+Operator pushes:           git push cove refactor-vault && git bug push
+
+Forgejo Action fires:
+  1. Detects new bug with "Sashay:" prefix
+  2. Reads forgejo-branch: refactor-vault metadata
+  3. Branch already exists (just pushed) → no need to create
+  4. Creates WIP PR via Forgejo API: "WIP: refactor vault"
+  5. Links bug to PR via forgejo-pr-url metadata
+
+Operator has PR number immediately — no manual `fj pr create` step.
+```
+
+### J6: PR Created Manually, Bug Created Automatically
+
+The operator creates a PR the normal way (not from a bug). The Action creates a corresponding bug.
+
+```
+Operator pushes branch:   git push cove feature-x
+Operator creates PR:      fj pr create "Fix memory leak"
+
+Forgejo Action fires (pull_request: opened):
+  1. Detects new PR #43 "Fix memory leak"
+  2. Runs: git bug bug new -t "PR: Fix memory leak" -m "Discussion for PR #43" -l pr
+  3. Adds forgejo-pr-url metadata pointing to PR #43
+  4. Pushes bug refs: git bug push
+
+Post-receive hook fires:
+  5. Tier-2's non-bare clone pulls the new bug
+
+Phone sees:               New issue "PR: Fix memory leak" with pr label on bugs.project.cove
+Operator discusses:       Comments on the bug via CLI or web UI — not on Forgejo's PR
+```
+
+PR discussion (inline code review) stays in Forgejo. General discussion lives in the git-bug issue.
+
+### J7: Two Laptops, Both Offline, Then Both Sync
+
+MacBook and Linux both work offline. They create issues independently. Both sync to tier-2.
+
+```
+MacBook (offline):        git bug bug new -t "Slow startup"
+MacBook (offline):        git bug bug comment new <id-mac> -m "Reproduced on macOS"
+
+Linux (offline):           git bug bug new -t "CI flaky"
+Linux (offline):           git bug bug comment new <id-linux> -m "Fails on Ubuntu 24.04"
+
+MacBook goes online:       git bug push → pushes to tier-2
+Linux goes online:         git bug pull → gets MacBook's issue
+                           git bug push → pushes its issue
+                           (or vice versa — order doesn't matter)
+
+Tier-2:                    Both issues appear, both comments present.
+                          Lamport clocks ensure deterministic merge order.
+                          No conflicts — each issue is a separate entity.
+```
+
+Even if both machines comment on the same issue while offline, git-bug's DAG-based merge resolves the comments deterministically via Lamport clocks.
+
+### J8: Phone Comments on PR, Laptop Reviews Later
+
+Phone is for reading and commenting on PRs via Forgejo's web UI. PR comments live in Forgejo, not git-bug.
+
+```
+Phone opens PR #42:       https://git.cove/owner/project/pulls/42
+Phone reviews code:        Leaves inline comment on line 47 of vault.go
+Phone approves:            "LGTM, just fix the typo"
+
+Laptop goes online:
+Laptop reviews PR:          fj pr view 42 — sees phone's comment
+Laptop merges PR:           fj pr merge 42
+Action fires (pull_request: closed):
+  → git bug bug status close <id> — closes the linked bug
+  → git bug bug label new <id> merged
+```
+
+PR inline comments live in Forgejo. They don't sync to git-bug. The bug issue is for general discussion; the PR is for code review.
+
+### J9: CI Updates Bug
+
+A Forgejo Action runs CI and updates the associated git-bug issue with status.
+
+```
+Operator pushes code:      git push cove feature-x
+CI Action runs:            Forgejo Actions pipeline starts
+CI fails:                   Tests fail on line 47
+
+CI update Action fires:
+  1. Finds git-bug issue with forgejo-pr-url matching PR #43
+  2. Runs: git bug bug label new <id> ci-failing
+  3. Runs: git bug bug comment new <id> -m "CI failed: test_vault_init on line 47"
+  4. Pushes: git bug push
+
+Operator sees:             git bug bug show <id> — label ci-failing, comment from CI
+```
+
+This is a future enhancement (not v1), but demonstrates how Actions can bridge CI state into git-bug.
+
+### J10: Offline Issue Creation, Online PR Creation, Manual Linking
+
+The operator creates an issue offline, then creates a PR for it online. Two separate bugs exist — the original and the PR-linked one. The operator links them.
+
+```
+MacBook (offline):         git bug bug new -t "Fix memory leak" → bug #a1b2
+MacBook (offline):         git bug bug comment new a1b2 -m "Happens under load"
+
+MacBook goes online:        git push cove fix-memory-leak && git bug push
+MacBook creates PR:        fj pr create "Fix memory leak"
+Action fires:              Creates bug "PR: Fix memory leak" → bug #c3d4 with pr label
+
+Operator links them:        git bug bug label new a1b2 tracked-by-pr
+                           git bug bug comment new a1b4 -m "Related: bug #a1b2"
+
+  (or the operator could have created the bug with a PR: prefix from the start,
+   and the Action would have created the branch + PR automatically — see J5)
+```
+
+### J11: Phone-Only, Reading Issues and PRs
+
+The operator is at a café. Laptop is at home, asleep. Phone is the only device.
+
+```
+Phone opens:               https://bugs.project.cove/
+Phone reads issues:        Browses open issues, reads comments
+Phone reads PRs:           https://git.cove/owner/project/pulls
+Phone comments on issue:   Adds comment to bug "Slow startup" via git-bug web UI
+
+  (phone can't push code, create branches, or merge PRs — read+comment only)
+
+At home later:
+Laptop wakes, goes online:  git pull cove main && git bug pull
+Laptop sees phone's comment: git bug bug show <id> — includes café comment
+```
+
+### Summary of What Works Where
+
+| Action | Laptop Online | Laptop Offline | Phone (always online) |
+|--------|:---:|:---:|:---:|
+| Create issue (git-bug) | ✅ | ✅ | ✅ (web UI) |
+| Comment on issue (git-bug) | ✅ | ✅ | ✅ (web UI) |
+| Close/label issue (git-bug) | ✅ | ✅ | ✅ (web UI) |
+| View PRs (Forgejo) | ✅ | ❌ | ✅ (web UI) |
+| Comment on PR (Forgejo) | ✅ | ❌ | ✅ (web UI) |
+| Create PR (Forgejo) | ✅ | ❌ | ❌ |
+| Create PR (sashay) | ✅ auto via Action | ✅ bug created offline | ❌ |
+| Push code | ✅ | ✅ (queued) | ❌ |
+| Review code (inline) | ✅ | ❌ | ✅ (web UI) |
+| Merge PR (Forgejo) | ✅ | ❌ | ✅ (web UI) |
+| CI status on bug | ✅ via Action | — | ✅ (web UI) |
+
 ## Implementation Path (D3)
 
 1. **Evaluate git-bug** — install on MacBook, test CLI (`git bug bug new`, `git bug bug comment new`), test TUI (`git bug termui`), test web UI (`git bug webui`). Verify offline workflow: create issues on the plane, push when online.
