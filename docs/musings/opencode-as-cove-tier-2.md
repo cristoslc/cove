@@ -1,0 +1,5 @@
+# Opencode Server as cove service
+
+Right now, I'm using open code on my laptop with the server running on the laptop itself. this allows me to access it from my phone, but a subject to the same tier one/tier two access issues as cove itself. The two main reasons that I use open code server are for session continuity and remote access. I need the agent to extend this musing with research, new swain search troves, and appropriate exploration around whether there's a way to have open code or similar central harness as a service within cove. ideally, it would have the same two-tier system as the pull request musing.
+
+it requires more research to validate, but it's probably a no-brainer to have open code server as a tier one cove service on my local machine. The unanswered question is really about whether it is possible or wise to create a two-tier open code service within coves to tier model. Note that I'm not necessarily tied to open code alone, another harness could be acceptable. A particular challenge with the tier two server, for example, might be the ability to access paths on the user's local system.
