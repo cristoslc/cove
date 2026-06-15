@@ -1072,22 +1072,123 @@ Laptop sees phone's comment: git bug bug show <id> — includes café comment
 | Merge PR (Forgejo) | ✅ | ❌ | ✅ (web UI) |
 | CI status on bug | ✅ via Action | — | ✅ (web UI) |
 
+### Gap Analysis: Journeys vs Architecture
+
+Tracing each journey against the current architecture reveals four gaps.
+
+#### G1: Forgejo Actions Can't Trigger on `refs/bugs/` Pushes
+
+J5 (sashay: bug → PR) assumes a Forgejo Action fires when `refs/bugs/` are pushed. **This doesn't work.** Forgejo Actions trigger on `push` (branches/tags only), `pull_request`, `issues`, `schedule`, and `workflow_dispatch`. Pushing `refs/bugs/` to Forgejo does NOT trigger any Action.
+
+The bug→PR direction needs a different trigger mechanism. Options:
+
+- **A: Webhook to a small HTTP listener.** Forgejo fires a webhook on any push (including refs/bugs/). A lightweight listener on tier-2 receives the webhook, inspects the payload, and runs `git bug` commands. This is essentially the `cove-bridge` daemon the musing originally proposed — but simpler, since it only handles bug→PR, not all sync.
+- **B: Polling.** A cron job on tier-2 runs `git bug pull` periodically, scans for new bugs with `PR:` or `Sashay:` prefixes, and creates branches/PRs. Simple but has latency.
+- **C: Local hook.** The operator's local git post-push hook runs `git bug push && curl ...` to notify tier-2. The operator is already online when pushing. This makes the bug→PR direction a client-side responsibility — the push to Forgejo triggers a side-channel notification.
+
+**Recommendation:** Option C for v1. The operator pushes bugs, then an HTTP call to tier-2 triggers the branch/PR creation. No Forgejo Action needed for this direction. The Forgejo Action still handles the PR→bug direction (triggered by `pull_request` events, which Actions DO support).
+
+#### G2: Bidirectional Sync Between Bare Repo and Non-Bare Clone
+
+The current design has one-way sync: Forgejo's bare repo → non-bare clone (via post-receive hook). But the web UI writes to the non-bare clone (J3, J4 — phone creates/comments on issues). Those writes stay in the clone and never reach Forgejo's bare repo.
+
+**Without this, phone-created issues are invisible to laptops.** The laptop pulls from Forgejo (`git bug pull` pulls from the Forgejo remote), not from the non-bare clone. If the phone's comment only exists in the clone, the laptop never sees it.
+
+**Fix: a bidirectional sync hook.** After the web UI writes to the clone, a post-write hook pushes the changes back to Forgejo:
+
+```
+Non-bare clone (/opt/cove/project/)
+    │
+    │  git bug webui writes (phone creates issue)
+    │  → post-write hook (or inotify watcher on refs/bugs/)
+    │  → git push origin refs/bugs/* refs/identities/*
+    ▼
+Forgejo bare repo
+    │
+    │  post-receive hook
+    │  → cd /opt/cove/project && git pull && git bug pull
+    ▼
+Non-bare clone (updated)
+```
+
+The web UI's writes push back to Forgejo. Then the post-receive hook (which fires on the push from the clone) pulls the changes back into the clone. This creates a loop, but it's idempotent — the second pull is a no-op since the clone already has the data.
+
+**Implementation:** git-bug's web UI doesn't have a post-write hook. Options:
+- Wrap `git bug webui` in a script that watches `refs/bugs/` changes (inotify/FSEvents)
+- Add a periodic `git push origin refs/bugs/* refs/identities/*` cron on the clone
+- Patch git-bug to call a webhook after mutations (upstream contribution)
+
+**For v1:** a cron job running every 30 seconds that pushes bug refs from the clone to Forgejo is sufficient. The latency is acceptable for phone use. The post-receive hook on Forgejo handles the reverse direction (bare → clone) immediately.
+
+#### G3: Actions Checkout Doesn't Include `refs/bugs/`
+
+J6 (PR → bug) assumes the Action can run `git bug bug new` in the checkout. But `actions/checkout@v4` only fetches the branch being tested. `refs/bugs/` won't be in the checkout. `git bug bug new` would create a bug in a checkout with no existing bugs, and `git bug push` would try to push bug refs that may conflict.
+
+**Fix: fetch bug refs explicitly in the Action.**
+
+```yaml
+- uses: actions/checkout@v4
+- name: Fetch bug refs
+  run: |
+    git config remote.origin.fetch '+refs/bugs/*:refs/remotes/origin/bugs/*'
+    git config remote.origin.fetch '+refs/identities/*:refs/remotes/origin/identities/*'
+    git fetch origin
+- name: Install git-bug
+  run: |
+    curl -sL https://github.com/git-bug/git-bug/releases/latest/download/git-bug_linux_amd64.tar.gz | tar xz
+    sudo mv git-bug /usr/local/bin/
+- name: Create bug for new PR
+  run: |
+    git bug bug new -t "PR: ${{ github.event.pull_request.title }}" ...
+    git bug push
+```
+
+This ensures the Action has the full bug state before creating new bugs.
+
+#### G4: Post-Receive Hook Doesn't Pull Bug Refs
+
+The post-receive hook runs `git pull && git bug pull` in the non-bare clone. But `git pull` only pulls the currently tracked branch. It doesn't pull `refs/bugs/` or `refs/identities/`. And `git bug pull` pulls bug refs from a remote — but which remote? The non-bare clone's remote is Forgejo's bare repo.
+
+**Fix: the post-receive hook must fetch bug refs explicitly.**
+
+```bash
+#!/bin/bash
+cd /opt/cove/project
+git pull
+git fetch origin '+refs/bugs/*:refs/bugs/*' '+refs/identities/*:refs/identities/*'
+```
+
+`git bug pull` would also work here (it fetches bug refs from the configured remote), but `git fetch` is more explicit and doesn't require git-bug to be installed on the tier-2 server running the hook. Since the web UI process already has git-bug, `git bug pull` is fine too.
+
+### Summary of Fixes
+
+| Gap | Journey Broken | Fix |
+|-----|----------------|-----|
+| G1: Actions can't trigger on refs/bugs/ | J5 (bug→PR) | Client-side notification after push (curl to tier-2) |
+| G2: One-way sync (bare→clone only) | J3, J4 (phone writes) | Cron pushes clone→Forgejo every 30s + post-receive pulls back |
+| G3: Actions missing bug refs | J6 (PR→bug) | Fetch refs/bugs/* and refs/identities/* in Action before git bug commands |
+| G4: Post-receive hook doesn't pull bugs | All journeys | Hook must fetch refs/bugs/* and refs/identities/*, not just git pull |
+
 ## Implementation Path (D3)
 
 1. **Evaluate git-bug** — install on MacBook, test CLI (`git bug bug new`, `git bug bug comment new`), test TUI (`git bug termui`), test web UI (`git bug webui`). Verify offline workflow: create issues on the plane, push when online.
-2. **Set up git-bug on tier-2** — create a non-bare mirror clone of each project, set up a Forgejo post-receive hook to `git pull && git bug pull` into the clone, run `git bug webui --host 0.0.0.0 --port 41935` as a system service behind Cove's nginx (e.g., `bugs.project.cove`). This is the phone-accessible issue tracker.
-3. **Set up git-bug on each local machine** — `git bug` CLI. Issues are stored in the code repo's `refs/bugs/` namespace (same repo, not a separate repo — issues travel with code).
-4. **Configure sync** — `git bug push` / `git bug pull` on the bug refs. git-bug stores issues in `refs/bugs/` and identities in `refs/identities/`. These are pushed/pulled alongside code refs.
-5. **Write Forgejo Action** — `.forgejo/workflows/bug-sync.yaml` that triggers on `pull_request` events and runs `git bug` commands to create/close/link git-bug issues. No separate daemon needed.
-6. **Test offline convergence** — create issues on MacBook, push to tier-2, view on phone. Verify both sides converge.
-7. **Test hub-and-spoke** — MacBook and Linux both sync to tier-2. Verify issues from both machines appear on tier-2 and on each other's next pull.
-8. **Test PR → bug linking** — create a PR in Forgejo, verify the Action creates a corresponding git-bug issue with `pr` label and metadata.
+2. **Set up git-bug on tier-2** — create a non-bare mirror clone of each project, set up a Forgejo post-receive hook to `git pull && git fetch origin '+refs/bugs/*:refs/bugs/*' '+refs/identities/*:refs/identities/*'` (G4), run `git bug webui --host 0.0.0.0 --port 41935` as a system service behind Cove's nginx (e.g., `bugs.project.cove`).
+3. **Set up bidirectional sync** — add a cron job on tier-2 that runs every 30 seconds: `cd /opt/cove/project && git push origin refs/bugs/* refs/identities/*` (G2). This pushes phone-created issues back to Forgejo. The post-receive hook then pulls them back (idempotent loop).
+4. **Set up git-bug on each local machine** — `git bug` CLI. Issues are stored in the code repo's `refs/bugs/` namespace (same repo, not a separate repo — issues travel with code).
+5. **Configure sync** — `git bug push` / `git bug pull` on the bug refs. git-bug stores issues in `refs/bugs/` and identities in `refs/identities/`. These are pushed/pulled alongside code refs.
+6. **Write Forgejo Action for PR→bug** — `.forgejo/workflows/bug-sync.yaml` that triggers on `pull_request` events, fetches bug refs explicitly (G3), installs git-bug, and runs `git bug` commands to create/close/link git-bug issues.
+7. **Write client-side notification for bug→PR** — a local git hook (or `cove` CLI command) that, after `git bug push`, notifies tier-2 to check for bugs with `PR:` or `Sashay:` prefixes and create branches/PRs. This avoids the limitation of Actions not triggering on `refs/bugs/` pushes (G1).
+8. **Test offline convergence** — create issues on MacBook, push to tier-2, view on phone. Verify both sides converge.
+9. **Test bidirectional sync** — create an issue on the phone (web UI), verify it appears in Forgejo's bare repo (via cron push), verify it appears on laptop (via `git bug pull`).
+10. **Test hub-and-spoke** — MacBook and Linux both sync to tier-2. Verify issues from both machines appear on tier-2 and on each other's next pull.
+11. **Test PR → bug linking** — create a PR in Forgejo, verify the Action creates a corresponding git-bug issue with `pr` label and metadata.
+12. **Test bug → PR linking** — create a bug with `Sashay:` prefix, push, notify tier-2, verify branch and WIP PR are created.
 
 ## Open Questions (D3)
 
 1. **Same repo or separate repo?** — git-bug stores issues in `refs/bugs/` within the code repo. Same repo means issues travel with code and are visible when you clone the project. Evaluate whether this is the right UX or whether a separate bug repo is better.
-2. **PR ↔ issue linking** — Forgejo Action (PR opened → git-bug issue created with `pr` label and `forgejo-pr-url` metadata) for v1. Inverse direction: bug with `PR:` or `Sashay:` prefix → Action creates branch + PR (`WIP:` for sashays). Inline code review stays in Forgejo. General PR discussion lives in the git-bug issue.
-3. **Inverse linking (bug → PR)** — if the branch doesn't exist yet, the Action creates it from the default branch via `POST /repos/{owner}/{repo}/git/refs`. The operator gets a PR number immediately. Sashay integration: `Sashay:` prefix creates a WIP PR automatically.
+2. **PR ↔ issue linking** — Forgejo Action handles PR→bug (triggered by `pull_request` events). Bug→PR needs a client-side notification since Actions can't trigger on `refs/bugs/` pushes (G1). For v1: the operator runs `git bug push && curl https://git.cove/api/bug-sync` after pushing, or a post-push hook does it automatically.
+3. **Inverse linking (bug → PR)** — Action can't trigger on refs/bugs/ pushes. Client-side notification (curl after push) or a lightweight HTTP listener on tier-2. Branch creation via Forgejo API (`POST /repos/{owner}/{repo}/git/refs`) if branch doesn't exist. Sashay integration: `Sashay:` prefix creates a WIP PR automatically.
 4. **Phone workflow** — git-bug's web UI on tier-2 supports full CRUD (create, comment, label, close). The phone can create issues and comment. The web UI needs write access to the non-bare clone on tier-2.
 5. **Bare repo constraint** — git-bug doesn't work with bare repos (Issue #178). Forgejo stores repos as bare. Solution: non-bare mirror clone kept in sync via post-receive hook. Each project needs its own clone and web UI process. Scaling to multi-project Cove means multiple processes or a reverse proxy that routes by project.
 6. **Migration path** — existing Cove users have issues in Forgejo's SQLite. git-bug has a Forgejo/Gitea bridge in progress (PR #1565, import-only). A one-time migration script would read Forgejo's API and create issues in git-bug.
