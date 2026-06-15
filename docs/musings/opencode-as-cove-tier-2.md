@@ -29,16 +29,138 @@ OpenCode is a TypeScript/Bun monorepo with a **local HTTP server architecture** 
 | git-bug web UI | ❌ | ✅ |
 | Phone access | ❌ | ✅ (HTTPS) |
 
-### Alternative Harnesses
+## Harness Catalog
 
-| Harness | Server Mode | Web UI | Docker | Notes |
-|---------|:---:|:---:|:---:|-------|
-| **OpenCode** | ✅ Native | ✅ | ✅ Official | Only one with server-first architecture |
-| Aider | ❌ CLI only | ❌ | ❌ Community | Python, 46K stars |
-| Continue | ❌ IDE ext | ❌ | ❌ | Read-only, no longer maintained |
-| Claude Code | ❌ CLI only | ❌ | ❌ | Proprietary |
+This section evaluates AI coding harnesses as Cove drop-ins. The key question for each is: **can it run on Tier 1 and/or Tier 2, and is the split-tier architecture viable?**
 
-OpenCode is the **only** AI coding harness with a native server mode, web UI, and official Docker image. This makes it the clear choice for Cove integration.
+### Evaluation Criteria
+
+A harness's tier-placement viability depends on three things:
+
+1. **Filesystem access model** — does it need direct host access, or can it operate on a bind-mounted directory?
+2. **Server architecture** — does it have a native server mode (HTTP), or is it CLI-only with sessions stored locally?
+3. **Web UI** — is there a browser-based interface, or must the operator use a terminal client?
+
+These three determine whether a harness can:
+- Run in a container with a bind mount (most can)
+- Be accessed from a phone over HTTPS (needs server + web UI)
+- Survive being split across Tier 1 and Tier 2 (the hard one)
+
+### Harness Matrix
+
+| Harness | Server Mode | Web UI | Official Docker | MCP | Notes |
+|---------|:---:|:---:|:---:|:---:|-------|
+| **OpenCode** | ✅ Native (Hono+Effect) | ✅ SolidJS | ✅ | ✅ | Server-first architecture. Best tier-placement candidate. |
+| **Claude Code** | ❌ CLI only | ❌ | ❌ | ✅ | Anthropic's official. Works directly on filesystem. No server, no web UI. |
+| **Aider** | ❌ CLI only | ❌ | ❌ Community | ❌ | 46K stars, Apache 2.0. Operates on filesystem. Auto-commits to git. |
+| **Cline / Roo Code** | ❌ VS Code ext | ❌ | ❌ | ✅ | IDE extension. Bound to VS Code runtime. |
+| **Continue** | ❌ VS Code/JetBrains ext | ❌ | ❌ | ✅ | IDE extension. Read-only, mostly. |
+| **Cursor** | ❌ IDE | ❌ | ❌ | ❌ | Full IDE. No way to extract it. |
+| **OpenHands** | ✅ (Docker-isolated) | ✅ | ✅ | ✅ | Sandboxed agents. Heavy infrastructure. |
+| **Codex CLI** | ❌ CLI only | ❌ | ❌ | ❌ | OpenAI's. Container-mode available. |
+| **Gemini CLI** | ❌ CLI only | ❌ | ❌ | ✅ | Google's. |
+| **Cody (Sourcegraph)** | ❌ IDE ext | ❌ | ❌ | ❌ | |
+| **openclaw** | ❓ (need to research) | ❓ | ❓ | ❓ | Mentioned by user; unknown architecture. |
+
+### Tier-Placement Patterns
+
+Three distinct patterns emerge from the matrix:
+
+#### Pattern 1: Server-First (OpenCode)
+
+OpenCode is the only harness with a native server mode, web UI, and official Docker image. Its architecture is designed for network access: the server runs on a host, multiple clients (TUI, web, SDK) connect over HTTP. This maps directly onto Cove's two-tier model:
+
+- **Tier 1 (laptop):** `opencode serve` in a container with bind-mounted code directory. Phone accesses via Tailscale.
+- **Tier 2 (always-on):** Same container setup on the always-on box. Phone accesses via HTTPS at `opencode.cove`.
+
+**The split-tier problem is unsolved** — sessions are local SQLite, files are on the host. But OpenCode is the *least bad* candidate for split-tier because its server-first design means a containerized instance on either tier behaves the same way. The operator connects to whichever is online.
+
+#### Pattern 2: CLI with Filesystem Dependency (Claude Code, Aider, Codex CLI, Gemini CLI)
+
+These harnesses are CLI-only, operate directly on the host filesystem, and have no server. They're excellent coding tools but architecturally hostile to remote access.
+
+**Containerized deployment is straightforward** — bind-mount the project directory and the harness works inside the container just as it would on the host. But the CLI is still local; the operator must `docker exec` into the container to use it.
+
+**Two ways to get a phone-accessible experience:**
+
+1. **Web terminal in a container.** Run ttyd, Wetty, or similar in the same container as the harness. The harness stays CLI-only, but the operator gets a browser-based terminal at `claude.cove` that proxies into the container. This works for any CLI harness with zero changes to the harness itself. The cost: it's a terminal, not a polished web UI. The benefit: it works for everything.
+
+2. **The harness gets a server (upstream or fork).** Claude Code may eventually ship a server mode; today it doesn't. Until then, Pattern 2 harnesses are tier-1-only via web terminal, or tier-2 with a phone-friendly terminal proxy.
+
+**Split-tier viability:** Low. The harness's whole model is "I run here, on the host, with the files." A Tier-2 instance has no access to the Tier-1 filesystem unless the directory is shared (NFS, syncthing, git) — which defeats the point of having a local copy.
+
+#### Pattern 3: IDE-Extension (Cline, Continue, Cody, Cursor)
+
+These run inside VS Code, JetBrains, or a full IDE. They can't be extracted from the IDE runtime.
+
+**Containerized deployment is impossible** without also containerizing the IDE (which defeats the purpose — the operator wants their own IDE, not a remote one).
+
+**Tier placement:** Tier 1 only, on the operator's actual development machine. The phone-accessible experience comes from pairing the IDE with a remote-development extension (VS Code Remote, JetBrains Gateway) that proxies the IDE to a phone browser — but the latency is brutal and the UX is poor.
+
+**Split-tier viability:** None. These are not Cove drop-ins; they're IDE drop-ins.
+
+### Per-Harness Notes
+
+#### OpenCode
+
+- Tier 1: containerized, bind-mount code, expose 4096 via nginx + Tailscale.
+- Tier 2: same container, different host. Phone reaches whichever is online.
+- **Recommended.** Best fit for the two-tier model.
+
+#### Claude Code
+
+- CLI-only, no server. Operates on the host filesystem with full tool access.
+- **Tier 1:** install directly on the laptop. Phone access via web terminal proxy (ttyd/wetty) in a container.
+- **Tier 2:** viable as a containerized CLI, but the container must have the project files. Use git clones for offline, bind-mount for online. The operator runs `claude` inside the container.
+- **Not split-tier.** Each instance is independent. No session sharing without a custom layer.
+
+#### Aider
+
+- Same shape as Claude Code. CLI-only, filesystem-direct, auto-commits to git.
+- 46K stars, Apache 2.0, very stable.
+- **Tier 1:** install on laptop, or run in a container with bind-mount.
+- **Tier 2:** same — container with git clone of the project. Useful for unattended work (overnight builds, refactors on a Pi).
+- **Not split-tier.** Sessions are per-process. No sync layer.
+
+#### Cline / Roo Code
+
+- VS Code extension. The harness *is* the IDE integration.
+- **Tier 1 only.** No path to containerization that doesn't also containerize VS Code.
+- **Not a Cove drop-in.** It's a VS Code drop-in.
+
+#### OpenHands
+
+- Sandboxed agent platform. Each agent runs in its own Docker container.
+- Server mode + web UI. Heavy infrastructure (Postgres, Docker-in-Docker, separate backend/frontend).
+- **Tier 2 candidate.** Designed for unattended agentic work. Operator submits a task, walks away, returns to a result.
+- **Not tier 1.** The whole point is unattended operation; running it on a laptop is overhead without the benefit.
+- **Not split-tier.** It's a tier-2-only service.
+
+#### openclaw
+
+- Mentioned by the operator. Not researched in depth. Treat as a Pattern 2 candidate (CLI with filesystem dependency) until proven otherwise.
+
+### What "Connect To Directly" Means
+
+The user's framing is right: **most harnesses can have containerized instances on Tier 1 and/or Tier 2 that you connect to directly.** The connection mode varies:
+
+- **OpenCode:** HTTP, the server speaks the OpenCode API. Browser UI, SDK, or TUI client.
+- **Claude Code / Aider / Codex / Gemini:** terminal (ttyd, wetty, gotty) over HTTPS. Or `docker exec` from a phone SSH client (Termux, Blink).
+- **Cline / Continue / Cursor:** VS Code Remote / JetBrains Gateway. Slow, not recommended.
+- **OpenHands:** HTTP, the OpenHands web UI. Submit tasks, review results.
+
+The containerized instance is the same regardless of tier — the difference is which host runs the container and which files are bind-mounted.
+
+### Why Not Force a Single Harness
+
+Cove shouldn't pick one harness and force the operator to use it. Different tasks want different tools:
+
+- **Quick edit, in-repo, while at the laptop:** Claude Code or Aider, direct on the host. No container overhead.
+- **Unattended refactor on the always-on box:** OpenHands or a containerized Aider. Let it run overnight.
+- **Phone-driven exploration:** OpenCode (web UI) or a web-terminal proxy into any CLI harness.
+- **Heavy multi-file agentic work:** OpenCode (Tier 2) or OpenHands (Tier 2).
+
+A Cove harness setup should support *all* of these without the operator having to think about it. That's the harbor principle: one command, the right tool is available.
 
 ## Tier-1: OpenCode Server on Local Machine (No-Brainer)
 
@@ -161,6 +283,28 @@ services:
 
 Behind nginx at `opencode.cove` with HTTPS, accessible from phone via Tailscale.
 
+### Multi-Harness Cove Service Pattern
+
+For the broader harness catalog, a generalized compose template:
+
+```yaml
+# compose/harness/compose.yaml — parameterized for any harness
+services:
+  harness:
+    image: ${HARNESS_IMAGE}  # e.g., ghcr.io/anomalyco/opencode, anthropic/claude-code, aider-ai/aider
+    container_name: cove-${HARNESS_NAME}
+    ports:
+      - "127.0.0.1:${HARNESS_PORT}:${HARNESS_PORT}"
+    volumes:
+      - ${HARNESS_CODE_DIR}:/home/code:ro  # or :rw depending on harness
+      - ~/Documents/cove/${HARNESS_NAME}:/home/${HARNESS_NAME}  # state persistence
+    environment:
+      - ${HARNESS_API_KEY}=${${HARNESS_API_KEY}}
+    restart: unless-stopped
+```
+
+One compose file per harness, parameterized by `HARNESS_*` env vars. The operator runs `cove harness add claude` and gets a containerized Claude Code at `claude.cove`. Same for `aider`, `opencode`, etc.
+
 ### Open Questions
 
 1. **Read-only vs read-write filesystem?** Read-only is safer but limits the agent. Read-write means the agent can modify files on the host.
@@ -168,177 +312,6 @@ Behind nginx at `opencode.cove` with HTTPS, accessible from phone via Tailscale.
 3. **LLM API keys?** Stored in Vault, injected as env vars. The agent needs access to Anthropic/OpenAI APIs.
 4. **Resource limits?** LLM calls are expensive. Need to prevent runaway token usage.
 5. **Multiple projects?** OpenCode works on one project at a time. The web UI lets you switch, but sessions are per-project.
-
-## Harness Evaluation: Cove Drop-In Candidates
-
-Not all AI coding harnesses can serve as Cove services. A harness needs either a server/gateway architecture (for web UI access and API endpoints) or a containerizable CLI (for headless task execution). Here's a wider evaluation of candidates.
-
-### Harness Architecture Categories
-
-| Category | Server Component | Web UI | Containerizable | Cove Fit |
-|----------|:---:|:---:|:---:|:---:|
-| **Server-first** (HTTP API + web UI) | Native | Native | Official image | Tier-1 and Tier-2 |
-| **Gateway-first** (agent runtime) | Gateway daemon | Built-in | Official image | Tier-2 compute |
-| **CLI-only** (terminal tool) | None | None | Community images | Tier-1 only (via opencode) |
-
-### OpenClaw
-
-**Architecture:** Gateway-first. OpenClaw runs as a long-lived Node.js daemon (the "gateway") that routes messages from channels (Telegram, Slack, Discord, WhatsApp, web chat) to AI coding agents. It has a web UI, Docker support, and a plugin system (skills, harnesses). The Codex harness integrates OpenAI's Codex CLI for coding tasks.
-
-**Cove potential:**
-
-```
-┌─ Tier 2 ───────────────────────────────┐
-│  OpenClaw gateway (Node.js daemon)      │
-│  Port 18789 (WebSocket)                │
-│  Port 8443 (web UI)                     │
-│  Codex harness for coding tasks         │
-│  Docker sandbox for agent execution     │
-│  Telegram/Slack/Discord channels        │
-│  LLM API keys from Vault               │
-└─────────────────────────────────────────┘
-```
-
-**What OpenClaw could do on Tier-2:**
-- Be the always-on agent that the phone talks to via Telegram/WhatsApp
-- Execute coding tasks on git clones on Tier-2 (Option A from the filesystem problem)
-- Act as an intermediary: phone sends a message → OpenClaw gateway → Codex harness → edits files on Tier-2 git clone → commits → pushes → laptop pulls when online
-- Provide web chat access at `agent.cove`
-
-**What it can't do on Tier-2:**
-- Access the laptop's filesystem (same filesystem problem as OpenCode)
-- Run project-specific local commands (tests that need local env, Docker, etc.)
-- Continue a laptop session (different gateway, different state)
-
-**Split-tier potential:**
-
-OpenClaw's architecture is more amenable to split-tier than OpenCode because the gateway is designed as a routing layer. The gateway could run on Tier-2 (always reachable) while delegating file operations to Tier-1 via Tailscale:
-
-```
-┌─ Tier 2 ──────────────────────┐     ┌─ Tier 1 ───────────────────┐
-│  OpenClaw gateway              │────▶│  Laptop filesystem          │
-│  (routing, LLM calls, web UI) │     │  (file I/O via Tailscale)   │
-│  Docker sandbox                │     │  Shell execution            │
-└────────────────────────────────┘     └────────────────────────────┘
-```
-
-This is Option D from the filesystem problem, but OpenClaw's plugin system makes it more feasible than with OpenCode — a custom skill could proxy file operations to Tier-1. However, this still requires the laptop to be online for file operations, which defeats Tier-2's purpose.
-
-**Realistic Cove integration:**
-
-- **Tier-1:** OpenClaw on the laptop as a Cove service, alongside OpenCode. OpenClaw handles messaging channels (Telegram, WhatsApp), OpenCode handles coding sessions. The phone reaches OpenClaw via Tailscale when the laptop is online.
-- **Tier-2:** OpenClaw gateway on the always-on box. Limited to git-clone-based work (Option A). Useful for "start a task from your phone, review it on your laptop later" workflows. Not a replacement for Tier-1 OpenCode.
-
-**Verdict:** OpenClaw is complementary to OpenCode, not a replacement. It adds channel integration (Telegram, WhatsApp) that OpenCode doesn't have. But for coding tasks, OpenCode's server-first architecture with direct filesystem access is more practical. OpenClaw on Tier-2 could handle "read the logs" or "create a git-bug issue" tasks that don't need the laptop's filesystem.
-
-### Claude Code
-
-**Architecture:** CLI only. No server mode, no web UI, no API. Runs as a terminal command (`claude`). Proprietary (Anthropic). Multiple community Docker images exist for containerization, but they're all wrappers around the CLI.
-
-**Cove potential:**
-
-Claude Code can't serve as a Cove service directly — it has no server component. But it can be invoked from within other harnesses:
-
-- **From OpenCode:** OpenCode could invoke `claude` as a sub-agent for specific tasks (though OpenCode uses its own model routing)
-- **From OpenClaw:** OpenClaw's Codex harness already integrates OpenAI's Codex; a similar harness could integrate Claude Code
-- **From Cove CLI:** `cove code` could invoke `claude` as a backend, similar to how Aider can use different models
-
-**Containerized on Tier-2:**
-
-```yaml
-# Conceptual — Claude Code as a Tier-2 container
-services:
-  claude-code:
-    image: ghcr.io/Zeeno-atl/claude-code:latest
-    volumes:
-      - /opt/cove/project:/workspace
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-    # No server port — CLI only, invoked on demand
-```
-
-This is essentially Option A (git-clone-based work) with Claude Code instead of OpenCode. Same filesystem constraints apply — the agent can only work on files that exist in the container's mounted volumes.
-
-**Verdict:** Claude Code is a model backend, not a service architecture. It can run inside other harnesses or as a containerized CLI on Tier-2, but it doesn't add Cove service capabilities by itself.
-
-### Aider
-
-**Architecture:** CLI only. Terminal-based pair programmer. Has an experimental browser UI (`aider --browser`). Docker images exist (official: `paulgauthier/aider`, `paulgauthier/aider-full`). Python-based.
-
-**Cove potential:**
-
-Aider's browser mode (`--browser`) provides a minimal web UI, but it's not designed for multi-user or persistent server use. It starts a local HTTP server for the browser interface, but there's no authentication, no session management, and no API — it's just a thin wrapper around the CLI.
-
-AiderDesk (separate project) provides a richer GUI with project/task management, but it's a desktop app, not a server.
-
-**Containerized on Tier-2:**
-
-Same as Claude Code — Aider in a container with a mounted git clone, invoked on demand. No persistent server, no web UI suitable for phone access. Aider's strength is its git integration (auto-commits, repo map), which works well with Option A (git-clone-based work on Tier-2).
-
-**Verdict:** Aider is a CLI tool, not a Cove service. It could be invoked from OpenCode or OpenClaw as a sub-agent, or run containerized for on-demand coding tasks on Tier-2. Not a drop-in Cove service.
-
-### Continue
-
-**Architecture:** IDE extension (VS Code, JetBrains). No server mode, no standalone web UI. Read-only in the context of Cove services (it can't be a Cove service). The project is no longer actively maintained.
-
-**Verdict:** Not applicable. Continue is an IDE extension, not a service.
-
-### Comparison Matrix for Cove Integration
-
-| Harness | Tier-1 Service | Tier-2 Service | Phone Access | Split-Tier | Notes |
-|--------|:---:|:---:|:---:|:---:|-------|
-| **OpenCode** | ✅ Native | ⚠️ Limited | ✅ Web UI | ⚠️ Hard | Server-first, web UI, direct filesystem. Tier-2 limited by filesystem access. |
-| **OpenClaw** | ✅ Native | ✅ Native | ✅ Channels + Web | ⚠️ Possible | Gateway-first, channel integration, Docker sandbox. Can route file ops to Tier-1 via Tailscale. |
-| **Claude Code** | ❌ CLI only | ❌ CLI only | ❌ | ❌ | Proprietary CLI. Can be invoked from other harnesses. |
-| **Aider** | ❌ CLI only | ❌ CLI only | ⚠️ Browser mode | ❌ | Python CLI. Auto-commits are good for git-clone workflows. |
-| **Continue** | ❌ IDE only | ❌ | ❌ | ❌ | Unmaintained IDE extension. |
-
-### Realistic Multi-Harness Cove Setup
-
-Rather than picking one harness, Cove could offer multiple as compose services, each serving a different purpose:
-
-```yaml
-# compose/ai/compose.yaml — AI harnesses as Cove services
-services:
-  opencode:
-    # Primary coding agent — Tier-1 only
-    image: ghcr.io/anomalyco/opencode:latest
-    ports: ["127.0.0.1:4096:4096"]
-    volumes:
-      - ~/Documents/code:/home/code
-      - ~/Documents/cove/opencode:/home/opencode
-    environment:
-      - OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD}
-
-  openclaw:
-    # Channel agent — Tier-1 or Tier-2
-    image: openclaw/openclaw:latest
-    ports: ["127.0.0.1:18789:18789", "127.0.0.1:8443:8443"]
-    volumes:
-      - ./openclaw/config:/home/openclaw/.openclaw
-    environment:
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-```
-
-**On Tier-1 (laptop):**
-- OpenCode at `opencode.cove` — primary coding interface, full filesystem access
-- OpenClaw at `agent.cove` — messaging channels, always-on agent
-
-**On Tier-2 (always-on box):**
-- OpenClaw at `agent.cove` — messaging channels, git-clone-based coding tasks
-- OpenCode at `opencode.cove` — read-only access to git clones, limited utility
-- No Claude Code, Aider, or Continue — they need interactive terminals
-
-**On phone:**
-- `agent.cove` → OpenClaw web chat for quick questions and task dispatching
-- `opencode.cove` → OpenCode web UI for coding sessions (when laptop is online)
-- Both via Tailscale (Tier-1) or direct HTTPS (Tier-2)
-
-### Why OpenCode Remains the Primary Harness
-
-OpenCode's server-first architecture makes it the only harness that works as a Cove service for interactive coding. The other harnesses add capabilities (channels, sub-agents, model routing) but don't replace OpenCode's core value: a persistent, web-accessible coding session with direct filesystem access.
-
-OpenClaw adds channel integration (Telegram, WhatsApp, Discord) that OpenCode doesn't have. On Tier-2, OpenClaw can handle "quick tasks from the phone" — reading logs, checking git status, creating issues — without needing the laptop's filesystem. For actual coding work, the operator connects to OpenCode on Tier-1.
-
-The multi-harness approach gives Cove the best of both worlds: OpenCode for coding, OpenClaw for always-on channel-based interaction, and Claude Code/Aider as on-demand sub-agents invoked by either.
+6. **Web terminal for CLI harnesses?** ttyd vs wetty vs gotty — which is the best fit for a phone browser? ttyd is the most popular and supports authentication.
+7. **Split-tier for any harness?** OpenCode is the best candidate but unsolved. Should we wait for an upstream session-sync feature, or build it?
+8. **OpenHands tier-2 deployment?** Worth the infrastructure overhead for unattended agentic work?
