@@ -1,3 +1,14 @@
+map $http_user_agent $config_dns_type {
+    default                      "unknown";
+    "~*Macintosh"                "macos";
+    "~*Windows NT"               "windows";
+    "~*Android"                  "android";
+    "~*iPhone"                   "ios";
+    "~*iPad"                     "ios";
+    "~*iPod"                     "ios";
+    "~*Linux"                    "linux";
+}
+
 upstream forgejo_backend {
     server forgejo:3000;
 }
@@ -6,14 +17,56 @@ upstream vault_backend {
     server vault:8200;
 }
 
-# HTTP redirect
+include /etc/nginx/user.d/*.conf;
+
+# Default server — catches direct IP access (LAN, Tailscale)
 server {
+    listen 443 ssl default_server;
     listen 80 default_server;
     server_name _;
-    return 301 https://$host$request_uri;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    if ($scheme = http) {
+        return 301 https://$host$request_uri;
+    }
+
+    location = /config/ {
+        alias /etc/nginx/config.html;
+        add_header Content-Type text/html;
+    }
+
+    location = /config/ca {
+        alias /certs/rootCA.pem;
+        add_header Content-Type application/x-pem-file;
+        add_header Content-Disposition 'attachment; filename="cove-root-ca.pem"';
+    }
+
+    location = /config/dns {
+        alias /etc/nginx/config/dns/$config_dns_type;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
+    location ~ ^/config/dns/(macos|linux|windows|ios|android)$ {
+        alias /etc/nginx/config/dns/$1;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
+    location = /dns-query {
+        proxy_pass http://dnsmasq:8053;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location / {
+        return 444;
+    }
 }
 
-# hc.cove — health check endpoint (tests hosts resolution + nginx liveness)
+# hc.cove — health check endpoint
 server {
     listen 443 ssl;
     server_name hc.cove;
@@ -27,23 +80,6 @@ server {
     }
 }
 
-# Catch-all — unrecognized hostnames route to forgejo (tailscale magicdns, direct IP, etc.)
-server {
-    listen 443 ssl default_server;
-    server_name _;
-
-    ssl_certificate     /certs/cove.local.pem;
-    ssl_certificate_key /certs/cove.local-key.pem;
-
-    location / {
-        proxy_pass http://forgejo_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-}
-
 # git.cove — forgejo
 server {
     listen 443 ssl;
@@ -51,6 +87,35 @@ server {
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
+
+    location = /config/ {
+        alias /etc/nginx/config.html;
+        add_header Content-Type text/html;
+    }
+
+    location = /config/ca {
+        alias /certs/rootCA.pem;
+        add_header Content-Type application/x-pem-file;
+        add_header Content-Disposition 'attachment; filename="cove-root-ca.pem"';
+    }
+
+    location = /config/dns {
+        alias /etc/nginx/config/dns/$config_dns_type;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
+    location ~ ^/config/dns/(macos|linux|windows|ios|android)$ {
+        alias /etc/nginx/config/dns/$1;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
+    location = /dns-query {
+        proxy_pass http://dnsmasq:8053;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
 
     location / {
         proxy_pass http://forgejo_backend;
@@ -68,6 +133,98 @@ server {
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
+
+    location / {
+        proxy_pass http://vault_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+# Per-machine forge — git.cove.<slug> and cove.<slug>
+server {
+    listen 443 ssl;
+    server_name ~^git\.cove\.[a-zA-Z0-9-]+$ ~^cove\.[a-zA-Z0-9-]+$;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    location = /config/ {
+        alias /etc/nginx/config.html;
+        add_header Content-Type text/html;
+    }
+
+    location = /config/ca {
+        alias /certs/rootCA.pem;
+        add_header Content-Type application/x-pem-file;
+        add_header Content-Disposition 'attachment; filename="cove-root-ca.pem"';
+    }
+
+    location = /config/dns {
+        alias /etc/nginx/config/dns/$config_dns_type;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
+    location ~ ^/config/dns/(macos|linux|windows|ios|android)$ {
+        alias /etc/nginx/config/dns/$1;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
+    location = /dns-query {
+        proxy_pass http://dnsmasq:8053;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    location / {
+        proxy_pass http://forgejo_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+# Per-machine vault — vault.cove.<slug>
+server {
+    listen 443 ssl;
+    server_name ~^vault\.cove\.[a-zA-Z0-9-]+$;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    location = /config/ {
+        alias /etc/nginx/config.html;
+        add_header Content-Type text/html;
+    }
+
+    location = /config/ca {
+        alias /certs/rootCA.pem;
+        add_header Content-Type application/x-pem-file;
+        add_header Content-Disposition 'attachment; filename="cove-root-ca.pem"';
+    }
+
+    location = /config/dns {
+        alias /etc/nginx/config/dns/$config_dns_type;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
+    location ~ ^/config/dns/(macos|linux|windows|ios|android)$ {
+        alias /etc/nginx/config/dns/$1;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
+    location = /dns-query {
+        proxy_pass http://dnsmasq:8053;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
 
     location / {
         proxy_pass http://vault_backend;
