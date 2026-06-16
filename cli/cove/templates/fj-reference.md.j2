@@ -5,17 +5,14 @@ Forgejo's CLI (`fj`) is installed via Homebrew as a standalone binary. It auto-d
 ## Basic usage
 
 ```bash
-# Clone a repo
-fj clone cristos/repo
-
-# List issues
-fj issue list
+# Search issues
+fj issue search [query]
 
 # Create a PR
-fj pr create --title "..." --branch feature/...
+fj pr create "WIP: title" [--body "..."] [--base main]
 
 # Check CI status
-fj actions list
+fj actions tasks
 ```
 
 ## Remote detection
@@ -25,6 +22,16 @@ fj actions list
 ## HTTPS auth
 
 `cove up` caches a persistent API token (`cove-push`) in git's credential helper so `fj` can push over HTTPS without prompting.
+
+## PR comments
+
+```bash
+# View all comments on a PR
+fj pr view <PR#> comments
+
+# View a specific comment by index (0-indexed)
+fj pr view <PR#> comment <IDX>
+```
 
 ## Reference
 
