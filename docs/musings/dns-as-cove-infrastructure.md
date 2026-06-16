@@ -141,6 +141,17 @@ This is the right line:
 
 Cove provides the first two layers universally — any `*.cove` name gets DNS + TLS for free. The user provides the last two — what the name routes to and what's running there. The `user.d` directory is the handoff point.
 
+### TLS Is Free
+
+The mkcert cert covers `*.cove` (wildcard SAN). Every `user.d` server block references the same cert files:
+
+```nginx
+ssl_certificate     /certs/cove.local.pem;
+ssl_certificate_key /certs/cove.local-key.pem;
+```
+
+No per-project certs. No per-project CA chains. No cert generation. The user's `myapp.site.cove` gets valid HTTPS with zero TLS configuration — the wildcard cert already covers it, and nginx already terminates it. The user only writes the routing rule.
+
 ## What This Is Not
 
 - **Not a service mesh.** Cove doesn't manage the services behind the hostnames.
