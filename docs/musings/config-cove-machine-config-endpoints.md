@@ -8,14 +8,76 @@ When you add a second device to your Cove setup — another laptop, a phone, a V
 
 ### `/config/` — Human-Readable Info Page
 
-An HTML page showing the machine's identity, CA cert download link, install instructions per platform, and the DNS resolver configuration.
+An HTML page showing the machine's identity, all available endpoints with direct URLs, and platform-specific instructions.
 
 ```
 GET http://<lan-ip>:8080/config/
 GET https://<ts-ip>:8443/config/
 ```
 
-Rendered from a Jinja2 template at provision time. Shows `{{ ansible_hostname }}` and `{{ ts_ip }}` (or LAN IP if Tailscale is down).
+```html
+<!DOCTYPE html>
+<html>
+<head><title>Cove — {{ ansible_hostname }}</title></head>
+<body>
+  <h1>Cove on {{ ansible_hostname }}</h1>
+
+  <h2>Endpoints</h2>
+  <ul>
+    <li><a href="/config/ca">/config/ca</a> — root CA certificate (PEM download)</li>
+    <li><a href="/config/dns">/config/dns</a> — DNS setup (auto-detects your OS)</li>
+    <li><a href="/config/dns/macos">/config/dns/macos</a> — macOS DNS script</li>
+    <li><a href="/config/dns/linux">/config/dns/linux</a> — Linux DNS script</li>
+    <li><a href="/config/dns/windows">/config/dns/windows</a> — Windows DNS script</li>
+    <li><a href="/config/dns/ios">/config/dns/ios</a> — iOS CA profile</li>
+    <li><a href="/config/dns/android">/config/dns/android</a> — Android instructions</li>
+  </ul>
+
+  <h2>Trust this machine</h2>
+  <p>Download <a href="/config/ca">/config/ca</a> and install the root CA certificate.</p>
+  <p>macOS: double-click → Keychain → mark as trusted.<br>
+     Linux: <code>sudo trust anchor cove-root-ca.pem</code><br>
+     Windows: <code>certutil -addstore Root cove-root-ca.pem</code><br>
+     iOS: use <a href="/config/dns/ios">/config/dns/ios</a> for one-tap profile install.</p>
+
+  <h2>Reach this machine</h2>
+  <p>Once DNS is configured, these names resolve to this machine:</p>
+  <ul>
+    <li><code>git.cove.{{ ansible_hostname }}</code> — forge</li>
+    <li><code>vault.cove.{{ ansible_hostname }}</code> — vault</li>
+  </ul>
+
+  <h2>Configure DNS</h2>
+  <p>Use <a href="/config/dns">/config/dns</a> (auto-detect) or pick your platform:</p>
+
+  <h3>macOS</h3>
+  <p><code>curl /config/dns/macos | sudo bash</code></p>
+  <pre># Creates /etc/resolver/cove.{{ ansible_hostname }}:
+nameserver {{ ts_ip }}
+port 5353</pre>
+
+  <h3>Linux</h3>
+  <p><code>curl /config/dns/linux | sudo bash</code></p>
+  <pre># Creates /etc/dnsmasq.d/cove-{{ ansible_hostname }}.conf:
+server=/cove.{{ ansible_hostname }}/{{ ts_ip }}#5353</pre>
+
+  <h3>Windows</h3>
+  <p><code>irm /config/dns/windows | iex</code> (admin PowerShell)</p>
+  <pre># Adds to hosts file:
+{{ ts_ip }} git.cove.{{ ansible_hostname }} vault.cove.{{ ansible_hostname }}</pre>
+
+  <h3>iOS</h3>
+  <p>Open <a href="/config/dns/ios">/config/dns/ios</a> in Safari → Install Profile.</p>
+
+  <h3>Android</h3>
+  <p><a href="/config/dns/android">/config/dns/android</a> — manual instructions.</p>
+
+  <p>DNS IP: <code>{{ ts_ip }}</code> (Tailscale)</p>
+</body>
+</html>
+```
+
+Rendered from a Jinja2 template at provision time with `{{ ansible_hostname }}` and `{{ ts_ip }}`.
 
 ### `/config/ca` — Root CA Certificate Download
 
@@ -27,9 +89,9 @@ GET https://<ip>/config/ca
 → Content-Disposition: attachment; filename="cove-root-ca.pem"
 ```
 
-### `/config/dns` — Platform-Specific DNS Setup
+### `/config/dns` — Auto-Detect DNS Setup
 
-Auto-detects the requesting device from User-Agent and serves the right thing for that platform. No JSON, no manual copy-paste. Each platform gets what it can actually use.
+Auto-detects the requesting device from User-Agent and serves the right artifact for that platform. No JSON, no manual copy-paste.
 
 | Platform | Served | What the user does |
 |----------|--------|-------------------|
@@ -39,6 +101,20 @@ Auto-detects the requesting device from User-Agent and serves the right thing fo
 | iOS | `.mobileconfig` profile | Safari downloads → Settings → Profile → Install |
 | Android | Plain text instructions | Nothing auto-applicable; shows manual steps |
 | Unknown | Plain text instructions | Shows all platform options |
+
+### `/config/dns/{target}` — Explicit Platform DNS Setup
+
+Bypass auto-detection. Request the DNS config for a specific platform directly:
+
+| Path | Platform |
+|------|----------|
+| `/config/dns/macos` | macOS shell script |
+| `/config/dns/linux` | Linux shell script |
+| `/config/dns/windows` | Windows PowerShell script |
+| `/config/dns/ios` | iOS `.mobileconfig` profile |
+| `/config/dns/android` | Android plain text instructions |
+
+Useful when downloading from a different device than the target (e.g., on a MacBook, fetching the Linux script to scp to a server), or when User-Agent detection gets it wrong.
 
 **macOS script:**
 ```bash
@@ -379,6 +455,12 @@ server {
         alias /etc/nginx/config/dns/$config_dns_type;
     }
 
+    location ~ ^/config/dns/(macos|linux|windows|ios|android)$ {
+        alias /etc/nginx/config/dns/$1;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
     # Everything else: close the connection (no Forgejo proxy)
     location / {
         return 444;
@@ -417,6 +499,12 @@ server {
         alias /etc/nginx/config/dns/$config_dns_type;
     }
 
+    location ~ ^/config/dns/(macos|linux|windows|ios|android)$ {
+        alias /etc/nginx/config/dns/$1;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+    }
+
     location / {
         proxy_pass http://forgejo_backend;
         proxy_set_header Host $host;
@@ -452,6 +540,12 @@ server {
         add_header Content-Type text/x-shellscript;
         add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
         alias /etc/nginx/config/dns/$config_dns_type;
+    }
+
+    location ~ ^/config/dns/(macos|linux|windows|ios|android)$ {
+        alias /etc/nginx/config/dns/$1;
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
     }
 
     location / {
