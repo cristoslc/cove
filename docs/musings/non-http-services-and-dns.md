@@ -56,9 +56,8 @@ The `user.d` nginx include directory is for HTTP routing. Non-HTTP services don'
 | Layer | Owner | Mechanism |
 |-------|-------|-----------|
 | DNS resolution (`*.cove` → IP) | Cove | dnsmasq wildcard + resolver files |
-| TLS termination (HTTPS) | Cove | nginx + mkcert |
-| HTTP routing (hostname → backend) | User (or Cove for its own services) | nginx server blocks |
-| Non-HTTP port | User | Known by the client |
-| The actual service | User | Their own process/container |
+| HTTP routing (hostname → backend) | Cove (own services) or User | nginx server blocks |
+| HTTP TLS termination | Cove | nginx + mkcert |
+| Non-HTTP connection | User | Direct — client connects to resolved IP on known port |
 
-Cove provides the first two layers universally. HTTP gets a third layer (routing). Non-HTTP stops at layer one — and that's enough.
+nginx is the ingress for HTTP. Non-HTTP services bypass nginx entirely. DNS resolves `db.myapp.cove` to `127.0.0.1`, the Postgres client connects to `127.0.0.1:5432` directly. nginx never sees the connection. Same for Redis, SSH, or any TCP/UDP service — DNS provides the name, the client provides the port, the connection is direct.
