@@ -97,6 +97,7 @@ services:
 - No Claude Code, Aider, Codex CLI, Gemini CLI, or OpenClaw. Other harnesses are v1+.
 - No kernel isolation (Lima VM). Container isolation via Colima is sufficient for MVP.
 - No MCP server allowlist mechanism beyond what OpenCode provides natively.
+- **Not a full development environment.** The container is a phone-access surface. It serves the web UI and can make LLM calls via Ollama Cloud, but it cannot run MCP servers, execute `uv`/`python`/`node`, or do the heavy development work the operator expects. That stays on the host. See [Gap 9](#gap-9-the-container-is-not-a-development-environment).
 
 **Why OpenCode only for MVP:**
 - It's the only harness with a native server mode
@@ -156,11 +157,33 @@ Colima uses virtiofs for file sharing between host and VM. Single-file bind-moun
 
 These environment variables have no effect on the OpenCode image. The server always listens on `127.0.0.1:4096` unless overridden via CLI flags. **Fix:** use `command: ["serve", "--port", "4095", "--hostname", "0.0.0.0"]`. `OPENCODE_SERVER_USERNAME` and `OPENCODE_SERVER_PASSWORD` env vars work correctly.
 
-### What this means for v1
+### Gap 9: The container is not a development environment
 
-Every harness added in v1 will hit some subset of these gaps. The pattern is: **containerizing a local-first tool requires discovering what the tool assumes about its environment and bridging those assumptions.** A parameterized compose template isn't enough — each harness needs a setup playbook or at minimum a documented list of environment variables, volume mounts, and image customizations.
+This is the fundamental gap. OpenCode is not just a server — it's a development tool. When it runs a session, it executes `git`, `npx`, `uv`, `python`, `node`, and whatever else the operator's workflow requires. The official image is a bare Alpine server runtime. It has `git` and `bash`, but no `node`, `uv`, `python`, `npx`, `npm`, or any of the operator's toolchain.
 
-The swain-box Lima VM pattern sidesteps several of these (no virtiofs, full Linux userspace with node/npm/op CLI, path mapping via symlinks inside the VM) at the cost of heavier resource usage and more complex orchestration. For v1, the tradeoff is: fix each gap per harness in Docker, or adopt the Lima VM pattern and fix them once.
+The identity mounts solve the path problem (files are at the same absolute paths inside and out), but the toolchain problem is deeper: **the container needs to feel like the operator's machine.** Every binary the operator uses in a session must be present.
+
+**Options:**
+
+1. **Custom Docker image** — add `nodejs`, `npm`, `python3`, `uv`, and whatever else the operator needs to the image. Maintenance burden: every new tool requires an image rebuild. macOS-specific binaries (Homebrew-installed tools, `op` CLI) can't run on Alpine. The image becomes a second system to maintain.
+
+2. **Bind-mount host binaries** — mount `/usr/local/bin/`, `/opt/homebrew/bin/`, etc. into the container. Doesn't work: macOS Mach-O binaries can't execute on Linux. The container is Alpine, the host is macOS. Different ABIs.
+
+3. **Accept the limitation** — the container is a phone-access surface only. It serves the web UI, it can start sessions, it can use Ollama Cloud for LLM calls. But real development work (running tests, installing dependencies, executing MCP servers) happens on the host. Two surfaces, one session store (shared via identity mount), but the container can't do everything the host can.
+
+4. **swain-box Lima VM** — a full Ubuntu VM with the operator's toolchain installed. No virtiofs issues, no missing binaries, no path mapping, kernel isolation as bonus. Costs 4GB RAM, VM startup time, and heavier orchestration. Cove chose Docker/Colima as its runtime; adding Lima VM orchestration to `cove up` is a significant scope increase.
+
+### Honest assessment: is the juice worth the squeeze?
+
+The container works. It's running right now. `https://opencode.cove/` serves the OpenCode web UI through nginx → Caddy → opencode. The phone can reach it. Sessions persist across restarts. The auth-bypass trick works around the web UI auth bug.
+
+But the container is a **phone-access surface**, not a full development environment. It can't run MCP servers, can't execute `uv` or `python`, can't do the work the operator expects OpenCode to do. The identity mounts mean sessions are portable, but the toolchain gap means the container can't actually *use* those sessions for anything beyond LLM chat.
+
+**For MVP, this is acceptable.** The original goal was "phone access to OpenCode." That works. The container serves the web UI, the operator can check session status, review output, and send prompts from their phone. Heavy development work stays on the host.
+
+**For v1, the swain-box Lima VM pattern is the right answer.** It solves the toolchain gap, the virtiofs gap, the symlink gap, and the path-mapping gap all at once. It's heavier (4GB RAM, VM startup) but it's a single solution instead of N per-harness fixes. The question is whether Cove should adopt Lima VM orchestration or keep swain-box as a reference pattern the operator sets up manually.
+
+**The musing's original claim — "fits Cove's compose model without modification" — was wrong.** OpenCode fits Cove's compose model, but it doesn't fit a bare Alpine container. The gap between "server runtime" and "development environment" is real and fundamental. The musing now documents this honestly.
 
 ## Catalog of Harnesses
 
