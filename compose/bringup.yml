@@ -143,7 +143,6 @@
         - "{{ cove_data_root }}/pages/sites"
         - "{{ cove_data_root }}/nginx"
         - "{{ cove_data_root }}/dnsmasq"
-        - "{{ cove_data_root }}/caddy"
 
     # TEMPLATES ----------------------------------------------------------------
     - name: Render nginx config from template
@@ -213,7 +212,7 @@
     - name: Render Caddy config from template
       ansible.builtin.template:
         src: "{{ caddy_conf_dir }}/Caddyfile.j2"
-        dest: "{{ cove_data_root }}/caddy/Caddyfile"
+        dest: "{{ caddy_conf_dir }}/Caddyfile"
         mode: "0644"
       vars:
         opencode_caddy_user: "{{ oc_username_raw.stdout }}"
