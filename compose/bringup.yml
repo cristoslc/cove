@@ -42,6 +42,16 @@
       ansible.builtin.set_fact:
         ts_dns_name: "{{ (ts_status.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
 
+    - name: Get tailscale IP
+      when: ts_status.rc == 0
+      ansible.builtin.set_fact:
+        ts_ip: "{{ (ts_status.stdout | from_json).Self.TailscaleIPs[0] }}"
+
+    - name: Fallback to LAN IP when tailscale is down
+      when: ts_status.rc != 0
+      ansible.builtin.set_fact:
+        ts_ip: "{{ ansible_default_ipv4.address }}"
+
     - name: Configure tailscale serve for HTTPS on port 443
       when: ts_status.rc == 0
       ansible.builtin.shell: |
@@ -67,7 +77,46 @@
       when: mkcert_check.rc == 0
       changed_when: false
 
-    - name: Generate mkcert cert for *.cove
+    - name: Detect mkcert CAROOT path
+      ansible.builtin.command: mkcert -CAROOT
+      register: mkcert_caroot
+      changed_when: false
+
+    - name: Set MKCERT_CAROOT fact
+      ansible.builtin.set_fact:
+        mkcert_caroot_path: "{{ mkcert_caroot.stdout }}"
+
+    - name: Read root CA certificate
+      ansible.builtin.slurp:
+        src: "{{ mkcert_caroot_path }}/rootCA.pem"
+      register: root_ca_slurp
+
+    - name: Base64-encode root CA (strip PEM headers for .mobileconfig)
+      ansible.builtin.set_fact:
+        root_ca_b64: "{{ (root_ca_slurp.content | b64decode | regex_replace('-----BEGIN CERTIFICATE-----\\n?', '') | regex_replace('-----END CERTIFICATE-----\\n?', '') | regex_replace('\\n', '') | trim) }}"
+
+    - name: Generate UUIDs for iOS profile
+      ansible.builtin.shell: python3 -c "import uuid; print(uuid.uuid4())"
+      register: uuid1
+      changed_when: false
+
+    - name: Generate second UUID
+      ansible.builtin.shell: python3 -c "import uuid; print(uuid.uuid4())"
+      register: uuid2
+      changed_when: false
+
+    - name: Generate third UUID
+      ansible.builtin.shell: python3 -c "import uuid; print(uuid.uuid4())"
+      register: uuid3
+      changed_when: false
+
+    - name: Set UUID facts
+      ansible.builtin.set_fact:
+        ca_uuid: "{{ uuid1.stdout }}"
+        dns_uuid: "{{ uuid2.stdout }}"
+        profile_uuid: "{{ uuid3.stdout }}"
+
+    - name: Generate mkcert cert for *.cove + per-machine wildcard
       ansible.builtin.command:
         argv:
           - mkcert
@@ -75,11 +124,14 @@
           - "{{ cove_data_root }}/certs/cove.local-key.pem"
           - -cert-file
           - "{{ cove_data_root }}/certs/cove.local.pem"
+          - "*.cove"
+          - "*.cove.{{ ansible_hostname }}"
           - cove
           - git.cove
           - vault.cove
-           - hc.cove
-           - "*.pages.cove"
+          - hc.cove
+          - ca.cove
+          - "*.pages.cove"
           - localhost
           - 127.0.0.1
           - "::1"
@@ -91,7 +143,7 @@
       ansible.builtin.shell: |
         set -eo pipefail
         CERT="{{ cove_data_root }}/certs/cove.local.pem"
-        for host in "git.cove" "vault.cove" "hc.cove"; do
+        for host in "git.cove" "vault.cove" "hc.cove" "ca.cove" "*.cove" "*.cove.{{ ansible_hostname }}"; do
           if ! openssl x509 -in "$CERT" -text -noout | grep -q "DNS:$host"; then
             echo "MISSING: $host"
             exit 1
@@ -106,7 +158,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove git.cove vault.cove hc.cove"
+        line: "127.0.0.1 cove git.cove vault.cove hc.cove ca.cove"
         state: present
       failed_when: false
 
@@ -141,6 +193,8 @@
         - "{{ cove_data_root }}/vault/logs"
         - "{{ cove_data_root }}/pages/sites"
         - "{{ cove_data_root }}/nginx"
+        - "{{ cove_data_root }}/nginx/user.d"
+        - "{{ cove_data_root }}/nginx/config/dns"
         - "{{ cove_data_root }}/dnsmasq"
 
     # TEMPLATES ----------------------------------------------------------------
@@ -155,6 +209,25 @@
         src: "{{ dnsmasq_conf_dir }}/cove.conf.j2"
         dest: "{{ cove_data_root }}/dnsmasq/cove.conf"
         mode: "0644"
+
+    - name: Render nginx config info page
+      ansible.builtin.template:
+        src: "{{ nginx_conf_dir }}/config.html.j2"
+        dest: "{{ cove_data_root }}/nginx/config.html"
+        mode: "0644"
+
+    - name: Render DNS config scripts
+      ansible.builtin.template:
+        src: "{{ nginx_conf_dir }}/config/dns/{{ item }}.j2"
+        dest: "{{ cove_data_root }}/nginx/config/dns/{{ item }}"
+        mode: "0644"
+      loop:
+        - macos
+        - linux
+        - windows
+        - ios
+        - android
+        - unknown
 
     # COMPOSE .env -----------------------------------------------------------
     - name: Render compose .env
@@ -180,6 +253,7 @@
           DNSMASQ_CONF_DIR={{ dnsmasq_conf_dir }}
           DNSMASQ_CONTAINER_NAME={{ dnsmasq_container_name }}
           DNSMASQ_PORT={{ dnsmasq_port }}
+          MKCERT_CAROOT={{ mkcert_caroot_path }}
 
     # CONTAINERS -------------------------------------------------------------
     - name: Detect active docker context endpoint
@@ -239,6 +313,9 @@
             Forgejo: https://git.cove/ (TLS via nginx+mkcert)
             Vault  : https://vault.cove/ (TLS via nginx+mkcert)
             SSH    : 0.0.0.0:{{ forgejo_ssh_port }}
+
+          Bootstrap new devices: http://{{ ansible_default_ipv4.address }}:8080/config/
+          {% if ts_status.rc == 0 %}or https://{{ ts_ip }}:8443/config/{% endif %}
 
           Next steps:
             1. ansible-playbook -i inventory.yml bootstrap_vault.yml
