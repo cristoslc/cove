@@ -39,3 +39,8 @@ cli/build/
 
 .agents/cove/
 compose/nginx/default.conf
+
+# Dispatch artifacts (opencode subagent dispatch)
+.subagents/
+prompts/
+plan.yaml
