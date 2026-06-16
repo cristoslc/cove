@@ -127,16 +127,15 @@ RFC 2818: `*.cove.mbpbk` is valid — the wildcard is the leftmost label, matchi
 
 ## nginx
 
-Regex server blocks route per-machine names to the right backend. One regex block per service covers all machines:
+Service-specific regex server blocks route per-machine names to the right backend. One block per service covers all machines:
 
 ```nginx
-# Per-machine git.cove — matches git.cove.mbpbk, git.cove.framework, etc.
+# Per-machine forge — git.cove.<slug> and cove.<slug>
 server {
     listen 443 ssl;
-    server_name ~^(?<service>[a-zA-Z0-9-]+)\.cove\.(?<machine>[a-zA-Z0-9-]+)$;
+    server_name ~^git\.cove\.[a-zA-Z0-9-]+$ ~^cove\.[a-zA-Z0-9-]+$;
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
-
     location / {
         proxy_pass http://forgejo_backend;
         proxy_set_header Host $host;
@@ -145,32 +144,24 @@ server {
         proxy_set_header X-Forwarded-Proto https;
     }
 }
-```
 
-But wait — this regex matches *any* `{service}.cove.{machine}`, routing everything to Forgejo. That's wrong for `vault.cove.mbpbk`. We need service-specific regex blocks, or a single block that routes by captured service name.
-
-**Option A: Service-specific regex blocks**
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name ~^git\.cove\.[a-zA-Z0-9-]+$ ~^cove\.[a-zA-Z0-9-]+$;
-    # routes to forgejo
-}
+# Per-machine vault — vault.cove.<slug>
 server {
     listen 443 ssl;
     server_name ~^vault\.cove\.[a-zA-Z0-9-]+$;
-    # routes to vault
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+    location / {
+        proxy_pass http://vault_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
 }
 ```
 
-Simple, explicit, one block per service. The `git.cove.*` regex also catches bare `cove.<machine>` (which should also go to Forgejo).
-
-**Option B: Single regex block with named captures and conditional routing**
-
-nginx doesn't support conditional `proxy_pass` based on captured variables in a single `server` block. Not viable.
-
-**Recommendation: Option A.** Two new server blocks (one for git, one for vault), each with a regex covering all machines. The existing non-regex blocks (`git.cove`, `vault.cove`) stay as-is for the local names.
+The existing non-regex blocks (`git.cove`, `vault.cove`) stay as-is for the local names. The regex blocks catch all per-machine variants.
 
 ## What This Actually Buys
 
