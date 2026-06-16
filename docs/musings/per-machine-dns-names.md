@@ -119,37 +119,57 @@ If you want `https://mbpbk.git.cove/` to work (not just resolve), nginx needs a 
 
 This is manual and per-machine. Not something Cove automates (yet). But the pattern is documented.
 
-### TLS: Already covered
+### TLS: Add per-machine names as explicit SANs
 
-`*.cove` wildcard cert covers `mbpbk.git.cove` (single-level wildcard matches `mbpbk.git.cove` because the wildcard is at the leftmost label). No cert change needed.
+`*.cove` wildcard only matches one label (RFC 2818), so `mbpbk.git.cove` (two labels) isn't covered by the wildcard. But mkcert already takes explicit multi-label SANs — `git.cove`, `vault.cove`, `hc.cove` are all in the current cert. Adding `mbpbk.git.cove` and `mbpbk.vault.cove` is the same mechanism.
 
-Wait — actually, `*.cove` matches `git.cove` and `mbpbk.cove` but does NOT match `mbpbk.git.cove`. RFC 2818: `*.cove` matches exactly one label. `mbpbk.git.cove` has two labels before `.cove`. So `*.cove` does NOT cover `mbpbk.git.cove`.
+The cert only needs the **local** machine's per-machine names. A remote machine connecting to `framework.git.cove` should reach the Framework's nginx, which has `framework.git.cove` in its own cert. Each Cove's cert covers its own machine's names.
 
-This is a real constraint. Options:
-1. Use `*.*.cove` in the mkcert cert — but mkcert (and most TLS libraries) don't support multi-level wildcards.
-2. Use a flat naming convention: `mbpbk-git.cove` instead of `mbpbk.git.cove`. Single label, covered by `*.cove`.
-3. Add explicit SANs for known machine+service combinations: `mbpbk.git.cove`, `framework.git.cove`, etc. Requires regenerating the cert when machines change.
-4. Accept that per-machine names won't have valid TLS from remote devices, and use the Tailscale FQDN (which has its own valid cert) for remote access.
+In `bringup.yml`, the hostname is already available via `ansible_hostname` (gather_facts). Add it to the mkcert SAN list:
 
-**Option 2 (flat naming) is the pragmatic answer.** `mbpbk-git.cove` is a single label before `.cove`, covered by `*.cove`. It's less elegant than `mbpbk.git.cove` but works with the TLS constraint. The hyphen convention is clear: `{machine}-{service}.cove`.
+```yaml
+- name: Generate mkcert cert for *.cove
+  ansible.builtin.command:
+    argv:
+      - mkcert
+      - -key-file
+      - "{{ cove_data_root }}/certs/cove.local-key.pem"
+      - -cert-file
+      - "{{ cove_data_root }}/certs/cove.local.pem"
+      - cove
+      - git.cove
+      - vault.cove
+      - hc.cove
+      - ca.cove
+      - "{{ ansible_hostname }}.git.cove"       # ← per-machine
+      - "{{ ansible_hostname }}.vault.cove"     # ← per-machine
+      - "*.pages.cove"
+      - localhost
+      - 127.0.0.1
+      - "::1"
+```
+
+The cert is regenerated on `cove up` if missing (`creates:` guard). If the hostname changes (rare), delete the old cert and re-run `cove up`.
+
+This keeps the natural dotted convention:
 
 ```
-mbpbk-git.cove       → MacBook's forge
-mbpbk-vault.cove     → MacBook's vault
-framework-git.cove   → Framework's forge
-pi-git.cove          → Tier-2's forge
+mbpbk.git.cove       → MacBook's forge
+mbpbk.vault.cove     → MacBook's vault
+framework.git.cove   → Framework's forge (served by Framework's nginx, its own cert)
+pi.git.cove          → Tier-2's forge (served by Pi's nginx, its own cert)
 ```
 
 ## Recommendation
 
-1. **Adopt the flat naming convention:** `{machine}-{service}.cove`. Works with `*.cove` wildcard TLS. No cert changes needed.
+1. **Adopt the dotted naming convention:** `{machine}.{service}.cove`. Each Cove's mkcert cert includes its own machine's names as explicit SANs (`{{ ansible_hostname }}.git.cove`, `{{ ansible_hostname }}.vault.cove`). No wildcard gymnastics needed.
 
 2. **Add regex server blocks to nginx** for the major services:
    ```nginx
    # Per-machine git.cove
    server {
        listen 443 ssl;
-       server_name ~^(?<machine>[a-zA-Z0-9-]+)-git\.cove$;
+       server_name ~^(?<machine>[a-zA-Z0-9-]+)\.git\.cove$;
        ssl_certificate     /certs/cove.local.pem;
        ssl_certificate_key /certs/cove.local-key.pem;
        location / {
@@ -158,7 +178,7 @@ pi-git.cove          → Tier-2's forge
        }
    }
    ```
-   Same pattern for vault: `~^(?<machine>[a-zA-Z0-9-]+)-vault\.cove$`.
+   Same pattern for vault: `~^(?<machine>[a-zA-Z0-9-]+)\.vault\.cove$`.
 
 3. **Document the `/etc/hosts` pattern for remote machines.** On the Linux desktop, add the MacBook's Tailscale IP with per-machine names. This is the same pattern Cove uses for its own hostnames — consistent and understandable.
 
