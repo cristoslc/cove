@@ -6,6 +6,10 @@ upstream vault_backend {
     server vault:8200;
 }
 
+upstream opencode_backend {
+    server caddy:4097;
+}
+
 # HTTP redirect
 server {
     listen 80 default_server;
@@ -71,6 +75,23 @@ server {
 
     location / {
         proxy_pass http://vault_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+# opencode.cove — OpenCode AI coding harness (via Caddy auth-bypass)
+server {
+    listen 443 ssl;
+    server_name opencode.cove;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    location / {
+        proxy_pass http://opencode_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
