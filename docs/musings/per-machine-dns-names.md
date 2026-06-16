@@ -6,14 +6,23 @@ The idea: give each Cove instance a unique, machine-scoped hostname. `git.cove.m
 
 ## The Model
 
-Two DNS rules, layered by dnsmasq's most-specific-match semantics:
+Each tier-1 Cove machine publishes two DNS rules:
 
 ```
-*.cove              → 127.0.0.1          (local — every machine resolves its own Cove)
-*.cove.<machine>    → <machine-ip>       (remote — resolves to that specific machine)
+*.cove              → 127.0.0.1       (local — all services on this machine)
+*.cove.<its-slug>   → <its-network-ip> (identity — this machine, reachable from elsewhere)
 ```
 
-dnsmasq matches the most specific `--address` rule. `git.cove` matches `/cove/` → `127.0.0.1`. `git.cove.mbpbk` matches `/cove.mbpbk/` (more specific) → the MacBook's IP. No split-horizon, no source-based routing, no new infrastructure. Just two address rules with different specificity.
+The first rule handles local access. The second rule publishes the machine's identity at its network address — the Tailscale IP (or LAN IP, or Wireguard IP). This is the answer remote machines need.
+
+Remote machines don't maintain IP→slug mappings. They add the peer's dnsmasq as a DNS source for that peer's domain suffix. On macOS, a resolver file at `/etc/resolver/cove.<slug>`:
+
+```
+nameserver <peer-ip>
+port 5353
+```
+
+When the local machine queries `git.cove.mbpbk`, the OS resolver sees the `cove.mbpbk` domain suffix, forwards the query to the MacBook's dnsmasq at `100.64.0.5:5353`, and gets back `100.64.0.5` — the MacBook's own answer about itself. Each machine is the authority for its own identity. Remote machines just need to know where to ask.
 
 ## Naming Convention
 
@@ -33,65 +42,71 @@ From any machine:
 
 ## DNS Implementation
 
-### Local resolution (already works)
+### What each machine publishes (Cove-managed)
 
-dnsmasq's `address=/cove/127.0.0.1` covers all `*.cove` names, including `git.cove.mbpbk`. On the MacBook, `git.cove.mbpbk` resolves to `127.0.0.1` — which is correct, because the MacBook is mbpbk.
-
-### Remote resolution (the new part)
-
-Each machine needs dnsmasq entries for the *other* machines it knows about. On the MacBook:
+Every Cove instance renders two dnsmasq rules in `cove.conf`:
 
 ```
 address=/cove/127.0.0.1
-address=/cove.framework/100.64.0.6
-address=/cove.pi/100.64.0.7
+address=/cove.{{ ansible_hostname }}/{{ ts_ip }}
 ```
 
-On the Framework:
+On the MacBook (`ansible_hostname=mbpbk`, Tailscale IP `100.64.0.5`):
 
 ```
 address=/cove/127.0.0.1
 address=/cove.mbpbk/100.64.0.5
-address=/cove.pi/100.64.0.7
 ```
 
-Most-specific-match handles the rest. `git.cove` → `127.0.0.1` (matches `/cove/`). `git.cove.framework` → `100.64.0.6` (matches `/cove.framework/`, more specific).
-
-### Where do the remote entries live?
-
-Two options:
-
-**Option A: dnsmasq include directory (recommended)**
-
-Same pattern as the nginx `user.d` directory from the DNS infrastructure musing. dnsmasq reads `/etc/dnsmasq.d/*.conf`. Cove renders `cove.conf` (the local wildcard). The user drops a `remote.conf` with per-machine entries:
+On the Framework (`ansible_hostname=framework`, Tailscale IP `100.64.0.6`):
 
 ```
-# ~/Documents/cove-data/dnsmasq/remote.conf
+address=/cove/127.0.0.1
 address=/cove.framework/100.64.0.6
-address=/cove.pi/100.64.0.7
 ```
 
-dnsmasq picks it up automatically (it reads all `.conf` files in the directory). No template rendering, no Ansible variables, no `cove up` dependency. The user maintains it — same as `user.d` for nginx.
+The first rule handles all local access. The second rule publishes the machine's identity at its network address — `git.cove.mbpbk` resolves to `100.64.0.5` when queried against the MacBook's dnsmasq. Each machine is the authority for its own identity.
 
-**Option B: host_vars (Ansible-managed)**
+The Tailscale IP is available at provision time (`tailscale status --json` already runs in `bringup.yml`). If Tailscale isn't running, the second rule falls back to `127.0.0.1` (local-only mode).
 
-Each machine's `host_vars/<hostname>.yml` lists remote peers:
+### What remote machines add (user-managed)
 
-```yaml
-cove_peers:
-  - slug: framework
-    ip: 100.64.0.6
-  - slug: pi
-    ip: 100.64.0.7
+To reach another Cove instance, add a resolver file pointing at that machine's dnsmasq. On macOS, `/etc/resolver/cove.<slug>`:
+
+```
+# /etc/resolver/cove.mbpbk
+nameserver 100.64.0.5
+port 5353
 ```
 
-The dnsmasq template renders them. This is the "Cove way" — everything through Ansible. But it means updating host_vars and re-running `cove up` when IPs change. Overengineered for a list of 2-3 entries.
+```
+# /etc/resolver/cove.framework
+nameserver 100.64.0.6
+port 5353
+```
 
-**Recommendation: Option A.** The include-directory pattern is already established (nginx `user.d`). It's consistent, simple, and doesn't require `cove up` for IP changes.
+```
+# /etc/resolver/cove.pi
+nameserver 100.64.0.7
+port 5353
+```
 
-### dnsmasq config change
+macOS's resolver sends queries for `*.cove.mbpbk` to `100.64.0.5:5353` (the MacBook's dnsmasq), which answers with `100.64.0.5`. Queries for `*.cove.framework` go to `100.64.0.6:5353` (the Framework's dnsmasq), which answers with `100.64.0.6`. Queries for bare `*.cove` stay local (`/etc/resolver/cove` → `127.0.0.1:5353`).
 
-None needed for the mechanism — dnsmasq already reads all `.conf` files in `/etc/dnsmasq.d/`. The user just drops `remote.conf` in the data directory (which is already mounted). Cove could create an empty `remote.conf` as a placeholder during `cove up`, but that's polish.
+On Linux, the equivalent is `dnsmasq`'s `server=/cove.mbpbk/100.64.0.5#5353` directive (forward queries for that domain suffix to that server). Same pattern, different config syntax.
+
+The resolver files are user-maintained — same pattern as nginx `user.d`. Add a peer, add a resolver file. No IP→slug mappings to maintain. Each machine knows its own IP; remote machines just need to know where to ask.
+
+### Resolution flow
+
+| Query | Resolver used | Queries | Answer |
+|-------|--------------|---------|--------|
+| `git.cove` | `/etc/resolver/cove` → `127.0.0.1:5353` | local dnsmasq | `127.0.0.1` |
+| `git.cove.mbpbk` | `/etc/resolver/cove.mbpbk` → `100.64.0.5:5353` | MacBook's dnsmasq | `100.64.0.5` |
+| `git.cove.framework` | `/etc/resolver/cove.framework` → `100.64.0.6:5353` | Framework's dnsmasq | `100.64.0.6` |
+| `git.cove.pi` | `/etc/resolver/cove.pi` → `100.64.0.7:5353` | Pi's dnsmasq | `100.64.0.7` |
+
+Each machine is the authority for its own identity. No overrides, no IP→slug mappings, no split-horizon. Just "ask the machine that owns that name."
 
 ## TLS
 
@@ -163,17 +178,17 @@ server {
 
 The existing non-regex blocks (`git.cove`, `vault.cove`) stay as-is for the local names. The regex blocks catch all per-machine variants.
 
-## What This Actually Buys
+## What This Buys
 
-1. **Remote resolution is trivial.** Two dnsmasq rules. No split-horizon, no `/etc/hosts` on remote machines, no service discovery protocol.
+1. **Remote resolution is trivial.** One resolver file per peer. No IP→slug mappings, no overrides, no split-horizon. Each machine is the authority for its own identity.
 
 2. **Unambiguous references.** "The issue is on `git.cove.mbpbk`" means something specific. "The issue is on `git.cove`" is ambiguous across machines.
 
-3. **Reduces Tailscale reliance.** You still need Tailscale (or Wireguard) for the VPN layer — the IPs in dnsmasq are Tailscale IPs. But the *naming* layer is independent of Tailscale. No more `taila90e7.ts.net` in configs or URLs. If you switch from Tailscale to plain Wireguard, only the IPs in `remote.conf` change — the `.cove` names stay the same.
+3. **Reduces Tailscale reliance.** You still need Tailscale (or Wireguard) for the VPN layer — the resolver files point at Tailscale IPs. But the *naming* layer is independent of Tailscale. No more `taila90e7.ts.net` in configs or URLs. If you switch from Tailscale to plain Wireguard, only the IPs in resolver files change — the `.cove` names stay the same.
 
-4. **Phone access without Tailscale naming.** From a phone on the tailnet, `https://git.cove.pi/` reaches tier-2. The phone needs to resolve `git.cove.pi` — which means either using Tailscale MagicDNS (if it supports custom names) or pointing the phone at a DNS server that knows the `.cove` names. This is the remaining gap: phones don't run dnsmasq.
+4. **Mental model.** `*.cove` = my machine. `*.cove.<slug>` = ask that machine. The suffix encodes machine identity; the prefix encodes service identity. Natural hierarchy.
 
-5. **Mental model.** `*.cove` = my machine. `*.cove.<slug>` = that machine. The suffix encodes machine identity; the prefix encodes service identity. Natural hierarchy.
+5. **Self-describing.** Each machine publishes its own IP. When a machine's IP changes (new Tailscale node key, new network), it updates its own dnsmasq config. Remote machines don't need to track IP changes — they just keep forwarding to the same resolver file. The authoritative machine always knows its own address.
 
 ## Phone Resolution (Remaining Gap)
 
@@ -187,11 +202,15 @@ For now, the phone uses the Tailscale FQDN (`mbpbk-202602.taila90e7.ts.net`) to 
 
 ## Recommendation
 
-1. **Adopt the suffix naming convention:** `{service}.cove.{machine}`. Machine identity is a suffix after `.cove`, not a prefix before the service.
+1. **Adopt the suffix naming convention:** `{service}.cove.{machine}`. Machine identity is a suffix after `.cove`.
 
-2. **Add `*.cove.{{ ansible_hostname }}` to the mkcert cert.** One wildcard per machine covers all its services for remote clients.
+2. **Each machine publishes its own identity.** `cove.conf` renders `address=/cove.{{ ansible_hostname }}/{{ ts_ip }}` — the machine's own network address. The Tailscale IP comes from `tailscale status --json` (already available in `bringup.yml`).
 
-3. **Add regex server blocks to nginx** for per-machine routing:
+3. **Remote machines add resolver files, not overrides.** `/etc/resolver/cove.<slug>` with `nameserver <peer-ip>` and `port 5353`. One file per peer. The OS forwards queries for that domain suffix to the authoritative machine's dnsmasq.
+
+4. **Add `*.cove.{{ ansible_hostname }}` to the mkcert cert.** One wildcard per machine covers all its services for remote clients connecting to `git.cove.mbpbk` etc.
+
+5. **Add regex server blocks to nginx** for per-machine routing:
    ```nginx
    server {
        listen 443 ssl;
@@ -205,11 +224,7 @@ For now, the phone uses the Tailscale FQDN (`mbpbk-202602.taila90e7.ts.net`) to 
    }
    ```
 
-4. **Use a dnsmasq include file for remote machine entries.** `~/Documents/cove-data/dnsmasq/remote.conf` with `address=/cove.<slug>/<ip>` lines. User-maintained, same pattern as nginx `user.d`.
-
-5. **Don't build a Cove DNS sidecar.** Two dnsmasq rules per remote machine is not a service discovery problem. Revisit at 3+ machines if maintaining `remote.conf` becomes tedious.
-
-6. **Phone resolution stays on Tailscale FQDN for now.** Per-machine `.cove` names work between Cove instances. Phone support needs Tailscale DNS integration — a separate problem.
+6. **Phone resolution stays on Tailscale FQDN for now.** Phones don't have `/etc/resolver/`. Per-machine `.cove` names work between Cove instances where resolver files can be configured.
 
 ## Open Questions
 
