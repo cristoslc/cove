@@ -113,21 +113,13 @@ The mount `.../rootCA.pem:/certs/rootCA.pem:ro` (single file, read-only) is safe
 
 Anyone who can reach `https://ca.cove/`. On the host machine, that's localhost only (nginx binds `127.0.0.1:8443`). Over Tailscale, it's anyone on your tailnet. This is fine — the root CA cert is public by nature (it's what you install on devices to trust the CA). The private key stays on the host filesystem, never served.
 
-### What about the Tailscale cert?
+### Remote device access
 
-When Tailscale is active, the Tailscale FQDN server block uses Tailscale's own certs (`/certs/fullchain.pem`, `/certs/privkey.pem`), not mkcert. The `ca.cove` server block uses mkcert certs. A remote device connecting via Tailscale FQDN would get the Tailscale cert for the TLS handshake, which is already trusted (Tailscale's CA is in system trust stores). But the `ca.cove` hostname wouldn't match the Tailscale cert's SANs. This is fine — you'd access `ca.cove` via the `*.cove` hostname (resolved through `/etc/hosts` or dnsmasq), not via the Tailscale FQDN.
+`ca.cove` resolves on the host machine via `/etc/hosts`. From remote devices (phone on Tailscale, another laptop), the hostname doesn't resolve — Tailscale MagicDNS only resolves the machine's Tailscale FQDN, not arbitrary `*.cove` names. Two approaches cover this:
 
-Actually, wait — from a phone on Tailscale, how does `ca.cove` resolve? The phone doesn't have `/etc/hosts` entries for `*.cove`. Tailscale MagicDNS only resolves the machine's Tailscale FQDN, not arbitrary `*.cove` names. So from a phone, you'd need to either:
+**Approach A: Serve at a known path on the catch-all block**
 
-1. Access via Tailscale FQDN (e.g., `https://mbpbk-202602.tailnet-name.ts.net/`) — but that routes to the catch-all server block which proxies to Forgejo, not the CA cert.
-2. Set up Tailscale Serve for `ca.cove` specifically.
-3. Use the Tailscale FQDN with a path — but nginx routes by Host header, not path.
-
-**This is the real design question.** The `ca.cove` subdomain works perfectly from the host machine (where `/etc/hosts` resolves it). From remote devices, the hostname doesn't resolve. Options:
-
-**Option A: Serve at a known path on the catch-all block**
-
-Add a `/ca` location to the catch-all (default) server block that serves the root CA. Then from a phone: `https://<tailscale-fqdn>/ca` downloads the cert. Simple, no new subdomain, no DNS problem.
+Add a `/ca` location to the catch-all (default) server block that serves the root CA. From a phone: `https://<tailscale-fqdn>/ca` downloads the cert. Simple, no new subdomain, no DNS problem.
 
 ```nginx
 # In the catch-all server block:
@@ -138,19 +130,13 @@ location = /ca {
 }
 ```
 
-Downside: `/ca` on the catch-all is a magic path, not a discoverable service. But it's documented, and the use case is "I need to install the CA cert on this device" — a one-time operation.
+**Approach B: `ca.cove` subdomain + Tailscale Serve**
 
-**Option B: `ca.cove` subdomain + Tailscale Serve**
-
-Add `ca.cove` as a Tailscale Serve target. This requires Tailscale to be running and configured. Adds complexity to bringup.yml (another `tailscale serve` invocation). But it's the "proper" RESTful answer — a dedicated subdomain for a dedicated service.
-
-**Option C: Both**
-
-`ca.cove` for host-machine access (clean, discoverable), `/ca` on the catch-all for remote-device access (pragmatic, always works). The nginx config supports both trivially.
+Add `ca.cove` as a Tailscale Serve target. Requires Tailscale to be running and configured. Adds complexity to bringup.yml (another `tailscale serve` invocation). The "proper" RESTful answer — a dedicated subdomain for a dedicated service.
 
 ## Recommendation
 
-**Option C — both.** The `ca.cove` server block is the canonical interface. The `/ca` location on the catch-all is the pragmatic fallback for remote devices where `ca.cove` doesn't resolve. Two nginx locations, one file, zero additional infrastructure.
+**Both.** The `ca.cove` server block is the canonical interface for host-machine access. The `/ca` location on the catch-all is the pragmatic fallback for remote devices where `ca.cove` doesn't resolve. Two nginx locations, one file, zero additional infrastructure.
 
 ## Open Questions
 
