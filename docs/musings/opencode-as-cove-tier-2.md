@@ -32,8 +32,8 @@ This musing catalogs the harnesses I've considered for Cove, their tier-1/tier-2
 - **Bind mounts:**
   - **Code (rw):** `~/Documents/code` — source repos the agent reads/writes
   - **Projects (rw):** `~/Documents/projects` — working directories outside the code repos
-  - **OpenCode data (rw):** persistent location for SQLite sessions, e.g. `~/Documents/cove/opencode` — must survive container restarts. The exact XDG path inside the container needs verification (see Open Questions).
-  - **Config (rw):** `~/.config/opencode` — opencode.jsonc, MCP server definitions, AGENTS.md, custom commands. **OpenCode writes to this** (modifies config, adds skills, updates memories), so it must be rw. (Not ro as previously claimed.)
+  - **OpenCode data (rw):** persistent location for SQLite sessions, e.g. `~/Documents/cove/opencode` — must survive container restarts. Per XDG spec (confirmed in issue #6669), OpenCode stores data in `~/.local/share/opencode` and config in `~/.config/opencode` — separate directories. The compose mount target `/home/opencode/.local/share/opencode` is correct for the XDG default, but the container's internal `$HOME` and `$XDG_DATA_HOME` need verification (see Open Questions).
+  - **Config (rw):** `~/.config/opencode` — opencode.jsonc, MCP server definitions, AGENTS.md, custom commands. **OpenCode writes to this** (modifies config, adds skills, updates memories), so it must be rw. (Not ro as previously claimed.) **Hot-reload of config is unverified** — the swain-box musing claims config is hot-reloadable without restart, but this has not been empirically confirmed. If hot-reload doesn't work, config changes require a container restart.
 
 ```yaml
 # MVP compose service for OpenCode on tier 1
@@ -117,7 +117,7 @@ Run inside an editor. No standalone server. Not a drop-in for Cove. Skip for tie
 
 Not a coding harness. A multi-channel personal-assistant platform (250K+ GitHub stars, formerly Clawdbot/Moltbot) with its own gateway, session model, and node pairing. WhatsApp/Telegram/Slack/Discord/iMessage/Signal as UI. Created by Peter Steinberger (who joined OpenAI in Feb 2026).
 
-Could be considered for tier-2 deployment if the operator wants 24/7 agent availability via messaging apps. But it competes with the forge/git-bug stack for the operator's attention and workflow. Different product, different problem.
+Could be considered for tier-2 deployment if the operator wants 24/7 agent availability via messaging apps. Different product, complementary problem — OpenClaw handles recurring workflows (PR monitoring, daily standup, dependency triage) that don't need the operator present, then dispatches to coding harnesses for the actual work. See the [separate musing](./openclaw-as-cove-tier-2.md) for the full analysis.
 
 ## Claude Code — Local-Process Model, Fundamentally Different
 
@@ -320,6 +320,9 @@ services:
     volumes:
       - ~/.claude:/home/node/.claude:ro
       - ~/Documents/code:/home/code:rw
+    # NOTE: ~/.claude/ is mounted for Claude Code's own config (CLAUDE.md,
+    # settings, MCP servers). For cross-tool skill sharing, the operator
+    # should symlink ~/.claude/skills/ -> ~/.agents/skills/ on the host.
     # No port mapping — uses outbound bridge to claude.ai/code
 ```
 
@@ -358,36 +361,38 @@ A web UI that spans Claude Code, OpenCode, Cursor CLI, Codex, Gemini-CLI. Operat
 
 MVP questions (must resolve before MVP ships):
 1. **Exact XDG path inside the container?** The compose mounts `~/Documents/cove/opencode` to `/home/opencode/.local/share/opencode` — verify this matches where the OpenCode server actually writes. May need to check the official image's `USER` and `HOME` directives. **Spike: start the container, run a session, and `ls -la /home/opencode/.local/share/opencode/`.**
-2. **Auth model for phone access?** Tailscale is rejected (violates offline-first). The working pattern is bcrypt basic auth at the Caddy layer with credentials in 1Password. **For MVP: phone on same LAN, Caddy serves on `0.0.0.0:4096`, phone opens `http://laptop.local:4096` with basic auth prompt.** For v1, the auth-bypass trick (`header_up Authorization "Basic $auth_b64"`) can be ported to nginx (`proxy_set_header Authorization "Basic $auth_b64"`) so the nginx-only stack works. **For v2 (away-from-laptop phone access): laptop isn't there, no OpenCode to access — consistent with no-tier-2-for-OpenCode in MVP/v1.**
-3. **Restart behavior — major risk, must be spiked with container manipulation, not laptop sleep.** Closing the laptop lid is too imprecise: lid-close timing varies, wake-from-sleep behavior is OS-dependent, and you can't control which processes get the SIGTERM/SIGKILL. Use Docker's lifecycle primitives directly:
+2. **Config hot-reload?** The swain-box musing claims OpenCode hot-reloads config from `~/.config/opencode/` without restart. This is unverified. If hot-reload doesn't work, config changes (skills, MCP servers, AGENTS.md) require a container restart. **Spike: modify opencode.jsonc or add a skill file while the server is running, verify the change takes effect without restart.**
+3. **Auth model for phone access?** Tailscale is rejected (violates offline-first). The working pattern is bcrypt basic auth at the Caddy layer with credentials in 1Password. **For MVP: phone on same LAN, Caddy serves on `0.0.0.0:4096`, phone opens `http://laptop.local:4096` with basic auth prompt.** For v1, the auth-bypass trick (`header_up Authorization "Basic $auth_b64"`) can be ported to nginx (`proxy_set_header Authorization "Basic $auth_b64"`) so the nginx-only stack works. **For v2 (away-from-laptop phone access): laptop isn't there, no OpenCode to access — consistent with no-tier-2-for-OpenCode in MVP/v1.**
+4. **Restart behavior — major risk, must be spiked with container manipulation, not laptop sleep.** Closing the laptop lid is too imprecise: lid-close timing varies, wake-from-sleep behavior is OS-dependent, and you can't control which processes get the SIGTERM/SIGKILL. Use Docker's lifecycle primitives directly:
    - **`docker pause` / `docker unpause`** — freezes all processes in the container (cgroup freezer) without killing them. Closest simulation of laptop sleep. Tests if SQLite WAL survives a frozen-thawed state.
    - **`docker stop` (default 10s SIGTERM grace, then SIGKILL)** — graceful shutdown. Tests whether OpenCode's shutdown handler checkpoints the WAL cleanly.
    - **`docker kill` (SIGKILL, no grace)** — tests crash recovery from a fresh process reading the WAL on next start. The hardest case.
    - **`docker restart --time=0`** — combines stop+start with a configurable grace period.
    - **The actual reference implementation already has a watchdog and session-repair flow** ([functions.opencode.zsh `_oc-repair-sessions-db` and `_oc-repair-sessions-continue`](../troves/harness-catalog/sources/oc-zsh-functions/functions.opencode.zsh)) that runs every restart: marks orphaned assistant messages as completed, marks running/pending tool parts as errored, and submits a continuation prompt to each recovered session. **Spike plan: run each Docker primitive, verify the repair flow runs cleanly and the session is recoverable.**
-4. **Resource limits (memory/CPU, not cost)?** We're using **Ollama Cloud**, not local Ollama — LLM calls are normal API calls, not expensive in the way local LLM inference is. Resource limits are about container protection (memory bounds for the LLM client process, CPU for MCP servers) — not about cost. Reasonable defaults: 2GiB memory limit, 1.0 CPU.
+5. **Resource limits (memory/CPU, not cost)?** We're using **Ollama Cloud**, not local Ollama — LLM calls are normal API calls, not expensive in the way local LLM inference is. Resource limits are about container protection (memory bounds for the LLM client process, CPU for MCP servers) — not about cost. Reasonable defaults: 2GiB memory limit, 1.0 CPU.
 
 v1 questions (resolve before adding more harnesses):
-5. **Bind-mount conflicts?** Multiple harnesses (OpenCode, Claude Code, Aider) all want `~/Documents/code` rw. Do they interfere, or can they coexist with the same mount? (Likely yes — they're separate processes reading the same tree.)
-6. **Multi-harness dashboard integration?** Does CloudCLI / CodeNomad work behind Cove's nginx setup, or does it need its own routing? Likely yes for both.
-7. **CodeNomad's `npx` execution model** — does it work cleanly inside a container with bind-mounted code dirs?
+6. **Bind-mount conflicts?** Multiple harnesses (OpenCode, Claude Code, Aider) all want `~/Documents/code` rw. Do they interfere, or can they coexist with the same mount? (Likely yes — they're separate processes reading the same tree.)
+7. **Multi-harness dashboard integration?** Does CloudCLI / CodeNomad work behind Cove's nginx setup, or does it need its own routing? Likely yes for both.
+8. **CodeNomad's `npx` execution model** — does it work cleanly inside a container with bind-mounted code dirs?
 
 v2 questions (defer):
-8. **Tier-2 session replication?** OpenCode is SQLite-only (issue #7840 closed without Postgres support). v2 options: accept single-machine sessions, manual export/import; live-migrate during sync windows; build sync on top of SQLite.
-9. **Claude Code ACP layer?** Research whether ACP (Agent Client Protocol) can wrap Claude Code into a server. If yes, tier-2 is feasible. If no, "always-on tier-1" is the workaround.
-10. **OpenClaw tier-2 use cases?** Self-host gateway for PR monitoring, daily standup, dependency triage. See [`openclaw-as-cove-tier-2.md`](./openclaw-as-cove-tier-2.md).
+9. **Tier-2 session replication?** OpenCode is SQLite-only (issue #7840 closed without Postgres support). v2 options: accept single-machine sessions, manual export/import; live-migrate during sync windows; build sync on top of SQLite.
+10. **Claude Code ACP layer?** Research whether ACP (Agent Client Protocol) can wrap Claude Code into a server. If yes, tier-2 is feasible. If no, "always-on tier-1" is the workaround.
+11. **OpenClaw tier-2 use cases?** Self-host gateway for PR monitoring, daily standup, dependency triage. See [`openclaw-as-cove-tier-2.md`](./openclaw-as-cove-tier-2.md).
 
 ## Next Steps
 
 MVP:
 - **Spike: verify OpenCode data path** — start the container, run a session, check `/home/opencode/.local/share/opencode/`
+- **Spike: verify config hot-reload** — modify opencode.jsonc or add a skill file while the server is running, verify the change takes effect without restart
 - **Spike: container-lifecycle restart behavior** — run `docker pause`/`unpause`, `docker stop`/`start`, `docker kill`/`start`, verify the existing session-repair flow runs cleanly each time
 - Decide on MVP auth architecture: stack nginx + Caddy (matches operator's working setup) OR nginx-only with ported auth-bypass (cleaner)
 - Write the `cove up` integration — add the opencode service + Caddy/nginx proxy to Cove's compose stack
 - Test: create a session, restart the container, verify session persists
 - Test: access from phone on same LAN, verify web UI works with basic auth
 - Document the MVP deployment in the Cove install docs
-- File issues for: (a) verifying XDG path inside container, (b) container-lifecycle spike, (c) auth architecture decision
+- File issues for: (a) verifying XDG path inside container, (b) config hot-reload verification, (c) container-lifecycle spike, (d) auth architecture decision
 
 v1:
 - Add Claude Code (Remote Control) — same bind-mount contract, different web surface (outbound)
