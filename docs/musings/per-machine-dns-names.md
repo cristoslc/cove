@@ -2,133 +2,105 @@
 
 Cove's DNS model is anonymous: `git.cove` resolves to `127.0.0.1` on every machine. That's correct for local access — you're always talking to your own Cove. But it creates an identity problem for multi-machine setups. If you have a MacBook and a Linux desktop both running Cove, and you want to reach the MacBook's forge from the Linux desktop, `git.cove` on the Linux desktop resolves to `127.0.0.1` — the Linux desktop's own Cove, not the MacBook's.
 
-The idea: give each Cove instance a unique, machine-scoped hostname. `git.cove.mbpbk.` (or `mbpbk.git.cove`) identifies the MacBook's forge. `git.cove.framework.` identifies the Framework laptop's forge. These names are unambiguous — they always mean a specific machine's Cove, regardless of where you're resolving from.
+The idea: give each Cove instance a unique, machine-scoped hostname. `git.cove.mbpbk` identifies the MacBook's forge. `git.cove.framework` identifies the Framework's forge. These names are unambiguous — they always mean a specific machine's Cove, regardless of where you're resolving from.
 
-## The Naming Convention
+## The Model
 
-Two options for the subdomain structure:
-
-**Option 1: Machine prefix before service**
-```
-mbpbk.git.cove     → MacBook's forge
-mbpbk.vault.cove   → MacBook's vault
-framework.git.cove → Framework's forge
-```
-
-**Option 2: Machine suffix after `.cove`**
-```
-git.cove.mbpbk     → MacBook's forge
-vault.cove.mbpbk   → MacBook's vault
-git.cove.framework → Framework's forge
-```
-
-Option 1 (`mbpbk.git.cove`) is better. It keeps `.cove` as the TLD-like suffix, puts the machine identifier in a consistent position (leftmost subdomain), and reads naturally: "the git service on cove, on mbpbk." It also means the wildcard cert (`*.cove`) still covers these names — `mbpbk.git.cove` is a subdomain of `cove`, which `*.cove` matches. Option 2 (`git.cove.mbpbk`) would need `*.*.cove` which mkcert wildcards don't support (they're single-level).
-
-## Local Resolution (Already Works)
-
-dnsmasq's `address=/cove/127.0.0.1` is a domain wildcard, not a subdomain wildcard. It matches any name ending in `.cove`:
+Two DNS rules, layered by dnsmasq's most-specific-match semantics:
 
 ```
-dig mbpbk.git.cove @127.0.0.1 -p 5353       → 127.0.0.1  ✓
-dig framework.vault.cove @127.0.0.1 -p 5353  → 127.0.0.1  ✓
-dig anything.machine.cove @127.0.0.1 -p 5353 → 127.0.0.1  ✓
+*.cove              → 127.0.0.1          (local — every machine resolves its own Cove)
+*.cove.<machine>    → <machine-ip>       (remote — resolves to that specific machine)
 ```
 
-No config change needed. The wildcard already covers arbitrary-depth subdomains. On the local machine, `mbpbk.git.cove` resolves to `127.0.0.1` just like `git.cove` does. This is correct — from the MacBook, you want `mbpbk.git.cove` to reach the MacBook's own forge.
+dnsmasq matches the most specific `--address` rule. `git.cove` matches `/cove/` → `127.0.0.1`. `git.cove.mbpbk` matches `/cove.mbpbk/` (more specific) → the MacBook's IP. No split-horizon, no source-based routing, no new infrastructure. Just two address rules with different specificity.
 
-## Remote Resolution (The Hard Part)
+## Naming Convention
 
-From another machine, `mbpbk.git.cove` needs to resolve to the MacBook's IP, not `127.0.0.1`. This is the fundamental DNS problem: how does a name resolve differently depending on who's asking?
-
-### Approach 1: Tailscale (Current, Works)
-
-Tailscale MagicDNS already gives each machine a unique name (`mbpbk-202602.taila90e7.ts.net`). Tailscale Serve forwards HTTPS to Cove's nginx. From a phone: `https://mbpbk-202602.taila90e7.ts.net/` reaches the MacBook's forge.
-
-The per-machine `.cove` name is cosmetic — `mbpbk.git.cove` is a nicer name than `mbpbk-202602.taila90e7.ts.net`, but it doesn't change the resolution mechanism. You'd still need Tailscale (or something like it) to route traffic to the right machine.
-
-**What you could do:** Configure Tailscale Serve to also respond on `mbpbk.git.cove` (if MagicDNS supports custom names), or add a CNAME from `mbpbk.git.cove` to the Tailscale FQDN in a DNS server both machines use. But this adds Tailscale-specific configuration for a naming preference.
-
-### Approach 2: mDNS / Bonjour (LAN Only)
-
-On a local network, mDNS resolves `.local` names. `mbpbk.local` already resolves to the MacBook's LAN IP. You could configure the MacBook to advertise `mbpbk.git.cove` via mDNS, but mDNS only advertises the hostname, not arbitrary subdomains. And mDNS is LAN-only — doesn't work over the internet or from a phone on cellular.
-
-### Approach 3: Split-Horizon DNS (Complex)
-
-Run a DNS server that returns different answers based on the query source. From the MacBook, `mbpbk.git.cove` → `127.0.0.1`. From the Linux desktop, `mbpbk.git.cove` → MacBook's Tailscale IP. This requires a shared DNS server that both machines use, which knows the topology. Overengineered for two machines.
-
-### Approach 4: /etc/hosts on Each Remote Machine (Manual, Works)
-
-On the Linux desktop:
-```
-# /etc/hosts
-100.64.0.5  mbpbk.git.cove mbpbk.vault.cove   # MacBook's Tailscale IP
-```
-
-On the MacBook:
-```
-# /etc/hosts
-100.64.0.6  framework.git.cove framework.vault.cove  # Linux desktop's Tailscale IP
-```
-
-This works. It's manual. It requires knowing the other machine's Tailscale IP (which is stable). It's exactly what Cove already does for its own hostnames on the local machine. The pattern is consistent.
-
-### Approach 5: A "Cove DNS" Sidecar (Future)
-
-A lightweight DNS server that Cove instances use to discover each other. Each Cove announces its machine name and Tailscale IP. Other Cove instances query this to resolve per-machine names. This is a service discovery protocol, not just DNS. Overengineered for the current scale but could be the right answer at 3+ machines.
-
-## What This Actually Buys
-
-The per-machine naming convention is valuable even without solving remote resolution:
-
-1. **Unambiguous references.** "The issue is on `mbpbk.git.cove`" means something specific. "The issue is on `git.cove`" is ambiguous across machines.
-
-2. **Documentation and config clarity.** CI configs, webhook URLs, and documentation can use machine-scoped names. `GITEA_SERVER_URL=https://mbpbk.git.cove` is self-documenting.
-
-3. **Future-proofing.** When multi-machine sync arrives (multi-stage-cove.md), per-machine names are necessary. You need to know which machine authored which change.
-
-4. **Mental model.** The operator thinks in terms of machines ("my MacBook's forge", "the Linux desktop's vault"). The DNS should reflect that mental model.
-
-## Relationship to Tier-2
-
-In the multi-stage model, tier-2 is an always-online machine (Raspberry Pi, old laptop, desktop). It has a stable Tailscale IP. Per-machine names make tier-2's role explicit:
+Suffix-based: `{service}.cove.{machine}`. Reads naturally: "the git service on cove, on machine mbpbk."
 
 ```
-pi.git.cove     → tier-2's forge (always online, sync hub)
-mbpbk.git.cove  → MacBook's forge (local, may be offline)
+git.cove.mbpbk       → MacBook's forge
+vault.cove.mbpbk     → MacBook's vault
+git.cove.framework   → Framework's forge
+git.cove.pi          → Tier-2's forge (always online)
 ```
 
-From a phone, you always connect to `pi.git.cove` — the tier-2 that's always up. From the MacBook, `pi.git.cove` resolves to the Pi's Tailscale IP (via `/etc/hosts` or Tailscale MagicDNS). The naming makes the topology visible.
+From any machine:
+- `git.cove` → that machine's own forge (local)
+- `git.cove.mbpbk` → MacBook's forge (remote, resolves to MacBook's IP)
+- `git.cove.pi` → tier-2's forge (remote, resolves to Pi's IP)
 
-## What Changes in Cove
+## DNS Implementation
 
-### dnsmasq: Nothing
+### Local resolution (already works)
 
-`address=/cove/127.0.0.1` already covers `mbpbk.git.cove` and any other per-machine name. No change needed.
+dnsmasq's `address=/cove/127.0.0.1` covers all `*.cove` names, including `git.cove.mbpbk`. On the MacBook, `git.cove.mbpbk` resolves to `127.0.0.1` — which is correct, because the MacBook is mbpbk.
 
-### nginx: Server blocks need per-machine names
+### Remote resolution (the new part)
 
-If you want `https://mbpbk.git.cove/` to work (not just resolve), nginx needs a server block for it. Options:
+Each machine needs dnsmasq entries for the *other* machines it knows about. On the MacBook:
 
-**A) Add per-machine server blocks to the template.** The `default.conf.j2` template already has `{{ ts_dns_name }}` for the Tailscale FQDN. Add `{{ machine_name }}.git.cove` similarly. This requires the machine name to be known at provision time (it is — hostname is a fact).
+```
+address=/cove/127.0.0.1
+address=/cove.framework/100.64.0.6
+address=/cove.pi/100.64.0.7
+```
 
-**B) Use the catch-all.** `server_name _` already catches unknown hostnames and proxies to Forgejo. `mbpbk.git.cove` would hit the catch-all and work. But it wouldn't get a dedicated server block with specific routing.
+On the Framework:
 
-**C) Regex server block.** `server_name ~^(?<machine>[a-zA-Z0-9-]+)\.git\.cove$` routes any machine-prefixed git.cove to Forgejo. Same for vault: `~^(?<machine>[a-zA-Z0-9-]+)\.vault\.cove$`. This is the cleanest — one regex block covers all machines.
+```
+address=/cove/127.0.0.1
+address=/cove.mbpbk/100.64.0.5
+address=/cove.pi/100.64.0.7
+```
 
-### /etc/hosts: Add per-machine entries for remote machines
+Most-specific-match handles the rest. `git.cove` → `127.0.0.1` (matches `/cove/`). `git.cove.framework` → `100.64.0.6` (matches `/cove.framework/`, more specific).
 
-This is manual and per-machine. Not something Cove automates (yet). But the pattern is documented.
+### Where do the remote entries live?
 
-### TLS: Add per-machine names as explicit SANs
+Two options:
 
-`*.cove` wildcard only matches one label (RFC 2818), so `mbpbk.git.cove` (two labels) isn't covered by the wildcard. But mkcert already takes explicit multi-label SANs — `git.cove`, `vault.cove`, `hc.cove` are all in the current cert. Adding `mbpbk.git.cove` and `mbpbk.vault.cove` is the same mechanism.
+**Option A: dnsmasq include directory (recommended)**
 
-The cert only needs the **local** machine's per-machine names. A remote machine connecting to `framework.git.cove` should reach the Framework's nginx, which has `framework.git.cove` in its own cert. Each Cove's cert covers its own machine's names.
+Same pattern as the nginx `user.d` directory from the DNS infrastructure musing. dnsmasq reads `/etc/dnsmasq.d/*.conf`. Cove renders `cove.conf` (the local wildcard). The user drops a `remote.conf` with per-machine entries:
 
-In `bringup.yml`, the hostname is already available via `ansible_hostname` (gather_facts). Add it to the mkcert SAN list:
+```
+# ~/Documents/cove-data/dnsmasq/remote.conf
+address=/cove.framework/100.64.0.6
+address=/cove.pi/100.64.0.7
+```
+
+dnsmasq picks it up automatically (it reads all `.conf` files in the directory). No template rendering, no Ansible variables, no `cove up` dependency. The user maintains it — same as `user.d` for nginx.
+
+**Option B: host_vars (Ansible-managed)**
+
+Each machine's `host_vars/<hostname>.yml` lists remote peers:
 
 ```yaml
-- name: Generate mkcert cert for *.cove
+cove_peers:
+  - slug: framework
+    ip: 100.64.0.6
+  - slug: pi
+    ip: 100.64.0.7
+```
+
+The dnsmasq template renders them. This is the "Cove way" — everything through Ansible. But it means updating host_vars and re-running `cove up` when IPs change. Overengineered for a list of 2-3 entries.
+
+**Recommendation: Option A.** The include-directory pattern is already established (nginx `user.d`). It's consistent, simple, and doesn't require `cove up` for IP changes.
+
+### dnsmasq config change
+
+None needed for the mechanism — dnsmasq already reads all `.conf` files in `/etc/dnsmasq.d/`. The user just drops `remote.conf` in the data directory (which is already mounted). Cove could create an empty `remote.conf` as a placeholder during `cove up`, but that's polish.
+
+## TLS
+
+Each Cove's cert needs to cover `*.cove.<its-own-machine-slug>` for remote clients connecting to it. When the Framework connects to `git.cove.mbpbk`, it hits the MacBook's nginx — the MacBook's cert must be valid for that name.
+
+mkcert supports multiple wildcards in one cert:
+
+```yaml
+- name: Generate mkcert cert for *.cove + per-machine wildcard
   ansible.builtin.command:
     argv:
       - mkcert
@@ -136,62 +108,126 @@ In `bringup.yml`, the hostname is already available via `ansible_hostname` (gath
       - "{{ cove_data_root }}/certs/cove.local-key.pem"
       - -cert-file
       - "{{ cove_data_root }}/certs/cove.local.pem"
+      - "*.cove"
+      - "*.cove.{{ ansible_hostname }}"          # ← per-machine wildcard
       - cove
       - git.cove
       - vault.cove
       - hc.cove
       - ca.cove
-      - "{{ ansible_hostname }}.git.cove"       # ← per-machine
-      - "{{ ansible_hostname }}.vault.cove"     # ← per-machine
       - "*.pages.cove"
       - localhost
       - 127.0.0.1
       - "::1"
 ```
 
-The cert is regenerated on `cove up` if missing (`creates:` guard). If the hostname changes (rare), delete the old cert and re-run `cove up`.
+`*.cove.mbpbk` matches `git.cove.mbpbk`, `vault.cove.mbpbk`, `hc.cove.mbpbk` — any service on the mbpbk machine. One wildcard covers all services for that machine. Each Cove's cert includes its own machine's wildcard.
 
-This keeps the natural dotted convention:
+RFC 2818: `*.cove.mbpbk` is valid — the wildcard is the leftmost label, matching exactly one label. `git.cove.mbpbk` has `git` as the leftmost label, which `*` matches.
 
+## nginx
+
+Regex server blocks route per-machine names to the right backend. One regex block per service covers all machines:
+
+```nginx
+# Per-machine git.cove — matches git.cove.mbpbk, git.cove.framework, etc.
+server {
+    listen 443 ssl;
+    server_name ~^(?<service>[a-zA-Z0-9-]+)\.cove\.(?<machine>[a-zA-Z0-9-]+)$;
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    location / {
+        proxy_pass http://forgejo_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
 ```
-mbpbk.git.cove       → MacBook's forge
-mbpbk.vault.cove     → MacBook's vault
-framework.git.cove   → Framework's forge (served by Framework's nginx, its own cert)
-pi.git.cove          → Tier-2's forge (served by Pi's nginx, its own cert)
+
+But wait — this regex matches *any* `{service}.cove.{machine}`, routing everything to Forgejo. That's wrong for `vault.cove.mbpbk`. We need service-specific regex blocks, or a single block that routes by captured service name.
+
+**Option A: Service-specific regex blocks**
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name ~^git\.cove\.[a-zA-Z0-9-]+$ ~^cove\.[a-zA-Z0-9-]+$;
+    # routes to forgejo
+}
+server {
+    listen 443 ssl;
+    server_name ~^vault\.cove\.[a-zA-Z0-9-]+$;
+    # routes to vault
+}
 ```
+
+Simple, explicit, one block per service. The `git.cove.*` regex also catches bare `cove.<machine>` (which should also go to Forgejo).
+
+**Option B: Single regex block with named captures and conditional routing**
+
+nginx doesn't support conditional `proxy_pass` based on captured variables in a single `server` block. Not viable.
+
+**Recommendation: Option A.** Two new server blocks (one for git, one for vault), each with a regex covering all machines. The existing non-regex blocks (`git.cove`, `vault.cove`) stay as-is for the local names.
+
+## What This Actually Buys
+
+1. **Remote resolution is trivial.** Two dnsmasq rules. No split-horizon, no `/etc/hosts` on remote machines, no service discovery protocol.
+
+2. **Unambiguous references.** "The issue is on `git.cove.mbpbk`" means something specific. "The issue is on `git.cove`" is ambiguous across machines.
+
+3. **Reduces Tailscale reliance.** You still need Tailscale (or Wireguard) for the VPN layer — the IPs in dnsmasq are Tailscale IPs. But the *naming* layer is independent of Tailscale. No more `taila90e7.ts.net` in configs or URLs. If you switch from Tailscale to plain Wireguard, only the IPs in `remote.conf` change — the `.cove` names stay the same.
+
+4. **Phone access without Tailscale naming.** From a phone on the tailnet, `https://git.cove.pi/` reaches tier-2. The phone needs to resolve `git.cove.pi` — which means either using Tailscale MagicDNS (if it supports custom names) or pointing the phone at a DNS server that knows the `.cove` names. This is the remaining gap: phones don't run dnsmasq.
+
+5. **Mental model.** `*.cove` = my machine. `*.cove.<slug>` = that machine. The suffix encodes machine identity; the prefix encodes service identity. Natural hierarchy.
+
+## Phone Resolution (Remaining Gap)
+
+Phones don't run dnsmasq. They use whatever DNS the network provides. For a phone to resolve `git.cove.pi`, one of these must be true:
+
+- **Tailscale MagicDNS supports custom names.** If you can register `git.cove.pi` as a MagicDNS name pointing to the Pi's Tailscale IP, the phone resolves it automatically. Unclear if Tailscale supports this.
+- **The phone uses a DNS server that knows `.cove` names.** If tier-2 runs a DNS server (could be dnsmasq on the Pi) and the phone is configured to use it, `*.cove.<machine>` resolves. This requires either DHCP DNS configuration (LAN) or Tailscale's `--accept-dns` flag pointing at the Pi.
+- **The phone has a local DNS proxy.** iOS/Android don't make this easy. A VPN-based DNS proxy (like Tailscale's own DNS) is the practical answer.
+
+For now, the phone uses the Tailscale FQDN (`mbpbk-202602.taila90e7.ts.net`) to reach specific machines. The per-machine `.cove` names work between Cove instances (laptop ↔ laptop, laptop ↔ tier-2) where dnsmasq is running. Phone support is a future problem.
 
 ## Recommendation
 
-1. **Adopt the dotted naming convention:** `{machine}.{service}.cove`. Each Cove's mkcert cert includes its own machine's names as explicit SANs (`{{ ansible_hostname }}.git.cove`, `{{ ansible_hostname }}.vault.cove`). No wildcard gymnastics needed.
+1. **Adopt the suffix naming convention:** `{service}.cove.{machine}`. Machine identity is a suffix after `.cove`, not a prefix before the service.
 
-2. **Add regex server blocks to nginx** for the major services:
+2. **Add `*.cove.{{ ansible_hostname }}` to the mkcert cert.** One wildcard per machine covers all its services for remote clients.
+
+3. **Add regex server blocks to nginx** for per-machine routing:
    ```nginx
-   # Per-machine git.cove
    server {
        listen 443 ssl;
-       server_name ~^(?<machine>[a-zA-Z0-9-]+)\.git\.cove$;
-       ssl_certificate     /certs/cove.local.pem;
-       ssl_certificate_key /certs/cove.local-key.pem;
-       location / {
-           proxy_pass http://forgejo_backend;
-           # ...
-       }
+       server_name ~^git\.cove\.[a-zA-Z0-9-]+$ ~^cove\.[a-zA-Z0-9-]+$;
+       # proxy to forgejo
+   }
+   server {
+       listen 443 ssl;
+       server_name ~^vault\.cove\.[a-zA-Z0-9-]+$;
+       # proxy to vault
    }
    ```
-   Same pattern for vault: `~^(?<machine>[a-zA-Z0-9-]+)\.vault\.cove$`.
 
-3. **Document the `/etc/hosts` pattern for remote machines.** On the Linux desktop, add the MacBook's Tailscale IP with per-machine names. This is the same pattern Cove uses for its own hostnames — consistent and understandable.
+4. **Use a dnsmasq include file for remote machine entries.** `~/Documents/cove-data/dnsmasq/remote.conf` with `address=/cove.<slug>/<ip>` lines. User-maintained, same pattern as nginx `user.d`.
 
-4. **Don't build a Cove DNS sidecar yet.** Two machines don't justify a service discovery protocol. Revisit at 3+ machines.
+5. **Don't build a Cove DNS sidecar.** Two dnsmasq rules per remote machine is not a service discovery problem. Revisit at 3+ machines if maintaining `remote.conf` becomes tedious.
 
-5. **Per-machine names reduce Tailscale reliance indirectly.** They don't replace Tailscale's VPN/routing layer. But they make the naming layer independent of Tailscale's naming (no more `taila90e7.ts.net` in configs). If you switch from Tailscale to plain Wireguard later, the `.cove` names stay the same — only the IPs in `/etc/hosts` change.
+6. **Phone resolution stays on Tailscale FQDN for now.** Per-machine `.cove` names work between Cove instances. Phone support needs Tailscale DNS integration — a separate problem.
 
 ## Open Questions
 
-1. **Should the machine name be the hostname or a user-chosen label?** Hostname (`mbpbk`) is automatic and unique. User-chosen label (`macbook`, `tier2`) is more readable. Hostname is the right default — it's already unique, already known to Ansible (`ansible_hostname`), and doesn't require configuration.
+1. **Should the machine slug be the hostname or a user-chosen label?** Hostname (`mbpbk`) is automatic and unique. User-chosen label (`macbook`, `tier2`) is more readable. Hostname is the right default — it's already unique, already known to Ansible (`ansible_hostname`), and doesn't require configuration. But the slug in `remote.conf` is user-written anyway, so the user can choose whatever label they want. The cert wildcard uses `ansible_hostname`; the dnsmasq entry uses whatever slug the user picks. They should match, but dnsmasq doesn't care.
 
-2. **Should `cove up` render per-machine server blocks automatically?** The machine name is available as `ansible_hostname`. The regex server blocks cover all machines generically — no per-machine rendering needed. One regex block serves all machines.
+2. **Should `cove up` create a skeleton `remote.conf`?** A commented-out example file would teach the pattern. Low priority.
 
-3. **What about the Tailscale FQDN server block?** It stays. The Tailscale FQDN is still the primary remote-access name (it has its own valid TLS cert from Tailscale). Per-machine `.cove` names are for local use and for `/etc/hosts`-based remote access between Cove instances.
+3. **What about the Tailscale FQDN server block?** It stays. The Tailscale FQDN is still the primary remote-access name for phones and non-Cove devices. Per-machine `.cove` names are for Cove-to-Cove communication.
 
-4. **Does this conflict with the `user.d` include directory from the DNS infrastructure musing?** No. The regex server blocks are for Cove's own services (forge, vault). The `user.d` directory is for user-defined services. They're complementary — Cove provides machine-scoped names for its services, users provide names for theirs.
+4. **Does `*.cove` still need to be in the cert?** Yes — for local access (`git.cove`, `vault.cove`) and for `*.pages.cove`. The cert has both `*.cove` and `*.cove.{{ ansible_hostname }}`.
+
+5. **What about `ca.cove` from the root cert distribution musing?** `ca.cove` is a local-only name (served by the local nginx). It doesn't need a per-machine variant — you always download the CA cert from the machine you're trying to trust. But `ca.cove.mbpbk` would work automatically if someone tried it (the regex catch-all or a dedicated block would serve it).
