@@ -119,6 +119,11 @@ The Tailscale question is separate: Tailscale gives zero-config auth for the pho
 **Personal-assistant:**
 - `openclaw/` — github.com/openclaw/openclaw, 250k+ stars
 
+### Local sources (operator's host — working reference)
+
+- `oc-zsh-functions/functions.opencode.zsh` — zsh functions sourced from `~/.zshrc`. Provides `oc-tui`, `oc-web`, `oc-restart`, `oc-stop`, `oc-vacuum`, `oc-memwatch`, `oc-direct`. The actual working Caddy + opencode setup, including the auth-bypass trick, watchdog, and session-repair flow.
+- `oc-zsh-functions/Caddyfile` — the working Caddy config with `header_up Authorization` bypass for the OpenCode auth bug.
+
 ### Local sources (swain-box files)
 
 - `swain-box/ARCHITECTURE.md` — system context, containers, mount topology

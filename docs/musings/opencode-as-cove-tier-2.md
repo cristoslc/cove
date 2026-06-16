@@ -66,7 +66,7 @@ services:
     restart: unless-stopped
 ```
 
-Behind nginx at `opencode.cove` with HTTPS, accessible from phone via Tailscale. See "Reverse Proxy (nginx)" below for why nginx (not Caddy) and how the auth bug interacts.
+Behind Caddy at `opencode.cove` (via Cove nginx TLS termination), accessible from phone on the same LAN. See [Reverse Proxy (Caddy)](#reverse-proxy-caddy--the-working-reference-pattern) below for the working pattern.
 
 **What MVP explicitly is not:**
 - No tier-2 deployment. OpenCode on the always-online box is v2.
@@ -139,7 +139,7 @@ The musing's earlier version named only `ttyd`, `CloudCLI`, and Claude Code Remo
 
 | Project | Type | Notes |
 |---------|------|-------|
-| **OpenCode web** (`opencode web`) | Built-in | Alpha, mDNS for multiple instances. Auth has known bugs (see "Reverse Proxy (nginx)" below). |
+| **OpenCode web** (`opencode web`) | Built-in | Alpha, mDNS for multiple instances. Auth has known bugs (see [Reverse Proxy (Caddy)](#reverse-proxy-caddy--the-working-reference-pattern) below). |
 | **CodeNomad** | Desktop + Server | "AI Coding Cockpit for OpenCode." Multi-instance, remote access, session management, voice input, git worktrees, sidecars (VSCode, ttyd). 1.9k stars, MIT, SolidJS. |
 | **Palot** | Desktop (Electron) | Multi-agent GUI. Migrates from Claude Code/Cursor — converts configs, MCP servers, agents, commands, rules, hooks. |
 | **opencode-gui** | Web | Multi-instance, multi-folder parallel execution. |
@@ -168,60 +168,52 @@ The musing's earlier version named only `ttyd`, `CloudCLI`, and Claude Code Remo
 
 For Cove's MVP, the OpenCode web UI is the default. CodeNomad, Palot, pk-opencode-webui, opencode-manager are v1 candidates if the operator wants more than the default. CloudCLI is a v1 candidate for multi-harness dashboard.
 
-## Reverse Proxy (nginx)
+## Reverse Proxy (Caddy) — The Working Reference Pattern
 
-Cove already has an nginx reverse proxy (`compose/nginx/default.conf.j2`) with the following pattern for `git.cove` (Forgejo) and `vault.cove` (Vault):
+**Correction to my prior version of this section:** the host machine that runs OpenCode as a daily driver already has a working Caddy reverse-proxy pattern. I was wrong to claim "Cove uses nginx" — nginx is the *Cove service* reverse proxy (for `git.cove`, `vault.cove`, `hc.cove`), but the host machine uses Caddy for OpenCode specifically. The Caddy pattern is the working reference for tier-1 OpenCode, not the nginx pattern.
 
-```nginx
-upstream forgejo_backend {
-    server forgejo:3000;
-}
+The pattern lives in:
+- [`~/.config/zsh/functions.opencode.zsh`](https://git.cove/~/code/cove) (sourced from `~/.zshrc`) — provides `oc-tui`, `oc-web`, `oc-restart`, `oc-stop`, `oc-vacuum`, `oc-memwatch`, `oc-direct`
+- `~/.config/opencode/Caddyfile` — the Caddy config
 
-server {
-    listen 443 ssl;
-    server_name git.cove cove;
-    ssl_certificate     /certs/cove.local.pem;
-    ssl_certificate_key /certs/cove.local-key.pem;
+Architecture:
+- `opencode serve` runs on `127.0.0.1:4095` (internal, with `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD` set)
+- Caddy runs on `0.0.0.0:4096` (public-facing) with bcrypt basic auth
+- Both run in a dedicated tmux session called `opencode-server`
+- A watchdog monitors server RSS and writes crash reports if the process dies unexpectedly
+- Credentials come from 1Password (`op://Private/OpenCode Server/username` / `password`) with a 15-min cache
 
-    location / {
-        proxy_pass http://forgejo_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-}
-```
+### The Caddyfile (the actual working one)
 
-**MVP: add an `opencode.cove` block** following this pattern:
+```caddyfile
+:{$OC_CADDY_PORT} {
+	log {
+		output stdout
+		format console
+		level INFO
+	}
 
-```nginx
-upstream opencode_backend {
-    server opencode:4096;
-}
+	basic_auth {
+		{$OC_CADDY_USER} {$OC_CADDY_HASH}
+	}
 
-server {
-    listen 443 ssl;
-    server_name opencode.cove;
-    ssl_certificate     /certs/cove.local.pem;
-    ssl_certificate_key /certs/cove.local-key.pem;
-
-    location / {
-        proxy_pass http://opencode_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
+	reverse_proxy localhost:{$OC_SERVE_PORT} {
+		header_up Authorization "Basic {$OC_AUTH_B64}"
+		header_down Content-Security-Policy "default-src 'self' ; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ; style-src 'self' 'unsafe-inline' ; connect-src 'self' data: https://opencode.ai ; img-src 'self' data: blob: ; font-src 'self' data:"
+	}
 }
 ```
 
-This solves multiple problems:
-- TLS termination at nginx. OpenCode serves plain HTTP inside the container; nginx provides HTTPS.
-- Consistent URL pattern (`*.cove`) alongside git.cove, vault.cove, hc.cove.
-- Sets up the pattern for v1 harnesses: `claude.cove`, `aider.cove`, etc. all behind the same proxy.
+**The auth-bypass trick:** `header_up Authorization "Basic {$OC_AUTH_B64}"` — Caddy not only does basic auth at its layer, it ALSO forwards the Authorization header to the backend. This works around the OpenCode web UI auth bug (#9066, #18325, #17376, #8676, #9706) because the OpenCode backend receives valid auth credentials from Caddy and never has to re-prompt the user. The CSP header is also set on `header_down` to constrain what the web UI can do.
 
-**The user's reference to "Caddy" in the PR feedback was imprecise** — the actual reverse proxy in Cove is nginx, not Caddy (Caddy only exists in the swain-box repo, not in Cove itself).
+**This is offline-first compliant:** the Caddy pattern works without any external network, VPN, or authentication service beyond the 1Password CLI (which can be substituted with environment variables).
+
+### Why nginx was the wrong starting point
+
+I was confused. Cove has nginx for its own service routing (git.cove, vault.cove, hc.cove), but the operator's host machine uses Caddy for OpenCode. Two reasons Caddy is the right choice for OpenCode specifically:
+
+1. **Caddyfile is simpler than nginx config.** No `upstream` blocks, no manual SSL cert management, environment-variable interpolation via `{$VAR}`.
+2. **Caddy's `header_up` is the auth-bypass trick.** Nginx has the same capability (`proxy_set_header Authorization ...`), but the Caddy pattern is what the operator already has working.
 
 ### The OpenCode Web UI Auth Bug
 
@@ -235,11 +227,20 @@ There are multiple open issues confirming the OpenCode web UI's basic auth has b
 
 **Status:** all open, none closed. The basic auth implementation has been buggy for several releases.
 
-**Cove mitigation:** nginx in front of OpenCode. The nginx proxy passes through to the OpenCode container. The basic auth happens inside OpenCode. If OpenCode's auth is buggy, the workaround is to **rely on nginx-level auth** (basic auth at the nginx layer, before proxying) or **Tailscale-only access** (no public-facing port, the phone must be on the Tailscale network to reach `opencode.cove`).
+**Working mitigation:** Caddy's `header_up Authorization` forwards valid auth to the OpenCode backend, so the auth bug is bypassed at the proxy layer. The user never sees the broken auth prompt loop because Caddy handles the challenge and passes a valid header.
 
-For MVP, **Tailscale-only is the recommended approach** — the laptop's Tailscale is already running, the phone is on Tailscale, the nginx server block is accessible from Tailscale peers. No public exposure. This sidesteps the auth bug entirely.
+**For Cove MVP integration:** the existing Cove nginx reverse proxy is fine for the path `*.cove → 127.0.0.1:4096 → Caddy → 127.0.0.1:4095 → opencode serve`. nginx terminates TLS for `opencode.cove`, then proxies to the Caddy instance (which adds its own basic auth layer plus the header_up auth-bypass trick), which proxies to opencode. Two reverse proxies stacked — not ideal architecturally, but matches the operator's working setup.
 
-For v1 (or if the operator wants phone-on-cellular access), add nginx-level basic auth via `auth_basic` directive, with credentials in Vault.
+A cleaner MVP architecture: **skip nginx for OpenCode**, expose Caddy directly on a `cove`-friendly port. But that conflicts with the rest of Cove's `*.cove` TLS termination at nginx. **For MVP, accept the two-proxy stack.** For v1, consider moving OpenCode auth-bypass into the nginx config (`proxy_set_header Authorization "Basic $auth_b64"`) and skip the Caddy layer entirely.
+
+### Auth model for phone access
+
+**Tailscale is NOT recommended.** It violates the offline-first principle (Cove must work without external network) and adds a dependency that breaks the airplane/café use case. The Caddy pattern is the right answer: bcrypt basic auth at the proxy layer, credentials in 1Password, no external service required.
+
+For phone access:
+- **MVP:** phone on the same LAN/WiFi as the laptop. Caddy serves on `0.0.0.0:4096`. Phone opens `http://laptop.local:4096` (or `http://laptop-ip:4096`).
+- **v1:** phone on cellular, away from laptop. Caddy is local to the laptop. The phone can't reach the laptop's Caddy without either Tailscale (rejected) or exposing Caddy publicly (rejected for security). **For away-from-laptop phone access, the answer is: the laptop isn't there, so there's no OpenCode to access.** This is consistent with the v1 design (laptop is tier-1, no tier-2 for OpenCode in MVP/v1).
+- **v2:** always-on box runs OpenCode + Caddy. Phone accesses `opencode.example.com` over the public internet with TLS. Caddy provides the basic auth at the edge.
 
 ## OpenCode Backend for v2 (Session Replication)
 
@@ -304,7 +305,7 @@ This is documented as a v2 research question. The MVP/v1 path is non-portable SQ
 
 ### MVP: OpenCode on Tier 1
 
-See the [MVP Definition](#mvp-definition) section above for the compose service. Single harness, single tier, Docker via Colima. Plus an `opencode.cove` nginx server block (see [Reverse Proxy (nginx)](#reverse-proxy-nginx) above).
+See the [MVP Definition](#mvp-definition) section above for the compose service. Single harness, single tier, Docker via Colima. Plus a Caddy reverse proxy in front (see [Reverse Proxy (Caddy)](#reverse-proxy-caddy--the-working-reference-pattern) above) — either the existing nginx + Caddy stack, or a v1 nginx-only deployment.
 
 ### v1: Multiple Harnesses on Tier 1
 
@@ -357,8 +358,13 @@ A web UI that spans Claude Code, OpenCode, Cursor CLI, Codex, Gemini-CLI. Operat
 
 MVP questions (must resolve before MVP ships):
 1. **Exact XDG path inside the container?** The compose mounts `~/Documents/cove/opencode` to `/home/opencode/.local/share/opencode` — verify this matches where the OpenCode server actually writes. May need to check the official image's `USER` and `HOME` directives. **Spike: start the container, run a session, and `ls -la /home/opencode/.local/share/opencode/`.**
-2. **Tailscale-only vs nginx basic auth for phone access?** Tailscale gives zero-config auth for the phone (if the phone is on the Tailscale network). Basic auth at nginx (`auth_basic`) works for any client. **MVP recommendation: Tailscale-only** — the laptop's Tailscale is already running, the phone is on Tailscale, no public exposure needed. Add nginx basic auth in v1 if cellular access is needed.
-3. **Restart behavior on laptop wake — major risk.** When the laptop sleeps and wakes, does the OpenCode container restart cleanly? Sessions persist in the bind mount, so this should work, but the SQLite WAL needs to be consistent. **Spike: close the laptop lid for 5 min, open, check that the session is still accessible and the SQLite file isn't corrupted.** If SQLite is corrupted, the fix is to enable WAL checkpoint on graceful shutdown or use `litestream` for continuous backup.
+2. **Auth model for phone access?** Tailscale is rejected (violates offline-first). The working pattern is bcrypt basic auth at the Caddy layer with credentials in 1Password. **For MVP: phone on same LAN, Caddy serves on `0.0.0.0:4096`, phone opens `http://laptop.local:4096` with basic auth prompt.** For v1, the auth-bypass trick (`header_up Authorization "Basic $auth_b64"`) can be ported to nginx (`proxy_set_header Authorization "Basic $auth_b64"`) so the nginx-only stack works. **For v2 (away-from-laptop phone access): laptop isn't there, no OpenCode to access — consistent with no-tier-2-for-OpenCode in MVP/v1.**
+3. **Restart behavior — major risk, must be spiked with container manipulation, not laptop sleep.** Closing the laptop lid is too imprecise: lid-close timing varies, wake-from-sleep behavior is OS-dependent, and you can't control which processes get the SIGTERM/SIGKILL. Use Docker's lifecycle primitives directly:
+   - **`docker pause` / `docker unpause`** — freezes all processes in the container (cgroup freezer) without killing them. Closest simulation of laptop sleep. Tests if SQLite WAL survives a frozen-thawed state.
+   - **`docker stop` (default 10s SIGTERM grace, then SIGKILL)** — graceful shutdown. Tests whether OpenCode's shutdown handler checkpoints the WAL cleanly.
+   - **`docker kill` (SIGKILL, no grace)** — tests crash recovery from a fresh process reading the WAL on next start. The hardest case.
+   - **`docker restart --time=0`** — combines stop+start with a configurable grace period.
+   - **The actual reference implementation already has a watchdog and session-repair flow** ([functions.opencode.zsh `_oc-repair-sessions-db` and `_oc-repair-sessions-continue`](../troves/harness-catalog/sources/oc-zsh-functions/functions.opencode.zsh)) that runs every restart: marks orphaned assistant messages as completed, marks running/pending tool parts as errored, and submits a continuation prompt to each recovered session. **Spike plan: run each Docker primitive, verify the repair flow runs cleanly and the session is recoverable.**
 4. **Resource limits (memory/CPU, not cost)?** We're using **Ollama Cloud**, not local Ollama — LLM calls are normal API calls, not expensive in the way local LLM inference is. Resource limits are about container protection (memory bounds for the LLM client process, CPU for MCP servers) — not about cost. Reasonable defaults: 2GiB memory limit, 1.0 CPU.
 
 v1 questions (resolve before adding more harnesses):
@@ -375,13 +381,13 @@ v2 questions (defer):
 
 MVP:
 - **Spike: verify OpenCode data path** — start the container, run a session, check `/home/opencode/.local/share/opencode/`
-- **Spike: laptop wake restart** — close lid 5 min, reopen, verify session persists and SQLite is consistent
-- Add `opencode.cove` to `compose/nginx/default.conf.j2` (Ansible template)
-- Write the `cove up` integration — add the opencode service to Cove's compose stack
+- **Spike: container-lifecycle restart behavior** — run `docker pause`/`unpause`, `docker stop`/`start`, `docker kill`/`start`, verify the existing session-repair flow runs cleanly each time
+- Decide on MVP auth architecture: stack nginx + Caddy (matches operator's working setup) OR nginx-only with ported auth-bypass (cleaner)
+- Write the `cove up` integration — add the opencode service + Caddy/nginx proxy to Cove's compose stack
 - Test: create a session, restart the container, verify session persists
-- Test: access from phone via Tailscale, verify web UI works
+- Test: access from phone on same LAN, verify web UI works with basic auth
 - Document the MVP deployment in the Cove install docs
-- File issues for: (a) verifying XDG path inside container, (b) spike plan for laptop wake, (c) nginx template update
+- File issues for: (a) verifying XDG path inside container, (b) container-lifecycle spike, (c) auth architecture decision
 
 v1:
 - Add Claude Code (Remote Control) — same bind-mount contract, different web surface (outbound)
@@ -390,6 +396,7 @@ v1:
 - Evaluate CloudCLI as a multi-harness dashboard
 - Test multi-harness coexistence on the same laptop
 - Research ACP for Claude Code (decides v2 path)
+- Port Caddy's `header_up Authorization` to nginx (`proxy_set_header`) if MVP chose nginx-only
 
 v2:
 - Tier-2 OpenCode deployment (git-sync, single-machine sessions, manual export/import)
@@ -426,6 +433,9 @@ Full evidence trail in [`docs/troves/harness-catalog/sources/`](../troves/harnes
 
 **Reference deployment (swain-box):**
 - `swain-box/` — 10 files from ~/code/swain-box/ (ARCHITECTURE, PURPOSE, AGENTS, TECH-STACK, DEVELOPER-WORKFLOWS, USER-EXPERIENCE, opencode-dev.yaml, Caddyfile, plus 2 musings)
+
+**Working reference (operator's daily-driver host):**
+- `oc-zsh-functions/` — `~/.config/zsh/functions.opencode.zsh` (oc-tui, oc-web, oc-restart, oc-stop, oc-vacuum, oc-memwatch, oc-direct) + `~/.config/opencode/Caddyfile`. The actual working Caddy + opencode setup, including the auth-bypass trick, watchdog, and session-repair flow.
 
 **Synthesis & related musings:**
 - [`docs/troves/harness-catalog/synthesis.md`](../troves/harness-catalog/synthesis.md) — comprehensive evidence summary
