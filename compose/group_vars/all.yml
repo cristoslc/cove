@@ -56,3 +56,19 @@ nginx_https_port: 8443
 dnsmasq_conf_dir: "{{ playbook_dir }}/dnsmasq"
 dnsmasq_container_name: cove-dnsmasq
 dnsmasq_port: 5353
+
+# --- OpenCode ---
+opencode_image: "ghcr.io/anomalyco/opencode:latest"
+opencode_container_name: cove-opencode
+opencode_code_dir: "{{ ansible_env.HOME }}/Documents/code"
+opencode_projects_dir: "{{ ansible_env.HOME }}/Documents/projects"
+opencode_data_dir: "{{ ansible_env.HOME }}/Documents/cove/opencode"
+opencode_config_dir: "{{ ansible_env.HOME }}/.config/opencode"
+opencode_server_username: opencode
+opencode_server_port: 4095
+opencode_caddy_port: 4096
+opencode_1p_ref: "op://{{ op_vault }}/OpenCode Server"
+
+# --- Caddy ---
+caddy_conf_dir: "{{ playbook_dir }}/caddy"
+caddy_container_name: cove-caddy
