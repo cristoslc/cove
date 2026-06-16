@@ -30,10 +30,10 @@ This musing catalogs the harnesses I've considered for Cove, their tier-1/tier-2
 - **Tier:** 1 (user workstation). No tier-2 deployment in MVP. Tier-2 is v2.
 - **Container runtime:** Docker via Colima. Cove's existing default.
 - **Bind mounts:**
-  - **Code (rw):** `~/Documents/code` — source repos the agent reads/writes. Mounted at `/home/code` inside the container. **Path mismatch:** sessions created on the host reference `~/Documents/code/...` but inside the container the same files are at `/home/code/...`. OpenCode sessions store absolute paths, so sessions created on the host won't find their projects in the container and vice versa. This is acceptable for MVP (the container is the primary surface; the host TUI is secondary) but needs a path-mapping solution for v1.
-  - **Projects (rw):** `~/Documents/projects` — working directories outside the code repos. Same path mismatch as code.
-  - **OpenCode data (rw):** persistent location for SQLite sessions, e.g. `~/Documents/cove/opencode` — must survive container restarts. Per XDG spec (confirmed in issue #6669), OpenCode stores data in `~/.local/share/opencode` and config in `~/.config/opencode` — separate directories. The compose mount target `/home/opencode/.local/share/opencode` is correct for the XDG default. **Verified:** the container writes sessions to this path when `HOME=/home/opencode` is set.
-  - **Config (rw):** `~/.config/opencode` — opencode.jsonc, MCP server definitions, AGENTS.md, custom commands. **OpenCode writes to this** (modifies config, adds skills, updates memories), so it must be rw. **Symlink problem:** the operator's `~/.config/opencode/` is a symlink farm pointing to `~/Documents/202604-workstation/shared/dotfiles/opencode/.config/opencode/` and `/Users/cristos/.agents/`. These symlinks are broken inside the container (host paths don't exist). **Fix:** mount the real config source (`~/Documents/202604-workstation/shared/dotfiles/opencode/.config/opencode`) instead of the symlink directory. Also mount `~/.agents` at its absolute host path so the `skills -> /Users/cristos/.agents/skills` symlink resolves. **Hot-reload of config is unverified** — the swain-box musing claims config is hot-reloadable without restart, but this has not been empirically confirmed.
+  - **Code (rw):** `/Users/cristos/Documents/code/` — source repos the agent reads/writes. Mounted at the same path inside the container so sessions are portable between host and container.
+  - **Projects (rw):** `/Users/cristos/Documents/projects/` — working directories outside the code repos. Same identity mount.
+  - **OpenCode data (rw):** persistent location for SQLite sessions, e.g. `/Users/cristos/Documents/cove/opencode/` — must survive container restarts. Mounted at `/Users/cristos/.local/share/opencode/` (XDG default). **Verified:** the container writes sessions to this path when `HOME=/Users/cristos` is set.
+  - **Config (rw):** `/Users/cristos/.config/opencode/` — opencode.jsonc, MCP server definitions, AGENTS.md, custom commands. **Symlink problem:** the operator's `~/.config/opencode/` is a symlink farm pointing to `~/Documents/202604-workstation/shared/dotfiles/opencode/.config/opencode/` and `/Users/cristos/.agents/`. **Fix:** mount the real config source at the path OpenCode expects (`/Users/cristos/.config/opencode/`). Also mount `~/.agents` at its absolute host path so the `skills` symlink resolves. **Hot-reload of config is unverified.**
   - **Host services:** `extra_hosts: host.docker.internal:host-gateway` is required so the container can reach host-local services (Ollama, Vast GPU endpoints, etc.). Without this, `localhost` inside the container is the container itself, not the host. The operator's config references `http://localhost:11434` for local Ollama — this must be changed to `http://host.docker.internal:11434` or the config must be container-aware.
 - **MCP runtime:** The official OpenCode image is Alpine-based and does not include `node`/`npx`. MCP servers defined as `npx` commands (brave, markitdown, etc.) cannot start. A custom Dockerfile that adds `nodejs npm` is needed, or MCP servers must be configured to use host-installed binaries via volume mounts.
 - **API keys:** The operator's `.env` file uses 1Password references (`op://Private/...`) rather than literal values. The container has no `op` CLI. API keys must be injected as environment variables at bringup time (from 1Password → Vault → `.env` → compose), or the container needs the `op` CLI and a 1Password connect token.
@@ -48,21 +48,21 @@ services:
     container_name: cove-opencode
     command: ["serve", "--port", "4095", "--hostname", "0.0.0.0"]
     environment:
-      HOME: /home/opencode
+      HOME: /Users/cristos
       OPENCODE_SERVER_USERNAME: ${OPENCODE_SERVER_USERNAME:-opencode}
       OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       # Code (rw) — what the agent reads/writes
-      - /Users/cristos/Documents/code:/home/code:rw
-      - /Users/cristos/Documents/projects:/home/projects:rw
+      - /Users/cristos/Documents/code/:/Users/cristos/Documents/code/:rw
+      - /Users/cristos/Documents/projects/:/Users/cristos/Documents/projects/:rw
       # OpenCode data (rw) — SQLite sessions, must persist
-      - /Users/cristos/Documents/cove/opencode:/home/opencode/.local/share/opencode:rw
+      - /Users/cristos/Documents/cove/opencode/:/Users/cristos/.local/share/opencode/:rw
       # Config (rw) — mount the REAL source, not the symlink directory
-      - /Users/cristos/Documents/202604-workstation/shared/dotfiles/opencode/.config/opencode:/home/opencode/.config/opencode:rw
+      - /Users/cristos/Documents/202604-workstation/shared/dotfiles/opencode/.config/opencode/:/Users/cristos/.config/opencode/:rw
       # Agents (ro) — mounted at absolute host path so skills symlink resolves
-      - /Users/cristos/.agents:/Users/cristos/.agents:ro
+      - /Users/cristos/.agents/:/Users/cristos/.agents/:ro
     deploy:
       resources:
         limits:
@@ -83,10 +83,11 @@ services:
 
 **Key differences from the naive "just bind-mount" template:**
 - `command: ["serve", ...]` — the image entrypoint is the TUI, not the server
-- `HOME: /home/opencode` — the image runs as root with `HOME=/root`
+- `HOME: /Users/cristos` — the image runs as root with `HOME=/root`; must match host HOME for XDG paths
 - `extra_hosts: host.docker.internal:host-gateway` — needed for host-local services
+- **Identity mounts** — container-internal paths match host paths exactly, so sessions are portable
 - Config mount points to the real source, not the symlink directory
-- `~/.agents` mounted at absolute host path so `skills` symlink resolves
+- `~/.agents` mounted at its absolute host path so `skills` symlink resolves
 - Caddy port 4097 (not 4096) to avoid conflicting with the operator's existing instance
 - Caddyfile baked into image (Colima virtiofs blocks single-file bind-mounts)
 - No `OPENCODE_SERVER_HOSTNAME` or `OPENCODE_SERVER_PORT` env vars (ignored by the image)
@@ -123,9 +124,9 @@ The MVP compose template above is the **working, tested** version. Getting here 
 
 The official `ghcr.io/anomalyco/opencode:latest` image has `ENTRYPOINT ["opencode"]` with no default `CMD`. Without `command: ["serve"]`, the container starts the TUI (which immediately exits in a headless container). **Fix:** `command: ["serve", "--port", "4095", "--hostname", "0.0.0.0"]`.
 
-### Gap 2: HOME=/root, not /home/opencode
+### Gap 2: HOME=/root, not /Users/cristos
 
-The image runs as root. OpenCode looks for config at `$HOME/.config/opencode/` — which defaults to `/root/.config/opencode/`, not the bind-mounted `/home/opencode/.config/opencode/`. **Fix:** `environment: HOME: /home/opencode`.
+The image runs as root. OpenCode looks for config at `$HOME/.config/opencode/` — which defaults to `/root/.config/opencode/`, not the bind-mounted config. **Fix:** `environment: HOME: /Users/cristos`. This also makes XDG paths (`~/.local/share/opencode`, `~/.config/opencode`) resolve correctly inside the container.
 
 ### Gap 3: Config is a symlink farm
 
@@ -151,11 +152,7 @@ The operator's `.env` file contains `OPENCODE_SERVER_USERNAME=op://Private/OpenC
 
 Colima uses virtiofs for file sharing between host and VM. Single-file bind-mounts (`/host/path/file:/container/path/file:ro`) fail with `not a directory`. **Fix:** bake the Caddyfile into the Caddy image at build time (`COPY Caddyfile /etc/caddy/Caddyfile`). The bringup playbook renders `Caddyfile.j2` → `compose/caddy/Caddyfile` (build context) instead of a data directory. This also means Caddy config changes require an image rebuild + container restart — acceptable for MVP (credentials don't change often).
 
-### Gap 8: Path mismatch between host and container
-
-OpenCode sessions store absolute file paths. A session created on the host references `~/Documents/code/cove/...` but inside the container the same repo is at `/home/code/cove/...`. Sessions created in the container reference `/home/code/...` which doesn't exist on the host. **This is acceptable for MVP** — the container is the primary surface, the host TUI is secondary. For v1, a path-mapping solution is needed (environment variable, symlink farm inside the container, or a session-path-rewrite tool).
-
-### Gap 9: OPENCODE_SERVER_PORT and OPENCODE_SERVER_HOSTNAME are ignored
+### Gap 8: OPENCODE_SERVER_PORT and OPENCODE_SERVER_HOSTNAME are ignored
 
 These environment variables have no effect on the OpenCode image. The server always listens on `127.0.0.1:4096` unless overridden via CLI flags. **Fix:** use `command: ["serve", "--port", "4095", "--hostname", "0.0.0.0"]`. `OPENCODE_SERVER_USERNAME` and `OPENCODE_SERVER_PASSWORD` env vars work correctly.
 
