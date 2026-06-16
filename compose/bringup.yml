@@ -79,7 +79,6 @@
           - git.cove
           - vault.cove
            - hc.cove
-           - opencode.cove
            - "*.pages.cove"
           - localhost
           - 127.0.0.1
@@ -92,7 +91,7 @@
       ansible.builtin.shell: |
         set -eo pipefail
         CERT="{{ cove_data_root }}/certs/cove.local.pem"
-        for host in "git.cove" "vault.cove" "hc.cove" "opencode.cove"; do
+        for host in "git.cove" "vault.cove" "hc.cove"; do
           if ! openssl x509 -in "$CERT" -text -noout | grep -q "DNS:$host"; then
             echo "MISSING: $host"
             exit 1
@@ -107,7 +106,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove git.cove vault.cove hc.cove opencode.cove"
+        line: "127.0.0.1 cove git.cove vault.cove hc.cove"
         state: present
       failed_when: false
 
@@ -157,68 +156,6 @@
         dest: "{{ cove_data_root }}/dnsmasq/cove.conf"
         mode: "0644"
 
-    - name: Check htpasswd and op prerequisites
-      ansible.builtin.command: which htpasswd
-      register: htpasswd_check
-      changed_when: false
-      failed_when: false
-
-    - name: Check op CLI available
-      ansible.builtin.command: which op
-      register: op_check
-      changed_when: false
-      failed_when: false
-
-    - name: Fetch OpenCode credentials from 1Password
-      when: op_check.rc == 0
-      ansible.builtin.command:
-        argv:
-          - op
-          - read
-          - "{{ opencode_1p_ref }}/username"
-      register: oc_username_raw
-      changed_when: false
-      no_log: true
-
-    - name: Fetch OpenCode password from 1Password
-      when: op_check.rc == 0
-      ansible.builtin.command:
-        argv:
-          - op
-          - read
-          - "{{ opencode_1p_ref }}/password"
-      register: oc_password_raw
-      changed_when: false
-      no_log: true
-
-    - name: Generate bcrypt hash for Caddy basic auth
-      when: htpasswd_check.rc == 0
-      ansible.builtin.shell: |
-        set -eo pipefail
-        printf '%s' "{{ oc_password_raw.stdout }}" | htpasswd -niBC 12 "{{ oc_username_raw.stdout }}" | cut -d: -f2
-      register: oc_bcrypt_hash
-      changed_when: false
-      no_log: true
-
-    - name: Generate base64 auth header for auth-bypass
-      when: htpasswd_check.rc == 0
-      ansible.builtin.shell: |
-        set -eo pipefail
-        printf '%s' "{{ oc_username_raw.stdout }}:{{ oc_password_raw.stdout }}" | base64 | tr -d '\n'
-      register: oc_auth_b64
-      changed_when: false
-      no_log: true
-
-    - name: Render Caddy config from template
-      ansible.builtin.template:
-        src: "{{ caddy_conf_dir }}/Caddyfile.j2"
-        dest: "{{ caddy_conf_dir }}/Caddyfile"
-        mode: "0644"
-      vars:
-        opencode_caddy_user: "{{ oc_username_raw.stdout }}"
-        opencode_caddy_hash: "{{ oc_bcrypt_hash.stdout }}"
-        opencode_auth_b64: "{{ oc_auth_b64.stdout }}"
-
     # COMPOSE .env -----------------------------------------------------------
     - name: Render compose .env
       ansible.builtin.copy:
@@ -243,16 +180,6 @@
           DNSMASQ_CONF_DIR={{ dnsmasq_conf_dir }}
           DNSMASQ_CONTAINER_NAME={{ dnsmasq_container_name }}
           DNSMASQ_PORT={{ dnsmasq_port }}
-          OPENCODE_IMAGE={{ opencode_image }}
-          OPENCODE_CONTAINER_NAME={{ opencode_container_name }}
-          OPENCODE_CODE_DIR={{ opencode_code_dir }}
-          OPENCODE_PROJECTS_DIR={{ opencode_projects_dir }}
-          OPENCODE_DATA_DIR={{ opencode_data_dir }}
-          OPENCODE_CONFIG_DIR={{ opencode_config_dir }}
-          OPENCODE_SERVER_USERNAME={{ opencode_server_username }}
-          OPENCODE_SERVER_PASSWORD={{ oc_password_raw.stdout }}
-          CADDY_CONF_DIR={{ caddy_conf_dir }}
-          CADDY_CONTAINER_NAME={{ caddy_container_name }}
 
     # CONTAINERS -------------------------------------------------------------
     - name: Detect active docker context endpoint
@@ -305,23 +232,12 @@
       delay: 2
       until: vault_health.status in [200, 429, 472, 473, 501, 503]
 
-    - name: Wait for OpenCode to respond
-      ansible.builtin.uri:
-        url: "https://opencode.cove/"
-        status_code: 200
-        validate_certs: false
-      register: opencode_health
-      retries: 15
-      delay: 2
-      until: opencode_health.status == 200
-
     - name: Print summary
       ansible.builtin.debug:
         msg: |
           Containers are up.
             Forgejo: https://git.cove/ (TLS via nginx+mkcert)
             Vault  : https://vault.cove/ (TLS via nginx+mkcert)
-            OpenCode: https://opencode.cove/ (TLS via nginx+mkcert, auth via Caddy)
             SSH    : 0.0.0.0:{{ forgejo_ssh_port }}
 
           Next steps:

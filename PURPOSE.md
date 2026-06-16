@@ -65,6 +65,7 @@ Cove is not for teams, not for production, not for multi-node clusters.
 - A Kubernetes distribution (k3s is the runtime, not the product).
 - A replacement for cloud CI (it's the local complement to it).
 - A managed service (you run it, you own the data).
+- **A development environment.** Cove does not ship coding harnesses, editors, LSPs, language runtimes, or any tool that reads/writes your source code. Cove is infrastructure — it provides the services development tools connect to (forge, vault, CI, registry, pages). The tools themselves are the operator's responsibility (or a companion project's).
 
 ## Guiding Principle
 
