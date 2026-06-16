@@ -1,0 +1,16 @@
+:{$OC_CADDY_PORT} {
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+
+	basic_auth {
+		{$OC_CADDY_USER} {$OC_CADDY_HASH}
+	}
+
+	reverse_proxy localhost:{$OC_SERVE_PORT} {
+		header_up Authorization "Basic {$OC_AUTH_B64}"
+		header_down Content-Security-Policy "default-src 'self' ; script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval' ; style-src 'self' 'unsafe-inline' ; connect-src 'self' data: https://opencode.ai ; img-src 'self' data: blob: ; font-src 'self' data:"
+	}
+}
