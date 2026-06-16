@@ -55,14 +55,14 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       # Code (rw) — what the agent reads/writes
-      - ~/Documents/code:/home/code:rw
-      - ~/Documents/projects:/home/projects:rw
+      - /Users/cristos/Documents/code:/home/code:rw
+      - /Users/cristos/Documents/projects:/home/projects:rw
       # OpenCode data (rw) — SQLite sessions, must persist
-      - ~/Documents/cove/opencode:/home/opencode/.local/share/opencode:rw
+      - /Users/cristos/Documents/cove/opencode:/home/opencode/.local/share/opencode:rw
       # Config (rw) — mount the REAL source, not the symlink directory
-      - ~/Documents/202604-workstation/shared/dotfiles/opencode/.config/opencode:/home/opencode/.config/opencode:rw
+      - /Users/cristos/Documents/202604-workstation/shared/dotfiles/opencode/.config/opencode:/home/opencode/.config/opencode:rw
       # Agents (ro) — mounted at absolute host path so skills symlink resolves
-      - ~/.agents:/Users/cristos/.agents:ro
+      - /Users/cristos/.agents:/Users/cristos/.agents:ro
     deploy:
       resources:
         limits:
