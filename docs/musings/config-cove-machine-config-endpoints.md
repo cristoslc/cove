@@ -378,7 +378,13 @@ Write-Host "Test: nslookup git.cove.{{ ansible_hostname }}"
 
 The `{{ root_ca_b64 }}` is the base64-encoded root CA cert (PEM without header/footer, or the DER binary base64'd). The UUIDs are generated at template render time (Python `uuid.uuid4()` in Ansible). iOS Safari sees `application/x-apple-aspen-config` and offers "Install Profile" — one tap, then Settings → Install.
 
-**Android** — plain text instructions. Android has no equivalent of `.mobileconfig` for CA certs or DNS. The user must manually install the CA cert (Settings → Security → Install from storage) and configure DNS (either Private DNS which requires DoT, or a per-network setting). The text explains both:
+**Android** — plain text instructions. Android has no `.mobileconfig` equivalent. CA certs must be installed manually (Settings → Security → Install from storage). DNS cannot be auto-configured for custom domains:
+
+- **Private DNS** (Android 9+) requires DoT — dnsmasq doesn't speak it.
+- **Per-network DNS** works (Settings → Wi-Fi → gear icon → Advanced → DNS) but is manual and varies by manufacturer.
+- **Tailscale** is the practical answer. With Tailscale on the phone and `--accept-dns` pointing at the tailnet's DNS, MagicDNS handles resolution. No per-network config needed.
+
+The `/config/dns/android` response explains this honestly and points the user at Tailscale:
 
 ```
 Cove on {{ ansible_hostname }}
@@ -388,15 +394,38 @@ Cove on {{ ansible_hostname }}
    Download https://<ip>/config/ca
    Settings → Security → Encryption & credentials →
    Install a certificate → CA certificate
+   (Path varies by manufacturer — search "certificate" in Settings)
 
 2. DNS configuration:
    Android cannot auto-configure DNS for *.cove.{{ ansible_hostname }}.
-   Use Tailscale MagicDNS or configure Private DNS (requires DoT server).
+   The simplest path: install Tailscale on your phone, connect to
+   your tailnet, and enable MagicDNS. *.cove.{{ ansible_hostname }}
+   names will resolve automatically.
+
+   Manual alternative (per Wi-Fi network only):
+   Settings → Wi-Fi → [your network] → gear icon →
+   Advanced → Private DNS → Off (or use Tailscale)
+   Then: IP settings → Static → DNS 1: {{ ts_ip }}
 
 3. Access Cove:
    https://<tailscale-fqdn>/ — Forgejo
    https://<tailscale-fqdn>/config/ — this page
 ```
+
+### Why Phones Can't Auto-Configure Plain DNS
+
+Both iOS and Android only support encrypted DNS for system-level configuration:
+
+| Platform | Mechanism | Protocol Required | dnsmasq Compatible? |
+|----------|-----------|-------------------|---------------------|
+| iOS | DNS Settings profile (`.mobileconfig`) | DoH or DoT | No — dnsmasq is plain DNS |
+| iOS | Per-network DNS (manual) | Plain DNS | Yes, but per-network only |
+| Android | Private DNS (system-wide) | DoT | No — dnsmasq is plain DNS |
+| Android | Per-network DNS (manual) | Plain DNS | Yes, but per-network only, varies by OEM |
+
+A future DoH proxy alongside dnsmasq would unlock auto-configuration for both platforms. A lightweight Go binary that accepts DoH on port 443 and forwards to dnsmasq on 5353 would let iOS `.mobileconfig` DNS profiles and Android Private DNS work. But that's a separate service, not part of the current dnsmasq setup.
+
+For now, the honest answer: **phones use Tailscale for DNS.** Cove provides DNS for desktop OSes (where `/etc/resolver/` and dnsmasq configs work). Phones get DNS from Tailscale MagicDNS. The `/config/` flow gets the CA cert installed on the phone; DNS is Tailscale's job.
 
 ## nginx Implementation
 
