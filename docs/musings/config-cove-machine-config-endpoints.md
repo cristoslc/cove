@@ -418,14 +418,216 @@ Both iOS and Android only support encrypted DNS for system-level configuration:
 
 | Platform | Mechanism | Protocol Required | dnsmasq Compatible? |
 |----------|-----------|-------------------|---------------------|
-| iOS | DNS Settings profile (`.mobileconfig`) | DoH or DoT | No — dnsmasq is plain DNS |
+| iOS | DNS Settings profile (`.mobileconfig`) | DoH or DoT | Yes — via DoH proxy |
 | iOS | Per-network DNS (manual) | Plain DNS | Yes, but per-network only |
-| Android | Private DNS (system-wide) | DoT | No — dnsmasq is plain DNS |
+| Android | Private DNS (system-wide) | DoT only | No — needs DoT (future) |
+| Android | Third-party DoH app (Intra, Nebulo) | DoH | Yes — via DoH proxy |
 | Android | Per-network DNS (manual) | Plain DNS | Yes, but per-network only, varies by OEM |
 
-A future DoH proxy alongside dnsmasq would unlock auto-configuration for both platforms. A lightweight Go binary that accepts DoH on port 443 and forwards to dnsmasq on 5353 would let iOS `.mobileconfig` DNS profiles and Android Private DNS work. But that's a separate service, not part of the current dnsmasq setup.
+## DoH Proxy
 
-For now, the honest answer: **phones use Tailscale for DNS.** Cove provides DNS for desktop OSes (where `/etc/resolver/` and dnsmasq configs work). Phones get DNS from Tailscale MagicDNS. The `/config/` flow gets the CA cert installed on the phone; DNS is Tailscale's job.
+A lightweight DNS-over-HTTPS proxy runs alongside dnsmasq, accepting encrypted DNS queries and forwarding them to dnsmasq over plain UDP. This unlocks iOS auto-configuration (`.mobileconfig` DNS Settings payload) and gives Android a DoH endpoint for third-party apps.
+
+### Architecture
+
+```
+Phone (iOS/Android)
+  │
+  │ DoH POST /dns-query (HTTPS, DNS wire format)
+  ▼
+nginx (:443)
+  │ proxy_pass → doh-proxy:8053
+  ▼
+doh-proxy (Go binary, internal port 8053)
+  │ forward UDP → dnsmasq:5353
+  ▼
+dnsmasq (:5353)
+  │ resolve *.cove.<slug> → <ts-ip>
+  ▼
+response (DNS wire format)
+```
+
+nginx terminates TLS (mkcert `*.cove` cert). The DoH proxy speaks HTTP on one side and DNS on the other. It's a ~100-line Go binary — receives RFC 8484 POST requests with DNS wire format bodies, forwards to dnsmasq via UDP, returns the wire format response.
+
+### Container
+
+The DoH proxy runs in the dnsmasq container alongside dnsmasq. Same network namespace, same lifecycle. No new container, no new port publishing. The Dockerfile adds the Go binary:
+
+```dockerfile
+FROM alpine:3.21
+RUN apk add --no-cache dnsmasq
+COPY cove.conf /etc/dnsmasq.d/cove.conf
+COPY doh-proxy /usr/local/bin/doh-proxy
+ENTRYPOINT ["sh", "-c", "dnsmasq --no-daemon --conf-dir=/etc/dnsmasq.d & doh-proxy -upstream 127.0.0.1:5353 -listen :8053"]
+```
+
+The `doh-proxy` binary is built from source (Go) and committed to the repo, or built in a multi-stage Dockerfile. Flags: `-upstream` is the dnsmasq address, `-listen` is the HTTP listen address.
+
+### nginx
+
+A `/dns-query` location on the default server block and `git.cove` server block:
+
+```nginx
+location = /dns-query {
+    proxy_pass http://dnsmasq:8053;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+The DoH proxy only needs the POST body (DNS wire format). Standard proxy headers are fine.
+
+### iOS `.mobileconfig` — Now With Real DNS
+
+With DoH available, the iOS profile includes a DNS Settings payload that configures system-wide resolution for `*.cove.<slug>`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <!-- CA cert payload (same as before) -->
+        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>cove-root-ca.pem</string>
+            <key>PayloadContent</key>
+            <data>{{ root_ca_b64 }}</data>
+            <key>PayloadDescription</key>
+            <string>Trusts *.cove certificates from {{ ansible_hostname }}</string>
+            <key>PayloadDisplayName</key>
+            <string>Cove Root CA — {{ ansible_hostname }}</string>
+            <key>PayloadIdentifier</key>
+            <string>cove.ca.{{ ansible_hostname }}</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.root</string>
+            <key>PayloadUUID</key>
+            <string>{{ ca_uuid }}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+        <!-- DNS Settings payload -->
+        <dict>
+            <key>PayloadDescription</key>
+            <string>Configures DNS resolution for *.cove.{{ ansible_hostname }}</string>
+            <key>PayloadDisplayName</key>
+            <string>Cove DNS — {{ ansible_hostname }}</string>
+            <key>PayloadIdentifier</key>
+            <string>cove.dns.{{ ansible_hostname }}</string>
+            <key>PayloadType</key>
+            <string>com.apple.dnsSettings.managed</string>
+            <key>PayloadUUID</key>
+            <string>{{ dns_uuid }}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>DNSSettings</key>
+            <dict>
+                <key>DNSProtocol</key>
+                <string>HTTPS</string>
+                <key>ServerURL</key>
+                <string>https://{{ ts_ip }}:8443/dns-query</string>
+                <key>SupplementalMatchDomains</key>
+                <array>
+                    <string>cove.{{ ansible_hostname }}</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Cove — {{ ansible_hostname }}</string>
+    <key>PayloadIdentifier</key>
+    <string>cove.{{ ansible_hostname }}</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{{ profile_uuid }}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+```
+
+The `ServerURL` uses the Tailscale IP directly (not a hostname) because the phone doesn't resolve `*.cove` names yet — that's what this profile configures. The `SupplementalMatchDomains` scopes the DoH server to only `*.cove.<slug>` queries; all other DNS goes through the system default. One tap in Safari, Settings → Install, and both the CA cert and DNS are configured.
+
+### Android
+
+Android Private DNS (system-wide) only supports DoT, not DoH. A DoT endpoint would need a separate TLS listener — more complexity than DoH. For now, Android has two paths:
+
+1. **Tailscale** (recommended) — MagicDNS handles resolution. No per-network config.
+2. **Third-party DoH app** (Intra, Nebulo, DNSChanger) — point at `https://<ts-ip>:8443/dns-query`. These apps create a local VPN interface that intercepts DNS and forwards via DoH.
+
+The `/config/dns/android` response explains both options. A future DoT endpoint (same proxy, different listener) would unlock system-level Private DNS on Android.
+
+### DoH Proxy Binary
+
+A minimal Go program. The core is ~100 lines:
+
+```go
+// doh-proxy: accepts DoH POST /dns-query, forwards to upstream DNS via UDP
+package main
+
+import (
+    "flag"
+    "io"
+    "log"
+    "net"
+    "net/http"
+    "time"
+)
+
+func main() {
+    upstream := flag.String("upstream", "127.0.0.1:5353", "DNS upstream address")
+    listen := flag.String("listen", ":8053", "HTTP listen address")
+    flag.Parse()
+
+    http.HandleFunc("/dns-query", func(w http.ResponseWriter, r *http.Request) {
+        if r.Method != http.MethodPost {
+            http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+            return
+        }
+        body, err := io.ReadAll(r.Body)
+        if err != nil || len(body) == 0 {
+            http.Error(w, "bad request", http.StatusBadRequest)
+            return
+        }
+        conn, err := net.DialTimeout("udp", *upstream, 5*time.Second)
+        if err != nil {
+            http.Error(w, "upstream unreachable", http.StatusBadGateway)
+            return
+        }
+        defer conn.Close()
+        conn.SetDeadline(time.Now().Add(5 * time.Second))
+        if _, err := conn.Write(body); err != nil {
+            http.Error(w, "upstream write failed", http.StatusBadGateway)
+            return
+        }
+        resp := make([]byte, 512)
+        n, err := conn.Read(resp)
+        if err != nil {
+            http.Error(w, "upstream read failed", http.StatusBadGateway)
+            return
+        }
+        w.Header().Set("Content-Type", "application/dns-message")
+        w.Write(resp[:n])
+    })
+
+    log.Printf("DoH proxy listening on %s, upstream %s", *listen, *upstream)
+    log.Fatal(http.ListenAndServe(*listen, nil))
+}
+```
+
+No caching, no recursion, no DNSSEC validation. It's a transparent pipe: DoH in, UDP out, response back. dnsmasq does the actual resolution. The binary is statically compiled (`CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build`) and copied into the dnsmasq Docker image.
+
+### What This Unlocks
+
+| Before DoH | After DoH |
+|-----------|----------|
+| iOS: manual CA install, no DNS config | iOS: one-tap profile installs CA + DNS |
+| Android: manual CA install, Tailscale-only DNS | Android: CA install + DoH app option |
+| Desktop: already works via `/config/dns` scripts | Desktop: unchanged (scripts are better than DoH for desktops) |
+
+The DoH proxy is the bridge between encrypted DNS (what phones require) and plain DNS (what dnsmasq speaks). It's a thin pipe — no logic, no caching, just protocol translation.
 
 ## nginx Implementation
 
