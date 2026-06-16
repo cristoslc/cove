@@ -1,74 +1,396 @@
 # /config/* — Machine Configuration Endpoints
 
-When you add a second device to your Cove setup — another laptop, a phone, a VM — you need the root CA cert from an existing machine so TLS works. You also need to know the machine's identity (its slug) and how to configure DNS so `*.cove.<slug>` names resolve.
+When you add a second device to your Cove setup — another laptop, a phone, a VM — you need the root CA cert from an existing machine so TLS works. You also need DNS configured so `*.cove.<slug>` names resolve to the right machine.
 
-`/config/*` paths on existing nginx server blocks serve these artifacts. No new subdomain, no new server block, no new SANs. You hit these before DNS is wired up — via Tailscale FQDN, direct IP, or `git.cove` on the host machine.
+`/config/*` paths on nginx serve these artifacts. You hit them via any IP that reaches the machine — LAN IP, Tailscale IP, direct connection. No hostname needed. This is the bootstrap surface: you reach it before DNS is wired up, get the CA cert and DNS config, then DNS works and you use proper hostnames from then on.
 
 ## The Endpoints
 
-### `/config/ca` — Root CA Certificate
+### `/config/` — Human-Readable Info Page
 
-The mkcert root CA public cert as a PEM file download. Install this on any device that needs to trust `*.cove` TLS certificates from this machine.
+An HTML page showing the machine's identity, CA cert download link, install instructions per platform, and the DNS resolver configuration.
 
 ```
-GET https://git.cove/config/ca
+GET http://<lan-ip>:8080/config/
+GET https://<ts-ip>:8443/config/
+```
+
+Rendered from a Jinja2 template at provision time. Shows `{{ ansible_hostname }}` and `{{ ts_ip }}` (or LAN IP if Tailscale is down).
+
+### `/config/ca` — Root CA Certificate Download
+
+The mkcert root CA public cert as a PEM file. Always a raw download — no HTML wrapper.
+
+```
+GET https://<ip>/config/ca
 → Content-Type: application/x-pem-file
 → Content-Disposition: attachment; filename="cove-root-ca.pem"
 ```
 
-On iOS: Safari downloads it → Settings → Profile Downloaded → Install. On macOS: double-click → Keychain → mark as trusted. On Linux: `sudo trust anchor cove-root-ca.pem`.
+### `/config/dns` — Platform-Specific DNS Setup
 
-From a phone on Tailscale: `https://<tailscale-fqdn>/config/ca` (hits the catch-all, which has the same location). Use `curl -kO` from a terminal if the cert isn't trusted yet — that's what you're fixing.
+Auto-detects the requesting device from User-Agent and serves the right thing for that platform. No JSON, no manual copy-paste. Each platform gets what it can actually use.
 
-### `/config/` — Machine Info Page
+| Platform | Served | What the user does |
+|----------|--------|-------------------|
+| macOS | Shell script | `curl .../config/dns \| sudo bash` |
+| Linux | Shell script | `curl .../config/dns \| sudo bash` |
+| Windows | PowerShell script | `irm .../config/dns \| iex` (or download + run) |
+| iOS | `.mobileconfig` profile | Safari downloads → Settings → Profile → Install |
+| Android | Plain text instructions | Nothing auto-applicable; shows manual steps |
+| Unknown | Plain text instructions | Shows all platform options |
 
-A human-readable HTML page. No JSON. Shows what a person needs to know and do:
-
-```html
-<!DOCTYPE html>
-<html>
-<head><title>Cove — mbpbk</title></head>
-<body>
-  <h1>Cove on mbpbk</h1>
-
-  <h2>Trust this machine</h2>
-  <p><a href="/config/ca">Download root CA certificate</a></p>
-  <p>Install it in your system trust store. On iOS: open in Safari,
-     go to Settings → Profile Downloaded → Install. On macOS:
-     double-click → Keychain → mark as trusted.</p>
-
-  <h2>Reach this machine</h2>
-  <p>Once DNS is configured, these names resolve to this machine:</p>
-  <ul>
-    <li><code>git.cove.mbpbk</code> — forge</li>
-    <li><code>vault.cove.mbpbk</code> — vault</li>
-  </ul>
-
-  <h2>Configure DNS (desktop OSes)</h2>
-  <p>To resolve <code>*.cove.mbpbk</code> names, add a resolver
-     pointing at this machine's DNS server:</p>
-
-  <h3>macOS</h3>
-  <pre># Create /etc/resolver/cove.mbpbk:
+**macOS script:**
+```bash
+#!/bin/bash
+set -e
+RESOLVER_DIR="/etc/resolver"
+RESOLVER_FILE="$RESOLVER_DIR/cove.mbpbk"
+if [ "$EUID" -ne 0 ]; then
+    echo "This script needs sudo to write to /etc/resolver/"
+    exec sudo bash "$0"
+fi
+mkdir -p "$RESOLVER_DIR"
+cat > "$RESOLVER_FILE" <<EOF
 nameserver 100.64.0.5
-port 5353</pre>
-
-  <h3>Linux (dnsmasq)</h3>
-  <pre># Add to /etc/dnsmasq.d/cove-mbpbk.conf:
-server=/cove.mbpbk/100.64.0.5#5353</pre>
-
-  <p>DNS IP: <code>100.64.0.5</code> (Tailscale)</p>
-</body>
-</html>
+port 5353
+EOF
+echo "DNS resolver configured: $RESOLVER_FILE"
+echo "Test: dscacheutil -q host -a name git.cove.mbpbk"
 ```
 
-The page is rendered from a Jinja2 template (`config.html.j2`) with `{{ ansible_hostname }}` and `{{ ts_ip }}` substituted at provision time. The DNS config section is for desktop OSes — phones can't configure resolver files, so they use the Tailscale FQDN directly.
+**Linux script (dnsmasq):**
+```bash
+#!/bin/bash
+set -e
+CONF_FILE="/etc/dnsmasq.d/cove-mbpbk.conf"
+if [ "$EUID" -ne 0 ]; then
+    exec sudo bash "$0"
+fi
+cat > "$CONF_FILE" <<EOF
+server=/cove.mbpbk/100.64.0.5#5353
+EOF
+if systemctl is-active --quiet dnsmasq; then
+    systemctl restart dnsmasq
+    echo "dnsmasq restarted with new config"
+else
+    echo "Config written to $CONF_FILE"
+    echo "Start dnsmasq or reload it to apply"
+fi
+echo "Test: dig git.cove.mbpbk"
+```
+
+**Windows PowerShell script:**
+```powershell
+# Requires admin
+if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Error "Run as Administrator"
+    exit 1
+}
+# Windows DNS: add a conditional forwarder or use hosts file
+# hosts file is the simplest cross-platform approach
+$hostsPath = "$env:SystemRoot\System32\drivers\etc\hosts"
+$entry = "100.64.0.5 git.cove.mbpbk vault.cove.mbpbk"
+if (-not (Select-String -Path $hostsPath -Pattern "cove.mbpbk" -SimpleMatch)) {
+    Add-Content -Path $hostsPath -Value $entry
+    Write-Host "Added to hosts: $entry"
+} else {
+    Write-Host "Entry already exists"
+}
+Write-Host "Test: nslookup git.cove.mbpbk"
+```
+
+Windows doesn't have `/etc/resolver/` or dnsmasq. The hosts file is the pragmatic answer — same mechanism Cove uses for its own hostnames. A conditional forwarder via `Add-DnsClientNrptRule` would be cleaner but requires the DNS Client service and is Windows Server-specific. Hosts file works everywhere.
+
+**iOS `.mobileconfig` profile:**
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadDescription</key>
+            <string>Configures DNS resolution for *.cove.mbpbk</string>
+            <key>PayloadDisplayName</key>
+            <string>Cove DNS — mbpbk</string>
+            <key>PayloadIdentifier</key>
+            <string>cove.dns.mbpbk</string>
+            <key>PayloadType</key>
+            <string>com.apple.dnsSettings.managed</string>
+            <key>PayloadUUID</key>
+            <string>$(uuidgen)</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+            <key>DNSSettings</key>
+            <dict>
+                <key>DNSProtocol</key>
+                <string>HTTPS</string>
+                <key>ServerAddresses</key>
+                <array>
+                    <string>100.64.0.5</string>
+                </array>
+                <key>ServerURL</key>
+                <string>https://100.64.0.5:5353/dns-query</string>
+                <key>SupplementalMatchDomains</key>
+                <array>
+                    <string>cove.mbpbk</string>
+                </array>
+            </dict>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Cove DNS — mbpbk</string>
+    <key>PayloadIdentifier</key>
+    <string>cove.dns.mbpbk</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>$(uuidgen)</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+```
+
+Wait — dnsmasq doesn't speak DNS-over-HTTPS. The `.mobileconfig` DNS Settings payload requires DoH or DoT. dnsmasq is plain UDP/TCP DNS. iOS can't use it directly via a configuration profile.
+
+**Revised iOS approach:** A `.mobileconfig` that installs the root CA cert (not DNS). DNS on iOS stays manual or uses Tailscale MagicDNS. The `/config/dns` endpoint for iOS serves the CA cert profile instead — that's what iOS can actually auto-install.
+
+Actually, let me reconsider. The user said `/config/dns` should auto-detect and serve a script or file for each platform. For iOS, the useful thing is the CA cert profile. For Android, it's instructions. Let me be honest about what each platform can do.
+
+Let me rewrite this properly.</think>
+
+<｜DSML｜tool_calls>
+<｜DSML｜invoke name="write">
+<｜DSML｜parameter name="content" string="true"># /config/* — Machine Configuration Endpoints
+
+When you add a second device to your Cove setup — another laptop, a phone, a VM — you need the root CA cert from an existing machine so TLS works. You also need DNS configured so `*.cove.<slug>` names resolve to the right machine.
+
+`/config/*` paths on nginx serve these artifacts. You hit them via any IP that reaches the machine — LAN IP, Tailscale IP, direct connection. No hostname needed. This is the bootstrap surface: you reach it before DNS is wired up, get the CA cert and DNS config, then DNS works and you use proper hostnames from then on.
+
+## The Endpoints
+
+### `/config/` — Human-Readable Info Page
+
+An HTML page showing the machine's identity, CA cert download link, install instructions per platform, and the DNS resolver configuration. Served on any IP:
+
+```
+http://<lan-ip>:8080/config/
+https://<ts-ip>:8443/config/
+```
+
+Rendered from a Jinja2 template at provision time with `{{ ansible_hostname }}` and `{{ ts_ip }}` (or LAN IP fallback).
+
+### `/config/ca` — Root CA Certificate Download
+
+The mkcert root CA public cert as a PEM file. Always a raw download — no HTML wrapper.
+
+```
+GET https://<ip>/config/ca
+→ Content-Type: application/x-pem-file
+→ Content-Disposition: attachment; filename="cove-root-ca.pem"
+```
+
+### `/config/dns` — Platform-Specific DNS Setup
+
+Auto-detects the requesting device from User-Agent and serves the right artifact for that platform. No JSON, no manual copy-paste. Each platform gets what it can actually use.
+
+| Platform | User-Agent match | Served | Content-Type |
+|----------|-----------------|--------|-------------|
+| macOS | `Macintosh` | Shell script | `text/x-shellscript` |
+| Linux | `Linux` (not Android) | Shell script | `text/x-shellscript` |
+| Windows | `Windows` | PowerShell script | `text/plain` |
+| iOS | `iPhone` or `iPad` or `iPod` | `.mobileconfig` CA profile | `application/x-apple-aspen-config` |
+| Android | `Android` | Plain text instructions | `text/plain` |
+| Unknown | (default) | Plain text instructions | `text/plain` |
+
+**macOS script** — creates `/etc/resolver/cove.<slug>`:
+
+```bash
+#!/bin/bash
+set -e
+FILE="/etc/resolver/cove.{{ ansible_hostname }}"
+if [ "$EUID" -ne 0 ]; then exec sudo bash "$0"; fi
+mkdir -p /etc/resolver
+cat > "$FILE" <<'EOF'
+nameserver {{ ts_ip }}
+port 5353
+EOF
+echo "DNS resolver configured: $FILE"
+echo "Test: dscacheutil -q host -a name git.cove.{{ ansible_hostname }}"
+```
+
+**Linux script** — creates `/etc/dnsmasq.d/cove-<slug>.conf`:
+
+```bash
+#!/bin/bash
+set -e
+FILE="/etc/dnsmasq.d/cove-{{ ansible_hostname }}.conf"
+if [ "$EUID" -ne 0 ]; then exec sudo bash "$0"; fi
+cat > "$FILE" <<'EOF'
+server=/cove.{{ ansible_hostname }}/{{ ts_ip }}#5353
+EOF
+if systemctl is-active --quiet dnsmasq 2>/dev/null; then
+    systemctl restart dnsmasq
+    echo "dnsmasq restarted"
+else
+    echo "Config written to $FILE — start or reload dnsmasq to apply"
+fi
+echo "Test: dig git.cove.{{ ansible_hostname }}"
+```
+
+**Windows PowerShell script** — adds to hosts file (Windows has no `/etc/resolver/` equivalent; NRPT rules require Enterprise/Server SKUs):
+
+```powershell
+#Requires -RunAsAdministrator
+$hosts = "$env:SystemRoot\System32\drivers\etc\hosts"
+$entry = "{{ ts_ip }} git.cove.{{ ansible_hostname }} vault.cove.{{ ansible_hostname }}"
+if (-not (Select-String -Path $hosts -Pattern "cove.{{ ansible_hostname }}" -SimpleMatch -ErrorAction SilentlyContinue)) {
+    Add-Content -Path $hosts -Value $entry
+    Write-Host "Added: $entry"
+} else {
+    Write-Host "Entry already exists"
+}
+Write-Host "Test: nslookup git.cove.{{ ansible_hostname }}"
+```
+
+**iOS `.mobileconfig`** — installs the root CA certificate. iOS can't auto-configure plain DNS (only DoH/DoT via profiles, which dnsmasq doesn't speak). But it CAN install a CA cert via a profile. The `/config/dns` endpoint for iOS serves the CA cert wrapped in a `.mobileconfig` so Safari offers one-tap install:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>PayloadContent</key>
+    <array>
+        <dict>
+            <key>PayloadCertificateFileName</key>
+            <string>cove-root-ca.pem</string>
+            <key>PayloadContent</key>
+            <data>
+{{ root_ca_b64 }}
+            </data>
+            <key>PayloadDescription</key>
+            <string>Trusts *.cove certificates from mbpbk</string>
+            <key>PayloadDisplayName</key>
+            <string>Cove Root CA — mbpbk</string>
+            <key>PayloadIdentifier</key>
+            <string>cove.ca.mbpbk</string>
+            <key>PayloadType</key>
+            <string>com.apple.security.root</string>
+            <key>PayloadUUID</key>
+            <string>{{ ca_uuid }}</string>
+            <key>PayloadVersion</key>
+            <integer>1</integer>
+        </dict>
+    </array>
+    <key>PayloadDisplayName</key>
+    <string>Cove Root CA — mbpbk</string>
+    <key>PayloadIdentifier</key>
+    <string>cove.ca.mbpbk</string>
+    <key>PayloadType</key>
+    <string>Configuration</string>
+    <key>PayloadUUID</key>
+    <string>{{ profile_uuid }}</string>
+    <key>PayloadVersion</key>
+    <integer>1</integer>
+</dict>
+</plist>
+```
+
+The `{{ root_ca_b64 }}` is the base64-encoded root CA cert (PEM without header/footer, or the DER binary base64'd). The UUIDs are generated at template render time (Python `uuid.uuid4()` in Ansible). iOS Safari sees `application/x-apple-aspen-config` and offers "Install Profile" — one tap, then Settings → Install.
+
+**Android** — plain text instructions. Android has no equivalent of `.mobileconfig` for CA certs or DNS. The user must manually install the CA cert (Settings → Security → Install from storage) and configure DNS (either Private DNS which requires DoT, or a per-network setting). The text explains both:
+
+```
+Cove on {{ ansible_hostname }}
+===============================
+
+1. Install the root CA certificate:
+   Download https://<ip>/config/ca
+   Settings → Security → Encryption & credentials →
+   Install a certificate → CA certificate
+
+2. DNS configuration:
+   Android cannot auto-configure DNS for *.cove.{{ ansible_hostname }}.
+   Use Tailscale MagicDNS or configure Private DNS (requires DoT server).
+
+3. Access Cove:
+   https://<tailscale-fqdn>/ — Forgejo
+   https://<tailscale-fqdn>/config/ — this page
+```
 
 ## nginx Implementation
 
-Two `location` directives added to the existing `git.cove` server block and the catch-all (default) server block.
+### User-Agent detection
+
+A `map` block in the nginx config classifies the client OS:
+
+```nginx
+map $http_user_agent $config_dns_type {
+    default                      "unknown";
+    "~*Macintosh"                "macos";
+    "~*Windows NT"               "windows";
+    "~*Android"                  "android";
+    "~*iPhone"                   "ios";
+    "~*iPad"                     "ios";
+    "~*iPod"                     "ios";
+    "~*Linux"                    "linux";
+}
+```
+
+The `linux` match comes after `android` so Android (which also says "Linux" in UA) is caught first.
+
+### Server blocks
+
+The `/config/*` locations live on the default server block (catches direct IP access) and the `git.cove` server block (host-machine access). The catch-all no longer proxies to Forgejo — Forgejo is only reachable at `git.cove` and `git.cove.<slug>`.
+
+```nginx
+# Default server — catches direct IP access (LAN, Tailscale)
+server {
+    listen 443 ssl default_server;
+    listen 80 default_server;
+    server_name _;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    # HTTP → HTTPS redirect (except /config/ which works on either)
+    if ($scheme = http) {
+        return 301 https://$host$request_uri;
+    }
+
+    location = /config/ {
+        alias /etc/nginx/config.html;
+        add_header Content-Type text/html;
+    }
+
+    location = /config/ca {
+        alias /certs/rootCA.pem;
+        add_header Content-Type application/x-pem-file;
+        add_header Content-Disposition 'attachment; filename="cove-root-ca.pem"';
+    }
+
+    location = /config/dns {
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+        alias /etc/nginx/config/dns/$config_dns_type;
+    }
+
+    # Everything else: close the connection (no Forgejo proxy)
+    location / {
+        return 444;
+    }
+}
+```
+
+The `/config/dns` location uses `alias` with the `$config_dns_type` variable to serve different files from `/etc/nginx/config/dns/macos`, `/etc/nginx/config/dns/linux`, etc. These files are rendered from Jinja2 templates at provision time.
 
 ### git.cove server block
+
+Same `/config/*` locations, plus the Forgejo proxy:
 
 ```nginx
 server {
@@ -78,64 +400,169 @@ server {
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
 
+    location = /config/ {
+        alias /etc/nginx/config.html;
+        add_header Content-Type text/html;
+    }
+
     location = /config/ca {
         alias /certs/rootCA.pem;
         add_header Content-Type application/x-pem-file;
         add_header Content-Disposition 'attachment; filename="cove-root-ca.pem"';
     }
 
+    location = /config/dns {
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+        alias /etc/nginx/config/dns/$config_dns_type;
+    }
+
+    location / {
+        proxy_pass http://forgejo_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
+
+### Per-machine git.cove regex block
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name ~^git\.cove\.[a-zA-Z0-9-]+$ ~^cove\.[a-zA-Z0-9-]+$;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
     location = /config/ {
         alias /etc/nginx/config.html;
         add_header Content-Type text/html;
     }
 
+    location = /config/ca {
+        alias /certs/rootCA.pem;
+        add_header Content-Type application/x-pem-file;
+        add_header Content-Disposition 'attachment; filename="cove-root-ca.pem"';
+    }
+
+    location = /config/dns {
+        add_header Content-Type text/x-shellscript;
+        add_header Content-Disposition 'attachment; filename="cove-dns-setup.sh"';
+        alias /etc/nginx/config/dns/$config_dns_type;
+    }
+
     location / {
         proxy_pass http://forgejo_backend;
-        # ...
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
     }
 }
 ```
 
-### Catch-all server block (remote-device access)
+## Templates and Provisioning
 
-Same two locations. From a phone on Tailscale: `https://<tailscale-fqdn>/config/` shows the page, `https://<tailscale-fqdn>/config/ca` downloads the cert.
+### Files rendered at `cove up` time
 
-### Config HTML template (`config.html.j2`)
+| Template | Rendered to | Mounted in nginx |
+|----------|------------|-----------------|
+| `compose/nginx/config.html.j2` | `{{ cove_data_root }}/nginx/config.html` | `/etc/nginx/config.html` |
+| `compose/nginx/config/dns/macos.j2` | `{{ cove_data_root }}/nginx/config/dns/macos` | `/etc/nginx/config/dns/macos` |
+| `compose/nginx/config/dns/linux.j2` | `{{ cove_data_root }}/nginx/config/dns/linux` | `/etc/nginx/config/dns/linux` |
+| `compose/nginx/config/dns/windows.j2` | `{{ cove_data_root }}/nginx/config/dns/windows` | `/etc/nginx/config/dns/windows` |
+| `compose/nginx/config/dns/ios.j2` | `{{ cove_data_root }}/nginx/config/dns/ios` | `/etc/nginx/config/dns/ios` |
+| `compose/nginx/config/dns/android.j2` | `{{ cove_data_root }}/nginx/config/dns/android` | `/etc/nginx/config/dns/android` |
+| `compose/nginx/config/dns/unknown.j2` | `{{ cove_data_root }}/nginx/config/dns/unknown` | `/etc/nginx/config/dns/unknown` |
 
-A static HTML file rendered at provision time. Stored alongside the nginx config template, rendered to `~/Documents/cove-data/nginx/config.html`, mounted into the nginx container.
+### Template variables
 
-## No New Subdomains, No New SANs
+All templates receive:
+- `{{ ansible_hostname }}` — machine slug (e.g., `mbpbk`)
+- `{{ ts_ip }}` — Tailscale IP (e.g., `100.64.0.5`), or LAN IP fallback
+- `{{ root_ca_b64 }}` — base64-encoded root CA cert (for iOS `.mobileconfig`)
+- `{{ ca_uuid }}`, `{{ profile_uuid }}` — generated UUIDs (for iOS `.mobileconfig`)
 
-`/config/*` paths live on existing server blocks. No `config.cove` subdomain to add to mkcert SANs. No new TLS concerns. The paths work on any hostname that reaches nginx — `git.cove` (host machine), Tailscale FQDN (phone), direct IP (VM).
+### Data directory additions
+
+```
+~/Documents/cove-data/nginx/
+├── config.html
+└── config/
+    └── dns/
+        ├── macos
+        ├── linux
+        ├── windows
+        ├── ios
+        ├── android
+        └── unknown
+```
+
+### Volume mounts
+
+```yaml
+nginx:
+  volumes:
+    - ${COVE_DATA_ROOT}/nginx/config.html:/etc/nginx/config.html:ro
+    - ${COVE_DATA_ROOT}/nginx/config/dns:/etc/nginx/config/dns:ro
+    - ${MKCERT_CAROOT}/rootCA.pem:/certs/rootCA.pem:ro
+```
+
+## Bootstrap Flow
+
+### From a phone (iOS)
+
+1. Open `https://<ts-ip>:8443/config/` in Safari. Accept the TLS warning (you're about to fix it).
+2. Page shows machine identity, CA cert download link, and a note about DNS.
+3. Tap `/config/dns` → Safari downloads a `.mobileconfig` profile → "Install Profile" → Settings → Install → CA cert trusted.
+4. Now `https://<tailscale-fqdn>/` works with valid TLS. Bookmark it.
+5. DNS for `*.cove.<slug>` names isn't auto-configurable on iOS. Use the Tailscale FQDN or MagicDNS.
+
+### From a phone (Android)
+
+1. Open `https://<ts-ip>:8443/config/` in Chrome. Accept the TLS warning.
+2. Download `/config/ca` → Settings → Security → Install certificate → CA certificate.
+3. `/config/dns` shows text instructions. Android can't auto-configure DNS for custom domains.
+4. Use the Tailscale FQDN for access.
+
+### From a new macOS laptop
+
+1. `curl -k https://<ts-ip>:8443/config/dns | sudo bash` — installs CA cert? No, that's `/config/ca`. Let me fix this.
+
+Actually, the flow is two steps:
+
+1. `curl -kO https://<ts-ip>:8443/config/ca` → double-click → Keychain → trust.
+2. `curl -k https://<ts-ip>:8443/config/dns | sudo bash` → creates `/etc/resolver/cove.<slug>`.
+3. `dig git.cove.<slug>` resolves. `https://git.cove.<slug>/` works with valid TLS.
+
+### From a new Linux laptop
+
+1. `curl -kO https://<ts-ip>:8443/config/ca` → `sudo trust anchor cove-root-ca.pem`.
+2. `curl -k https://<ts-ip>:8443/config/dns | sudo bash` → creates dnsmasq config, restarts dnsmasq.
+3. `dig git.cove.<slug>` resolves.
+
+### From a new Windows laptop
+
+1. Download `https://<ts-ip>:8443/config/ca` → `certutil -addstore Root cove-root-ca.pem`.
+2. Download and run the PowerShell script from `/config/dns` → adds hosts entries.
+3. `nslookup git.cove.<slug>` resolves.
 
 ## What This Replaces
 
-The `ca.cove` subdomain from the earlier root-cert-distribution musing is absorbed into `/config/ca`. The standalone `ca.cove` server block and its SAN entry become unnecessary.
-
-## Configuration Flow
-
-### Phone
-
-1. Open `https://<tailscale-fqdn>/config/` in Safari (accept the TLS warning — you're about to fix it).
-2. Tap "Download root CA certificate" → install via Settings → Profile Downloaded.
-3. Bookmark the page. Now you know this machine is `mbpbk`, reachable at `git.cove.mbpbk` (once DNS is set up on your laptops).
-4. Use `https://<tailscale-fqdn>/` for Forgejo access from the phone. The phone doesn't configure DNS — it uses the Tailscale FQDN directly.
-
-### New Laptop
-
-1. `curl -kO https://<tailscale-fqdn>/config/ca` → install in keychain.
-2. Open `https://<tailscale-fqdn>/config/` → copy the DNS resolver snippet for your OS.
-3. Create the resolver file. `dig git.cove.mbpbk` now resolves.
-4. Repeat for each peer machine.
+- The `ca.cove` subdomain from the root-cert-distribution musing — absorbed into `/config/ca`.
+- The catch-all → Forgejo proxy — removed. Forgejo is only at `git.cove` and `git.cove.<slug>`. The default server block serves `/config/*` and returns 444 for everything else.
 
 ## Open Questions
 
-1. **Should the HTML page also list peer machines?** If the machine knows about other Coves (from `remote.conf` or host_vars), it could list them. But that's scope creep — the page is about *this* machine's identity, not the topology.
+1. **Should `/config/dns` for iOS also be served at `/config/ca` when iOS is detected?** Currently `/config/ca` always serves raw PEM (works for manual install on any platform). `/config/dns` for iOS serves the `.mobileconfig` wrapper (one-tap install). They're different paths for different use cases. Could merge them — `/config/ca` auto-detects iOS and serves `.mobileconfig` — but that breaks `curl` usage. Keep them separate.
 
-2. **Should `cove up` print the config URL?** After bringup: "Config: https://git.cove/config/". Low effort, high discoverability.
+2. **What about the Tailscale IP when Tailscale is down?** `ts_ip` falls back to the LAN IP (from `ansible_default_ipv4.address`). The DNS config is still useful on the LAN. The `/config/` page notes which IP is being published.
 
-3. **Does `/config/` conflict with any Forgejo routes?** Forgejo doesn't use a `/config/` path. The exact-match locations take priority over the `location /` proxy. No conflict.
+3. **Should the macOS/Linux scripts also install the CA cert?** They could — `curl -O /config/ca && security add-trusted-cert ...` on macOS, `trust anchor` on Linux. But that couples the DNS script to CA install. Two separate steps is clearer: the operator sees what each step does.
 
-4. **What about the Tailscale IP when Tailscale is down?** If Tailscale isn't running, `ts_ip` is unavailable. The DNS config section could show "Tailscale not running — DNS config unavailable" or fall back to the LAN IP. The machine is unreachable via overlay anyway, so DNS config for it isn't immediately useful.
+4. **Does the default server block need HTTP (port 80)?** Yes — for `http://<lan-ip>:8080/config/` access. The redirect to HTTPS will fail TLS verification until the CA is installed, but `/config/` on HTTP is fine (it's just an info page, no secrets). The `/config/ca` download should be HTTPS to avoid MITM of the root cert itself. So: `/config/` works on HTTP, `/config/ca` and `/config/dns` redirect to HTTPS.
 
-5. **Should there be a `/config/dns` JSON endpoint for automation?** Not needed yet. If a future `cove join` command automates multi-machine setup, it can parse the HTML or we can add JSON then. YAGNI.
+5. **Should `cove up` print the bootstrap URL?** After bringup: "Bootstrap: http://<lan-ip>:8080/config/ or https://<ts-ip>:8443/config/". Low effort, high discoverability.
