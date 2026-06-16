@@ -152,6 +152,8 @@ ssl_certificate_key /certs/cove.local-key.pem;
 
 No per-project certs. No per-project CA chains. No cert generation. The user's `myapp.site.cove` gets valid HTTPS with zero TLS configuration — the wildcard cert already covers it, and nginx already terminates it. The user only writes the routing rule.
 
+Cove's nginx is the sole HTTP ingress. pf NAT forwards `localhost:443` → `localhost:8443` (nginx container). Every `*.cove` hostname — Cove's own services and every user project — arrives at nginx on port 443. One ingress, one port, one cert chain. User projects don't run their own reverse proxies or manage their own TLS.
+
 ## What This Is Not
 
 - **Not a service mesh.** Cove doesn't manage the services behind the hostnames.
