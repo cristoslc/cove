@@ -128,4 +128,4 @@ services:
       opencode:
         condition: service_started
     ports:
-      - "127.0.0.1:4096:4096"
+      - "127.0.0.1:4097:4097"

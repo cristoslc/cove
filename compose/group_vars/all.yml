@@ -66,7 +66,7 @@ opencode_data_dir: "{{ ansible_env.HOME }}/Documents/cove/opencode"
 opencode_config_dir: "{{ ansible_env.HOME }}/.config/opencode"
 opencode_server_username: opencode
 opencode_server_port: 4095
-opencode_caddy_port: 4096
+opencode_caddy_port: 4097
 opencode_1p_ref: "op://{{ op_vault }}/OpenCode Server"
 
 # --- Caddy ---
