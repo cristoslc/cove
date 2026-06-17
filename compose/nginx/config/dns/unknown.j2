@@ -1,0 +1,21 @@
+Cove on {{ ansible_hostname }}
+===============================
+
+Your platform was not auto-detected. Choose your OS:
+
+macOS:
+  curl /config/dns/macos | sudo bash
+
+Linux:
+  curl /config/dns/linux | sudo bash
+
+Windows (admin PowerShell):
+  irm /config/dns/windows | iex
+
+iOS:
+  Open /config/dns/ios in Safari → Install Profile
+
+Android:
+  See /config/dns/android for manual instructions
+
+DNS IP: {{ ts_ip }} (Tailscale)
