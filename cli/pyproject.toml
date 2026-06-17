@@ -25,6 +25,9 @@ cove = "cove.cli:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "e2e: integration tests requiring a live Cove stack (deselect with '-m not e2e')",
+]
 
 
 [dependency-groups]

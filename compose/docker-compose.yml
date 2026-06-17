@@ -55,8 +55,13 @@ services:
         condition: service_started
     volumes:
       - ${NGINX_CONF_DIR:-./nginx}/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${NGINX_CONF_DIR:-./nginx}/cove-config-locations.conf:/etc/nginx/cove-config-locations.conf:ro
       - ${COVE_DATA_ROOT}/certs:/certs:ro
       - ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites:ro
+      - ${COVE_DATA_ROOT}/nginx/user.d:/etc/nginx/user.d:ro
+      - ${COVE_DATA_ROOT}/nginx/config.html:/etc/nginx/config.html:ro
+      - ${COVE_DATA_ROOT}/nginx/config/dns:/etc/nginx/config/dns:ro
+      - ${MKCERT_CAROOT}/rootCA.pem:/certs/rootCA.pem:ro
       # NOTE: Forgejo Actions runners that use deploy-pages must also mount
       # ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites (read-write) so the
       # action can write site files that nginx serves read-only here.
@@ -74,6 +79,24 @@ services:
       - "0.0.0.0:${DNSMASQ_PORT:-5353}:5353"
     cap_add:
       - NET_BIND_SERVICE
+
+  dnsproxy:
+    image: adguard/dnsproxy:latest
+    container_name: cove-dnsproxy
+    restart: unless-stopped
+    depends_on:
+      dnsmasq:
+        condition: service_started
+    command:
+      - "--https-port=8053"
+      - "--port=0"
+      - "--tls-port=0"
+      - "--upstream=dnsmasq:5353"
+      - "--tls-crt=/certs/cove.local.pem"
+      - "--tls-key=/certs/cove.local-key.pem"
+    volumes:
+      - ${COVE_DATA_ROOT}/certs/cove.local.pem:/certs/cove.local.pem:ro
+      - ${COVE_DATA_ROOT}/certs/cove.local-key.pem:/certs/cove.local-key.pem:ro
 
   vault:
     image: ${VAULT_IMAGE:-hashicorp/vault:1.20}
