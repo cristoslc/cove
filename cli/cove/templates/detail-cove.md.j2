@@ -8,19 +8,7 @@ All services are offline-first.
 - Web: `https://git.cove/` (TLS via nginx+mkcert)
 - CLI: `fj` — see `~/.agents/agents-md-detail/fj.md` for full reference
 
-### SSH config setup
-
-`cove up` generates `~/.ssh/config.d/forgejo-localhost.conf`:
-
-```
-Host forgejo-localhost
-  HostName localhost
-  Port 2222
-  User git
-  IdentityFile ~/.ssh/forgejo_{{ computer_name }}_ed25519
-  IdentityAgent none
-  IdentitiesOnly yes
-```
+SSH is available as an optional transport. `cove up` generates `~/.ssh/config.d/forgejo-localhost.conf` with a dedicated key at `~/.ssh/forgejo_{{ computer_name }}_ed25519` for users who need SSH.
 
 ## Vault / Credentials
 
@@ -52,7 +40,7 @@ Vault address: `https://vault.cove/` (TLS via nginx+mkcert)
 | Forgejo | forgejo:3000 | https://git.cove/ | via nginx proxy |
 | Vault | vault:8200 | https://vault.cove/ | via nginx proxy |
 | Nginx | — | 0.0.0.0:443 | mkcert TLS termination |
-| Forgejo SSH | 0.0.0.0:2222 | — | direct, no proxy |
+| Forgejo SSH | 0.0.0.0:2222 | — | optional, direct |
 | dnsmasq | 0.0.0.0:5353 | — | offline wildcard DNS |
 
 All HTTP traffic routes through nginx at `*.cove` subdomains. Ports bind on `0.0.0.0` for Colima VM port forwarding. Tailscale serve forwards tailnet traffic to nginx.
