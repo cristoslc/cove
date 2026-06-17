@@ -147,7 +147,7 @@
         set -eo pipefail
         CERT="{{ cove_data_root }}/certs/cove.local.pem"
         for host in "git.cove" "vault.cove" "hc.cove" "ca.cove" "*.cove" "*.cove.{{ ansible_hostname }}"; do
-          if ! openssl x509 -in "$CERT" -text -noout | grep -q "DNS:$host"; then
+          if ! openssl x509 -in "$CERT" -text -noout | grep -qF "DNS:$host"; then
             echo "MISSING: $host"
             exit 1
           fi
