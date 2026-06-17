@@ -55,6 +55,7 @@ services:
         condition: service_started
     volumes:
       - ${NGINX_CONF_DIR:-./nginx}/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${NGINX_CONF_DIR:-./nginx}/cove-config-locations.conf:/etc/nginx/cove-config-locations.conf:ro
       - ${COVE_DATA_ROOT}/certs:/certs:ro
       - ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites:ro
       - ${COVE_DATA_ROOT}/nginx/user.d:/etc/nginx/user.d:ro

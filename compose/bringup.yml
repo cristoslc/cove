@@ -42,15 +42,14 @@
       ansible.builtin.set_fact:
         ts_dns_name: "{{ (ts_status.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
 
-    - name: Get tailscale IP
-      when: ts_status.rc == 0
+    - name: Get tailscale IP (fallback to LAN IP if Tailscale is down or has no IPs)
       ansible.builtin.set_fact:
-        ts_ip: "{{ (ts_status.stdout | from_json).Self.TailscaleIPs[0] }}"
-
-    - name: Fallback to LAN IP when tailscale is down
-      when: ts_status.rc != 0
-      ansible.builtin.set_fact:
-        ts_ip: "{{ ansible_default_ipv4.address }}"
+        ts_ip: >-
+          {{
+            (ts_status.stdout | from_json).Self.TailscaleIPs[0]
+            if (ts_status.rc == 0 and (ts_status.stdout | from_json).Self.TailscaleIPs | length > 0)
+            else ansible_default_ipv4.address
+          }}
 
     - name: Configure tailscale serve for HTTPS on port 443
       when: ts_status.rc == 0
@@ -81,40 +80,44 @@
       ansible.builtin.command: mkcert -CAROOT
       register: mkcert_caroot
       changed_when: false
+      failed_when: false
 
     - name: Set MKCERT_CAROOT fact
+      when: mkcert_caroot.rc == 0
       ansible.builtin.set_fact:
         mkcert_caroot_path: "{{ mkcert_caroot.stdout }}"
 
     - name: Read root CA certificate
+      when: mkcert_caroot.rc == 0
       ansible.builtin.slurp:
         src: "{{ mkcert_caroot_path }}/rootCA.pem"
       register: root_ca_slurp
 
+    # Apple .mobileconfig profiles require the certificate as raw base64-encoded
+    # DER, not PEM-wrapped. Strip the BEGIN/END CERTIFICATE headers and all
+    # newlines to produce a single-line base64 string suitable for the
+    # <data> element in the iOS configuration profile payload.
     - name: Base64-encode root CA (strip PEM headers for .mobileconfig)
+      when: mkcert_caroot.rc == 0
       ansible.builtin.set_fact:
         root_ca_b64: "{{ (root_ca_slurp.content | b64decode | regex_replace('-----BEGIN CERTIFICATE-----\\n?', '') | regex_replace('-----END CERTIFICATE-----\\n?', '') | regex_replace('\\n', '') | trim) }}"
 
+    # Generate UUIDs for the iOS .mobileconfig profile.
+    # Apple requires a unique PayloadUUID for each payload entry
+    # and for the top-level Configuration profile itself.
+    #   ca_uuid      — identifies the root CA certificate payload
+    #   dns_uuid     — identifies the DNS settings payload
+    #   profile_uuid — identifies the top-level configuration profile
     - name: Generate UUIDs for iOS profile
-      ansible.builtin.shell: python3 -c "import uuid; print(uuid.uuid4())"
-      register: uuid1
-      changed_when: false
-
-    - name: Generate second UUID
-      ansible.builtin.shell: python3 -c "import uuid; print(uuid.uuid4())"
-      register: uuid2
-      changed_when: false
-
-    - name: Generate third UUID
-      ansible.builtin.shell: python3 -c "import uuid; print(uuid.uuid4())"
-      register: uuid3
+      ansible.builtin.shell: python3 -c "import uuid; print(uuid.uuid4()); print(uuid.uuid4()); print(uuid.uuid4())"
+      register: uuids
       changed_when: false
 
     - name: Set UUID facts
       ansible.builtin.set_fact:
-        ca_uuid: "{{ uuid1.stdout }}"
-        dns_uuid: "{{ uuid2.stdout }}"
-        profile_uuid: "{{ uuid3.stdout }}"
+        ca_uuid: "{{ uuids.stdout_lines[0] }}"
+        dns_uuid: "{{ uuids.stdout_lines[1] }}"
+        profile_uuid: "{{ uuids.stdout_lines[2] }}"
 
     - name: Generate mkcert cert for *.cove + per-machine wildcard
       ansible.builtin.command:
