@@ -24,7 +24,7 @@
 **Files:**
 - Modify: `compose/dnsmasq/cove.conf.j2`
 
-- [ ] **Step 1: Add per-machine identity rule**
+- [x] **Step 1: Add per-machine identity rule**
 
 Add `address=/cove.{{ ansible_hostname }}/{{ ts_ip }}` after the existing `address=/cove/127.0.0.1` line. The template now receives `ansible_hostname` (from gather_facts) and `ts_ip` (new variable, set in bringup.yml in Chunk 4).
 
@@ -34,12 +34,12 @@ Add `address=/cove.{{ ansible_hostname }}/{{ ts_ip }}` after the existing `addre
  bind-interfaces
 ```
 
-- [ ] **Step 2: Verify template renders**
+- [x] **Step 2: Verify template renders**
 
 Run: `python3 -c "from jinja2 import Template; t = Template(open('compose/dnsmasq/cove.conf.j2').read()); print(t.render(ansible_hostname='mbpbk', ts_ip='100.64.0.5'))"`
 Expected: Output contains both `address=/cove/127.0.0.1` and `address=/cove.mbpbk/100.64.0.5`
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add compose/dnsmasq/cove.conf.j2
@@ -52,7 +52,7 @@ git commit -m "feat: per-machine DNS identity in dnsmasq template"
 - Create: `compose/dnsmasq/doh-proxy/main.go`
 - Create: `compose/dnsmasq/doh-proxy` (compiled binary)
 
-- [ ] **Step 1: Write Go source**
+- [x] **Step 1: Write Go source**
 
 ```go
 package main
@@ -107,17 +107,17 @@ func main() {
 }
 ```
 
-- [ ] **Step 2: Compile binary**
+- [x] **Step 2: Compile binary**
 
 Run: `cd compose/dnsmasq/doh-proxy && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ../doh-proxy .`
 Expected: `doh-proxy` binary appears at `compose/dnsmasq/doh-proxy` (no output on success)
 
-- [ ] **Step 3: Verify binary is static**
+- [x] **Step 3: Verify binary is static**
 
 Run: `file compose/dnsmasq/doh-proxy`
 Expected: Output contains "statically linked"
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add compose/dnsmasq/doh-proxy/main.go compose/dnsmasq/doh-proxy
@@ -129,7 +129,7 @@ git commit -m "feat: DoH proxy — Go binary, forwards DoH to dnsmasq UDP"
 **Files:**
 - Modify: `compose/dnsmasq/Dockerfile`
 
-- [ ] **Step 1: Add doh-proxy binary and update entrypoint**
+- [x] **Step 1: Add doh-proxy binary and update entrypoint**
 
 ```dockerfile
 FROM alpine:3.21
@@ -140,12 +140,12 @@ COPY doh-proxy /usr/local/bin/doh-proxy
 ENTRYPOINT ["sh", "-c", "dnsmasq --no-daemon --conf-dir=/etc/dnsmasq.d & doh-proxy -upstream 127.0.0.1:5353 -listen :8053"]
 ```
 
-- [ ] **Step 2: Verify image builds**
+- [x] **Step 2: Verify image builds**
 
 Run: `docker build -t cove-dnsmasq-test compose/dnsmasq/`
 Expected: Build succeeds, no errors
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add compose/dnsmasq/Dockerfile
@@ -161,7 +161,7 @@ git commit -m "feat: dnsmasq container runs DoH proxy alongside dnsmasq"
 **Files:**
 - Modify: `compose/nginx/default.conf.j2`
 
-- [ ] **Step 1: Write the complete new template**
+- [x] **Step 1: Write the complete new template**
 
 The template needs these changes from the current 118-line file:
 1. Add `map $http_user_agent $config_dns_type` block at top (User-Agent → platform classification)
@@ -453,17 +453,17 @@ server {
 {% endif %}
 ```
 
-- [ ] **Step 2: Verify template renders with required variables**
+- [x] **Step 2: Verify template renders with required variables**
 
 Run: `python3 -c "from jinja2 import Template; t = Template(open('compose/nginx/default.conf.j2').read()); print(t.render(ts_dns_name='mbpbk-202602.taila90e7.ts.net'))"`
 Expected: Output contains all server blocks, no Jinja2 errors
 
-- [ ] **Step 3: Verify nginx config is valid**
+- [x] **Step 3: Verify nginx config is valid**
 
 Run: `docker run --rm -v $(pwd)/compose/nginx/default.conf.j2:/tmp/test.conf.j2:ro alpine:3.21 sh -c 'apk add --no-cache python3 py3-jinja2 && python3 -c "from jinja2 import Template; t=Template(open(\"/tmp/test.conf.j2\").read()); open(\"/tmp/rendered.conf\",\"w\").write(t.render(ts_dns_name=\"test.ts.net\"))" && apk add --no-cache nginx && nginx -t -c /tmp/rendered.conf 2>&1 || true'`
 Expected: nginx reports syntax is OK (may warn about missing cert files — that's fine)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add compose/nginx/default.conf.j2
@@ -479,7 +479,7 @@ git commit -m "feat: nginx config — /config/* endpoints, per-machine regex blo
 **Files:**
 - Create: `compose/nginx/config.html.j2`
 
-- [ ] **Step 1: Write template**
+- [x] **Step 1: Write template**
 
 ```html
 <!DOCTYPE html>
@@ -543,12 +543,12 @@ server=/cove.{{ ansible_hostname }}/{{ ts_ip }}#5353</pre>
 </html>
 ```
 
-- [ ] **Step 2: Verify template renders**
+- [x] **Step 2: Verify template renders**
 
 Run: `python3 -c "from jinja2 import Template; t = Template(open('compose/nginx/config.html.j2').read()); print(t.render(ansible_hostname='mbpbk', ts_ip='100.64.0.5'))"`
 Expected: Valid HTML with `mbpbk` and `100.64.0.5` substituted
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add compose/nginx/config.html.j2
@@ -565,7 +565,7 @@ git commit -m "feat: /config/ info page template"
 - Create: `compose/nginx/config/dns/android.j2`
 - Create: `compose/nginx/config/dns/unknown.j2`
 
-- [ ] **Step 1: Write macos.j2**
+- [x] **Step 1: Write macos.j2**
 
 ```bash
 #!/bin/bash
@@ -581,7 +581,7 @@ echo "DNS resolver configured: $FILE"
 echo "Test: dscacheutil -q host -a name git.cove.{{ ansible_hostname }}"
 ```
 
-- [ ] **Step 2: Write linux.j2**
+- [x] **Step 2: Write linux.j2**
 
 ```bash
 #!/bin/bash
@@ -600,7 +600,7 @@ fi
 echo "Test: dig git.cove.{{ ansible_hostname }}"
 ```
 
-- [ ] **Step 3: Write windows.j2**
+- [x] **Step 3: Write windows.j2**
 
 ```powershell
 #Requires -RunAsAdministrator
@@ -615,7 +615,7 @@ if (-not (Select-String -Path $hosts -Pattern "cove.{{ ansible_hostname }}" -Sim
 Write-Host "Test: nslookup git.cove.{{ ansible_hostname }}"
 ```
 
-- [ ] **Step 4: Write ios.j2**
+- [x] **Step 4: Write ios.j2**
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -682,7 +682,7 @@ Write-Host "Test: nslookup git.cove.{{ ansible_hostname }}"
 </plist>
 ```
 
-- [ ] **Step 5: Write android.j2**
+- [x] **Step 5: Write android.j2**
 
 ```
 Cove on {{ ansible_hostname }}
@@ -713,7 +713,7 @@ Cove on {{ ansible_hostname }}
    https://<tailscale-fqdn>/config/ — this page
 ```
 
-- [ ] **Step 6: Write unknown.j2**
+- [x] **Step 6: Write unknown.j2**
 
 ```
 Cove on {{ ansible_hostname }}
@@ -739,7 +739,7 @@ Android:
 DNS IP: {{ ts_ip }} (Tailscale)
 ```
 
-- [ ] **Step 7: Verify all templates render**
+- [x] **Step 7: Verify all templates render**
 
 Run:
 ```bash
@@ -749,7 +749,7 @@ done
 ```
 Expected: Each template renders without Jinja2 errors
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add compose/nginx/config/dns/
@@ -765,7 +765,7 @@ git commit -m "feat: DNS config scripts — macos, linux, windows, ios, android,
 **Files:**
 - Modify: `compose/docker-compose.yml`
 
-- [ ] **Step 1: Add nginx volume mounts**
+- [x] **Step 1: Add nginx volume mounts**
 
 Add four new volume mounts to the nginx service (after the existing pages/sites mount):
 
@@ -776,12 +776,12 @@ Add four new volume mounts to the nginx service (after the existing pages/sites 
       - ${MKCERT_CAROOT}/rootCA.pem:/certs/rootCA.pem:ro
 ```
 
-- [ ] **Step 2: Verify compose config is valid**
+- [x] **Step 2: Verify compose config is valid**
 
 Run: `docker compose -f compose/docker-compose.yml config --no-interpolate 2>&1 | head -5`
 Expected: No errors (may warn about missing .env vars — that's fine)
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add compose/docker-compose.yml
@@ -793,7 +793,7 @@ git commit -m "feat: nginx volume mounts — user.d, config.html, config/dns, ro
 **Files:**
 - Modify: `compose/bringup.yml`
 
-- [ ] **Step 1: Add ts_ip extraction (after tailscale DNS name task, ~line 43)**
+- [x] **Step 1: Add ts_ip extraction (after tailscale DNS name task, ~line 43)**
 
 ```yaml
     - name: Get tailscale IP
@@ -807,7 +807,7 @@ git commit -m "feat: nginx volume mounts — user.d, config.html, config/dns, ro
         ts_ip: "{{ ansible_default_ipv4.address }}"
 ```
 
-- [ ] **Step 2: Add CAROOT detection (after mkcert install task, ~line 68)**
+- [x] **Step 2: Add CAROOT detection (after mkcert install task, ~line 68)**
 
 ```yaml
     - name: Detect mkcert CAROOT path
@@ -820,7 +820,7 @@ git commit -m "feat: nginx volume mounts — user.d, config.html, config/dns, ro
         mkcert_caroot_path: "{{ mkcert_caroot.stdout }}"
 ```
 
-- [ ] **Step 3: Add root CA encoding + UUID generation (after CAROOT detection)**
+- [x] **Step 3: Add root CA encoding + UUID generation (after CAROOT detection)**
 
 ```yaml
     - name: Read root CA certificate
@@ -854,7 +854,7 @@ git commit -m "feat: nginx volume mounts — user.d, config.html, config/dns, ro
         profile_uuid: "{{ uuid3.stdout }}"
 ```
 
-- [ ] **Step 4: Update mkcert cert SAN list (modify existing task ~line 70)**
+- [x] **Step 4: Update mkcert cert SAN list (modify existing task ~line 70)**
 
 Add `"*.cove"`, `"*.cove.{{ ansible_hostname }}"`, and `ca.cove` to the SAN list. The current cert has `cove` (bare) which does NOT act as a wildcard — `"*.cove"` must be explicit.
 
@@ -883,7 +883,7 @@ Add `"*.cove"`, `"*.cove.{{ ansible_hostname }}"`, and `ca.cove` to the SAN list
       when: mkcert_check.rc == 0
 ```
 
-- [ ] **Step 5: Update cert validation task (modify existing task ~line 90)**
+- [x] **Step 5: Update cert validation task (modify existing task ~line 90)**
 
 Add `ca.cove`, `*.cove`, and `*.cove.{{ ansible_hostname }}` to the validation loop:
 
@@ -903,7 +903,7 @@ Add `ca.cove`, `*.cove`, and `*.cove.{{ ansible_hostname }}` to the validation l
       changed_when: false
 ```
 
-- [ ] **Step 6: Add ca.cove to /etc/hosts (modify existing task ~line 104)**
+- [x] **Step 6: Add ca.cove to /etc/hosts (modify existing task ~line 104)**
 
 ```yaml
     - name: Add *.cove hostnames to /etc/hosts
@@ -916,7 +916,7 @@ Add `ca.cove`, `*.cove`, and `*.cove.{{ ansible_hostname }}` to the validation l
       failed_when: false
 ```
 
-- [ ] **Step 7: Add data directories (modify existing task ~line 130)**
+- [x] **Step 7: Add data directories (modify existing task ~line 130)**
 
 Add to the loop:
 ```yaml
@@ -924,7 +924,7 @@ Add to the loop:
         - "{{ cove_data_root }}/nginx/config/dns"
 ```
 
-- [ ] **Step 8: Add template rendering tasks (after existing template tasks ~line 157)**
+- [x] **Step 8: Add template rendering tasks (after existing template tasks ~line 157)**
 
 ```yaml
     - name: Render nginx config info page
@@ -947,14 +947,14 @@ Add to the loop:
         - unknown
 ```
 
-- [ ] **Step 9: Add MKCERT_CAROOT to .env rendering (modify existing task ~line 160)**
+- [x] **Step 9: Add MKCERT_CAROOT to .env rendering (modify existing task ~line 160)**
 
 Add to the `.env` content block:
 ```
           MKCERT_CAROOT={{ mkcert_caroot_path }}
 ```
 
-- [ ] **Step 10: Update summary message (modify existing task ~line 235)**
+- [x] **Step 10: Update summary message (modify existing task ~line 235)**
 
 Add bootstrap URL to the summary:
 ```
@@ -962,7 +962,7 @@ Add bootstrap URL to the summary:
           {% if ts_status.rc == 0 %}or https://{{ ts_ip }}:8443/config/{% endif %}
 ```
 
-- [ ] **Step 11: Commit**
+- [x] **Step 11: Commit**
 
 ```bash
 git add compose/bringup.yml
@@ -974,14 +974,14 @@ git commit -m "feat: bringup.yml — ts_ip, CAROOT, root CA encoding, UUIDs, cer
 **Files:**
 - Modify: `compose/.env.example`
 
-- [ ] **Step 1: Add MKCERT_CAROOT**
+- [x] **Step 1: Add MKCERT_CAROOT**
 
 Add after the existing DNSMASQ_PORT line:
 ```
 MKCERT_CAROOT=<from mkcert -CAROOT>
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add compose/.env.example
@@ -994,24 +994,24 @@ git commit -m "feat: MKCERT_CAROOT in .env.example"
 
 ### Task 5.1: Compose config validation
 
-- [ ] **Step 1: Validate compose file structure**
+- [x] **Step 1: Validate compose file structure**
 
 Run: `docker compose -f compose/docker-compose.yml config --no-interpolate 2>&1`
 Expected: No YAML errors, services listed (may warn about missing .env vars)
 
-- [ ] **Step 2: Verify dnsmasq image builds**
+- [x] **Step 2: Verify dnsmasq image builds**
 
 Run: `docker build -t cove-dnsmasq-test compose/dnsmasq/ 2>&1`
 Expected: Build succeeds, both dnsmasq and doh-proxy in image
 
-- [ ] **Step 3: Verify dnsmasq image runs both processes**
+- [x] **Step 3: Verify dnsmasq image runs both processes**
 
 Run: `docker run --rm cove-dnsmasq-test sh -c 'sleep 2 && ps aux' 2>&1`
 Expected: Both `dnsmasq` and `doh-proxy` processes visible
 
 ### Task 5.2: Template rendering verification
 
-- [ ] **Step 1: Verify all nginx templates render**
+- [x] **Step 1: Verify all nginx templates render**
 
 Run:
 ```bash
@@ -1045,21 +1045,21 @@ print('All templates render successfully')
 ```
 Expected: All templates render, no assertion errors
 
-- [ ] **Step 2: Verify dnsmasq template renders**
+- [x] **Step 2: Verify dnsmasq template renders**
 
 Run: `python3 -c "from jinja2 import Template; t = Template(open('compose/dnsmasq/cove.conf.j2').read()); r = t.render(ansible_hostname='mbpbk', ts_ip='100.64.0.5'); assert 'address=/cove/127.0.0.1' in r; assert 'address=/cove.mbpbk/100.64.0.5' in r; print('OK')"`
 Expected: OK
 
 ### Task 5.3: CLI tests
 
-- [ ] **Step 1: Run full test suite**
+- [x] **Step 1: Run full test suite**
 
 Run: `uv run --directory cli pytest cli/tests/ -v`
 Expected: All 66+ tests pass
 
 ### Task 5.4: Final commit
 
-- [ ] **Step 1: Commit verification results**
+- [x] **Step 1: Commit verification results**
 
 ```bash
 git add -A
