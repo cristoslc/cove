@@ -470,8 +470,17 @@ class TestE2EDNSEndpoints:
         assert "/config/ca" in r.headers.get("Location", "")
 
     def test_default_server_returns_444_for_unknown_path(self):
-        r = self._get("/nonexistent-path-xyz", host="git.cove")
-        assert r.status_code == 444
+        import requests
+
+        url = f"https://127.0.0.1:{self.COVE_HTTPS_PORT}/nonexistent-path-xyz"
+        with pytest.raises(requests.exceptions.ConnectionError):
+            requests.get(
+                url,
+                headers={"Host": "unknown-host.cove"},
+                verify=self.VERIFY_SSL,
+                allow_redirects=False,
+                timeout=5,
+            )
 
     def test_health_check(self):
         r = self._get("/", host="hc.cove")
