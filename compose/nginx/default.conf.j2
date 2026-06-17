@@ -1,3 +1,17 @@
+# Map client User-Agent to platform name for /config/dns auto-detection.
+# The /config/dns endpoint uses $config_dns_type to serve the correct
+# DNS setup script for the visitor's operating system.
+map $http_user_agent $config_dns_type {
+    default                      "unknown";
+    "~*Macintosh"                "macos";
+    "~*Windows NT"               "windows";
+    "~*Android"                  "android";
+    "~*iPhone"                   "ios";
+    "~*iPad"                     "ios";
+    "~*iPod"                     "ios";
+    "~*Linux"                    "linux";
+}
+
 upstream forgejo_backend {
     server forgejo:3000;
 }
@@ -6,14 +20,32 @@ upstream vault_backend {
     server vault:8200;
 }
 
-# HTTP redirect
+include /etc/nginx/user.d/*.conf;
+
+# Default server — catches direct IP access (LAN, Tailscale).
+# Returns 444 (nginx-specific: close connection without response)
+# to silently drop requests to unrecognized paths, avoiding
+# information leakage about internal services.
 server {
+    listen 443 ssl default_server;
     listen 80 default_server;
     server_name _;
-    return 301 https://$host$request_uri;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    if ($scheme = http) {
+        return 301 https://$host$request_uri;
+    }
+
+    include /etc/nginx/cove-config-locations.conf;
+
+    location / {
+        return 444;
+    }
 }
 
-# hc.cove — health check endpoint (tests hosts resolution + nginx liveness)
+# hc.cove — health check endpoint
 server {
     listen 443 ssl;
     server_name hc.cove;
@@ -27,21 +59,15 @@ server {
     }
 }
 
-# Catch-all — unrecognized hostnames route to forgejo (tailscale magicdns, direct IP, etc.)
+# ca.cove — redirect to the config page where the root CA can be downloaded
 server {
-    listen 443 ssl default_server;
-    server_name _;
+    listen 443 ssl;
+    server_name ca.cove;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
 
-    location / {
-        proxy_pass http://forgejo_backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
+    return 301 https://git.cove/config/ca;
 }
 
 # git.cove — forgejo
@@ -51,6 +77,8 @@ server {
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
+
+    include /etc/nginx/cove-config-locations.conf;
 
     location / {
         proxy_pass http://forgejo_backend;
@@ -68,6 +96,44 @@ server {
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
+
+    location / {
+        proxy_pass http://vault_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+# Per-machine forge — git.cove.<slug> and cove.<slug>
+server {
+    listen 443 ssl;
+    server_name ~^git\.cove\.[a-zA-Z0-9-]+$ ~^cove\.[a-zA-Z0-9-]+$;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    include /etc/nginx/cove-config-locations.conf;
+
+    location / {
+        proxy_pass http://forgejo_backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
+# Per-machine vault — vault.cove.<slug>
+server {
+    listen 443 ssl;
+    server_name ~^vault\.cove\.[a-zA-Z0-9-]+$;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    include /etc/nginx/cove-config-locations.conf;
 
     location / {
         proxy_pass http://vault_backend;
