@@ -80,6 +80,24 @@ services:
     cap_add:
       - NET_BIND_SERVICE
 
+  dnsproxy:
+    image: adguard/dnsproxy:latest
+    container_name: cove-dnsproxy
+    restart: unless-stopped
+    depends_on:
+      dnsmasq:
+        condition: service_started
+    command:
+      - "--https-port=8053"
+      - "--port=0"
+      - "--tls-port=0"
+      - "--upstream=dnsmasq:5353"
+      - "--tls-crt=/certs/cove.local.pem"
+      - "--tls-key=/certs/cove.local-key.pem"
+    volumes:
+      - ${COVE_DATA_ROOT}/certs/cove.local.pem:/certs/cove.local.pem:ro
+      - ${COVE_DATA_ROOT}/certs/cove.local-key.pem:/certs/cove.local-key.pem:ro
+
   vault:
     image: ${VAULT_IMAGE:-hashicorp/vault:1.20}
     container_name: ${VAULT_CONTAINER_NAME:-cove-vault}
