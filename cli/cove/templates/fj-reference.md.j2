@@ -17,7 +17,9 @@ fj actions tasks
 
 ## Remote detection
 
-`fj` reads the git remote URL from the current repo. Local Cove remotes use `git@forgejo-localhost:cristos/repo.git` — the `forgejo-localhost` SSH config alias handles routing to `localhost:2222` with the correct SSH key.
+`fj` reads the git remote URL from the current repo. Local Cove remotes use `https://git.cove/<owner>/<repo>.git`. The `cove-push` token in git's credential helper handles auth (set up by `cove up`).
+
+SSH (`git@forgejo-localhost:...`) is also available as an optional transport — see `~/.agents/agents-md-detail/cove.md` for SSH config details.
 
 ## HTTPS auth
 
