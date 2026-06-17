@@ -4,7 +4,7 @@ Template/rendering tests (always runnable):
   - Validate Jinja2 templates render with required variables
   - Check nginx config syntax, location blocks, Content-Types
   - Check DNS script templates exist and are non-empty
-  - Verify DoH proxy source compiles (Go build check)
+  - Verify compose has dnsproxy sidecar for DoH
   - Verify inverse-assertion: missing variables cause TemplateSyntaxError
 
 Integration E2E tests (require live stack, run with `pytest -m e2e`):
@@ -21,9 +21,7 @@ Run e2e:   pytest cli/tests/test_e2e_dns.py -m e2e
 
 import base64
 import os
-import re
 import struct
-import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -176,10 +174,10 @@ class TestConfigLocationsRendering:
         assert r"^/config/dns/(macos|linux|windows)$" in content
         assert "Content-Type text/x-shellscript" in content
 
-    def test_dns_query_proxy(self):
+    def test_dns_query_proxies_to_dnsproxy(self):
         content = self._load()
         assert "location = /dns-query" in content
-        assert "proxy_pass http://dnsmasq:8053" in content
+        assert "proxy_pass https://dnsproxy:8053/dns-query" in content
 
 
 class TestDNSScriptTemplates:
@@ -250,53 +248,26 @@ class TestConfigHtmlRendering:
         assert "/config/dns" in rendered
 
 
-class TestDoHProxySource:
-    """Validate the DoH proxy Go source."""
+class TestDnsmasqDockerfile:
+    """Validate the dnsmasq Dockerfile is clean (no custom Go build)."""
 
-    def test_go_mod_exists(self):
-        assert (DNSMASQ_DIR / "doh-proxy-src" / "go.mod").exists()
+    def test_dockerfile_exists(self):
+        assert (DNSMASQ_DIR / "Dockerfile").exists()
 
-    def test_main_go_exists(self):
-        assert (DNSMASQ_DIR / "doh-proxy-src" / "main.go").exists()
-
-    def test_main_go_handles_post(self):
-        src = (DNSMASQ_DIR / "doh-proxy-src" / "main.go").read_text()
-        assert "MethodPost" in src
-        assert "io.LimitReader" in src
-        assert "65536" in src
-
-    def test_main_go_handles_get(self):
-        src = (DNSMASQ_DIR / "doh-proxy-src" / "main.go").read_text()
-        assert "MethodGet" in src
-        assert "base64.RawURLEncoding" in src
-        assert 'r.URL.Query().Get("dns")' in src
-
-    def test_main_go_returns_dns_content_type(self):
-        src = (DNSMASQ_DIR / "doh-proxy-src" / "main.go").read_text()
-        assert "application/dns-message" in src
-
-    def test_main_go_uses_edns0_buffer_size(self):
-        src = (DNSMASQ_DIR / "doh-proxy-src" / "main.go").read_text()
-        assert "dnsMaxUDPSize = 4096" in src
-
-    def test_main_go_rejects_bad_method(self):
-        src = (DNSMASQ_DIR / "doh-proxy-src" / "main.go").read_text()
-        assert "StatusMethodNotAllowed" in src
-
-
-class TestDockerfileValidation:
-    """Validate the dnsmasq Dockerfile uses multi-stage build."""
-
-    def test_dockerfile_is_multi_stage(self):
+    def test_dockerfile_no_custom_build_stage(self):
         dockerfile = (DNSMASQ_DIR / "Dockerfile").read_text()
-        stages = [line for line in dockerfile.splitlines() if line.startswith("FROM")]
-        assert len(stages) >= 2, "Dockerfile must be multi-stage (build + runtime)"
+        assert "golang" not in dockerfile.lower()
+        assert "doh-proxy" not in dockerfile.lower()
+        assert "COPY --from=" not in dockerfile
 
-    def test_dockerfile_no_committed_binary(self):
+    def test_dockerfile_is_simple_alpine(self):
         dockerfile = (DNSMASQ_DIR / "Dockerfile").read_text()
-        assert "doh-proxy-src" in dockerfile or "COPY --from=" in dockerfile
-        assert not (DNSMASQ_DIR / "doh-proxy-src" / "doh-proxy").exists(), \
-            "Committed binary found in doh-proxy-src/ — must be built in Dockerfile"
+        assert "alpine" in dockerfile
+        assert "dnsmasq" in dockerfile
+
+    def test_no_custom_doh_proxy_source(self):
+        assert not (DNSMASQ_DIR / "doh-proxy-src").exists(), \
+            "doh-proxy-src/ directory should not exist — dnsproxy sidecar handles DoH"
 
 
 class TestComposeConfig:
@@ -320,6 +291,42 @@ class TestComposeConfig:
         ports = data["services"]["dnsmasq"]["ports"]
         port_str = str(ports[0])
         assert "5353" in port_str
+
+    def test_dnsproxy_service_exists(self):
+        data = self._load_compose()
+        assert "dnsproxy" in data["services"]
+
+    def test_dnsproxy_uses_adguard_image(self):
+        data = self._load_compose()
+        image = data["services"]["dnsproxy"].get("image", "")
+        assert "adguard/dnsproxy" in image
+
+    def test_dnsproxy_upstream_points_to_dnsmasq(self):
+        data = self._load_compose()
+        cmd = data["services"]["dnsproxy"].get("command", [])
+        upstream_args = [a for a in cmd if "upstream" in a]
+        assert len(upstream_args) > 0
+        assert "dnsmasq" in upstream_args[0]
+        assert "5353" in upstream_args[0]
+
+    def test_dnsproxy_has_https_port(self):
+        data = self._load_compose()
+        cmd = data["services"]["dnsproxy"].get("command", [])
+        port_args = [a for a in cmd if "https-port" in a]
+        assert len(port_args) > 0
+        assert "8053" in port_args[0]
+
+    def test_dnsproxy_mounts_certs(self):
+        data = self._load_compose()
+        volumes = data["services"]["dnsproxy"].get("volumes", [])
+        volume_strs = [str(v) for v in volumes]
+        assert any("cove.local.pem" in v for v in volume_strs)
+        assert any("cove.local-key.pem" in v for v in volume_strs)
+
+    def test_dnsproxy_depends_on_dnsmasq(self):
+        data = self._load_compose()
+        deps = data["services"]["dnsproxy"].get("depends_on", {})
+        assert "dnsmasq" in deps
 
     def test_nginx_service_exists(self):
         data = self._load_compose()
@@ -375,9 +382,15 @@ class TestInverseAssertions:
         }
         assert "dnsmasq" not in data["services"]
 
-    def test_doh_proxy_rejects_empty_dns_param(self):
-        dns_query_empty = base64.urlsafe_b64encode(b"").rstrip(b"=").decode("ascii")
-        assert len(base64.urlsafe_b64decode(dns_query_empty + "==")) == 0
+    def test_dnsproxy_missing_from_minimal_compose(self):
+        data = {
+            "services": {
+                "forgejo": {"image": "forgejo:15"},
+                "dnsmasq": {"build": "./dnsmasq"},
+                "nginx": {"image": "nginx:1.27-alpine"},
+            }
+        }
+        assert "dnsproxy" not in data["services"]
 
 
 @pytest.mark.e2e
@@ -456,9 +469,9 @@ class TestE2EDNSEndpoints:
         assert r.status_code == 301
         assert "/config/ca" in r.headers.get("Location", "")
 
-    def test_default_server_returns_444(self):
-        r = self._get("/nonexistent-path", host="git.cove")
-        assert r.status_code == 444 or r.status_code in (200, 404)
+    def test_default_server_returns_444_for_unknown_path(self):
+        r = self._get("/nonexistent-path-xyz", host="git.cove")
+        assert r.status_code == 444
 
     def test_health_check(self):
         r = self._get("/", host="hc.cove")
