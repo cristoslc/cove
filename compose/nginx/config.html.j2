@@ -54,6 +54,6 @@ server=/cove.{{ ansible_hostname }}/{{ ts_ip }}#5353</pre>
   <h3>Android</h3>
   <p><a href="/config/dns/android">/config/dns/android</a> — manual instructions.</p>
 
-  <p>DNS IP: <code>{{ ts_ip }}</code> (Tailscale)</p>
+  <p>DNS IP: <code>{{ ts_ip }}</code>{% if ts_status.rc == 0 %} (Tailscale){% else %} (LAN — Tailscale is down){% endif %}</p>
 </body>
 </html>
