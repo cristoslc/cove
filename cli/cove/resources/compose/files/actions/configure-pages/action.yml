@@ -1,0 +1,67 @@
+name: "Configure Pages"
+description: "Configure GitHub Pages-compatible deployment for Cove"
+
+inputs:
+  static_site_generator:
+    description: "SSG (hugo, jekyll, zola, or leave empty to auto-detect)"
+    required: false
+    default: ""
+  token:
+    description: "GitHub token (ignored, accepted for compatibility)"
+    required: false
+    default: ""
+
+outputs:
+  base_url:
+    description: "Base URL for the site"
+    value: "${{ steps.configure.outputs.base_url }}"
+  origin:
+    description: "Site origin"
+    value: "${{ steps.configure.outputs.origin }}"
+  host:
+    description: "Site hostname"
+    value: "${{ steps.configure.outputs.host }}"
+  base_path:
+    description: "Base path for the site"
+    value: "${{ steps.configure.outputs.base_path }}"
+  pages_url:
+    description: "Full URL"
+    value: "${{ steps.configure.outputs.pages_url }}"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Configure
+      id: configure
+      shell: bash
+      run: |
+        set -euo pipefail
+        REPO="${GITHUB_REPOSITORY##*/}"
+        OWNER="${GITHUB_REPOSITORY%%/*}"
+
+        SSG="${{ inputs.static_site_generator }}"
+        if [ -z "$SSG" ]; then
+          [ -f "config.toml" ] || [ -f "config.yaml" ] || [ -f "config.json" ] && SSG="hugo" || true
+          [ -f "_config.yml" ] && SSG="jekyll" || true
+          [ -f "zola.toml" ] && SSG="zola" || true
+          [ -f "package.json" ] && SSG="next" || true
+          SSG="${SSG:-none}"
+        fi
+
+        COVE_FQDN="${COVE_FQDN:-cove.local}"
+        HOST="${OWNER}.pages.cove.${COVE_FQDN}"
+        ORIGIN="https://${HOST}"
+        BASE_PATH="/"
+        [ "$REPO" != "pages" ] && BASE_PATH="/${REPO}"
+        BASE_URL="${ORIGIN}${BASE_PATH}"
+        PAGES_URL="${BASE_URL}"
+
+        echo "static_site_generator=${SSG}" >> "$GITHUB_OUTPUT"
+        echo "host=${HOST}" >> "$GITHUB_OUTPUT"
+        echo "origin=${ORIGIN}" >> "$GITHUB_OUTPUT"
+        echo "base_path=${BASE_PATH}" >> "$GITHUB_OUTPUT"
+        echo "base_url=${BASE_URL}" >> "$GITHUB_OUTPUT"
+        echo "pages_url=${PAGES_URL}" >> "$GITHUB_OUTPUT"
+        echo "PAGES_HOST=${HOST}" >> "$GITHUB_ENV"
+        echo "PAGES_BASE_URL=${BASE_URL}" >> "$GITHUB_ENV"
+        echo "configure-pages: host=${HOST} base_path=${BASE_PATH} ssg=${SSG}"
