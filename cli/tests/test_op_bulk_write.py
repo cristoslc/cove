@@ -74,13 +74,13 @@ class TestBuildCreateCommand:
             "title": "Test Item",
             "vault": "Private",
             "category": "login",
-            "fields": {"username": "cristos", "password": "s3cret"},
+            "fields": {"username": "testuser", "password": "s3cret"},
         }
         cmd, masked = op_bulk_write._build_create_command(item)
         assert "--vault=Private" in cmd
         assert "--title=Test Item" in cmd
         assert "--category=login" in cmd
-        assert "username=cristos" in cmd
+        assert "username=testuser" in cmd
         assert "password=s3cret" in cmd
 
     def test_masked_hides_password(self):
@@ -100,25 +100,25 @@ class TestBuildCreateCommand:
 class TestRenderScript:
     def test_script_includes_items(self, tmp_path):
         spec = tmp_path / "spec.yaml"
-        spec.write_text("items:\n  - title: MyApp\n    vault: Private\n    category: login\n    fields:\n      username: cristos\n      password: s3cret\n")
+        spec.write_text("items:\n  - title: MyApp\n    vault: Private\n    category: login\n    fields:\n      username: testuser\n      password: s3cret\n")
         script, plan = op_bulk_write.render_script(spec)
         assert "MyApp" in script
         assert "Private" in script
-        assert "cristos" in script
+        assert "testuser" in script
         assert "rm -f" in script
         assert "Self-deleting" in script
 
     def test_plan_shows_items(self, tmp_path):
         spec = tmp_path / "spec.yaml"
-        spec.write_text("items:\n  - title: MyApp\n    vault: Private\n    category: login\n    fields:\n      username: cristos\n")
+        spec.write_text("items:\n  - title: MyApp\n    vault: Private\n    category: login\n    fields:\n      username: testuser\n")
         script, plan = op_bulk_write.render_script(spec)
         assert any("MyApp" in line for line in plan)
-        assert any("cristos" in line for line in plan)
+        assert any("testuser" in line for line in plan)
         assert any("***" not in line for line in plan)  # literals not masked
 
     def test_skips_existing_items(self, tmp_path):
         spec = tmp_path / "spec.yaml"
-        spec.write_text("items:\n  - title: ExistingApp\n    vault: Private\n    category: login\n    fields:\n      username: cristos\n")
+        spec.write_text("items:\n  - title: ExistingApp\n    vault: Private\n    category: login\n    fields:\n      username: testuser\n")
         script, plan = op_bulk_write.render_script(spec)
         assert "op item get" in script
         assert "already exists" in script
@@ -149,7 +149,7 @@ class TestRenderScript:
         spec.write_text(
             f"items:\n"
             f"  - title: SSH Key\n    vault: Private\n    category: login\n    fields:\n"
-            f"      username: cristos\n"
+            f"      username: testuser\n"
             f"      password: '{{{{generate:12}}}}'\n"
             f"      key[concealed]: '{{{{file:{key_file}}}}}'\n"
         )

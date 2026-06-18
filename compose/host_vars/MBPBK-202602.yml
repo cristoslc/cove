@@ -1,7 +1,0 @@
----
-# This Mac: localhost-bound Forgejo + Vault with tailscale serve overlay.
-# /etc/hosts maps the tailscale DNS name to 127.0.0.1 so the same ROOT_URL
-# works both locally and from tailscale peers. Domain/root_url are resolved
-# at runtime via `tailscale status --json`; the playbook adds the /etc/hosts
-# entry and configures tailscale serve.
-# Defaults from group_vars/all.yml already match for static bind vars.

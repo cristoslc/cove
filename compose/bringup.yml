@@ -5,6 +5,14 @@
     compose_dir: "{{ playbook_dir }}"
 
   tasks:
+    - name: Assert admin_username is set
+      ansible.builtin.assert:
+        that:
+          - admin_username | length > 0
+        fail_msg: >
+          admin_username is empty. Provide it via host_vars/<hostname>.yml
+          (run `cove up` to auto-generate) or set COVE_ADMIN_USERNAME.
+
     - name: Set Forgejo URLs
       ansible.builtin.set_fact:
         cove_domain: cove
