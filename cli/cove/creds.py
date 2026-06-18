@@ -15,10 +15,11 @@ from cove import op_bulk_write, vault_cache
 
 OP_REFS = {
     "forgejo_admin": "op://Private/Forgejo {hostname} Admin/password",
-    "vault_user": "op://Private/Vault {hostname} cristos/password",
+    "vault_user": "op://Private/Vault {hostname} {username}/password",
 }
 
 HOSTNAME = platform.node().split(".")[0]
+USERNAME = os.environ.get("USER", "")
 
 
 @click.group()
@@ -121,14 +122,14 @@ def batch_pull_op(force_refresh: bool):
     if not force_refresh:
         cached = 0
         for ref_template in OP_REFS.values():
-            ref = ref_template.format(hostname=HOSTNAME)
+            ref = ref_template.format(hostname=HOSTNAME, username=USERNAME)
             if lc.get(ref) is not None:
                 cached += 1
         if cached == len(OP_REFS):
             click.echo("All refs already in local cache. Use --force-refresh to repull.")
             return
 
-    refs = [t.format(hostname=HOSTNAME) for t in OP_REFS.values()]
+    refs = [t.format(hostname=HOSTNAME, username=USERNAME) for t in OP_REFS.values()]
     try:
         result = lc.batch_pull(refs)
     except RuntimeError as e:
