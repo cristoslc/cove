@@ -59,12 +59,16 @@ def init(force, purge):
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
 def up(no_provision, no_sudo, no_upgrade, log):
-    """Bring up cove containers and provision Forgejo."""
+    """Bring up cove containers and provision Forgejo.
+
+    Compose dir is resolved in order: COVE_COMPOSE_DIR env, ./compose,
+    .worktrees/<name>/compose, git-toplevel/compose, ~/.config/cove/compose.
+    """
     if not no_upgrade:
         maybe_reextract()
     ensure_init()
     compose_dir = resolve_compose_dir()
-    host_vars_file = ensure_host_vars(compose_dir)
+    host_vars_file = ensure_host_vars()
     inventory = compose_dir / "inventory.yml"
     bringup = compose_dir / "bringup.yml"
     provision = compose_dir / "provision_forgejo.yml"
@@ -94,8 +98,7 @@ def up(no_provision, no_sudo, no_upgrade, log):
             raise SystemExit(result.returncode)
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
-    if host_vars_file.exists():
-        base_cmd.extend(["-e", f"@{host_vars_file}"])
+    base_cmd.extend(["-e", f"@{host_vars_file}"])
     if not no_sudo:
         base_cmd.append("-K")
     else:
@@ -150,7 +153,10 @@ def install(global_):
 @app.command()
 @click.option("--volumes", is_flag=True, help="Also remove named volumes (destroys container data).")
 def down(volumes):
-    """Stop cove containers."""
+    """Stop cove containers.
+
+    Compose dir resolution: see `cove up --help` (COVE_COMPOSE_DIR env, etc.).
+    """
     compose_dir = resolve_compose_dir()
     cmd = [
         "docker", "compose",
