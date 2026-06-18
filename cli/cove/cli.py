@@ -19,6 +19,7 @@ from cove.project import (
 from cove.stateless import (
     resolve_compose_dir, extract_resources, ensure_init, maybe_reextract,
 )
+from cove.state import ensure_host_vars
 
 
 @click.group()
@@ -62,6 +63,7 @@ def up(no_provision, no_sudo, no_upgrade, log):
     if not no_upgrade:
         maybe_reextract()
     compose_dir = resolve_compose_dir()
+    host_vars_file = ensure_host_vars(compose_dir)
     inventory = compose_dir / "inventory.yml"
     bringup = compose_dir / "bringup.yml"
     provision = compose_dir / "provision_forgejo.yml"
@@ -91,6 +93,8 @@ def up(no_provision, no_sudo, no_upgrade, log):
             raise SystemExit(result.returncode)
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
+    if host_vars_file.exists():
+        base_cmd.extend(["-e", f"@{host_vars_file}"])
     if not no_sudo:
         base_cmd.append("-K")
     else:
