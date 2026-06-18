@@ -568,3 +568,41 @@ class TestProgressiveDisclosure:
         assert "Vault" in agents_text
         assert "Project override" in agents_text
         assert "# Existing Project" in agents_text
+
+
+class TestNoUpgradeFlag:
+    def test_no_upgrade_skips_reextract(self, tmp_path, monkeypatch):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.cli.maybe_reextract") as mock_reextract:
+            mock_run.return_value.returncode = 0
+            cove.cli.up.callback(
+                no_provision=True, no_sudo=False, no_upgrade=True, log=False
+            )
+            mock_reextract.assert_not_called()
+
+
+class TestInitPurge:
+    def test_init_purge_removes_compose_dir(self, tmp_path, monkeypatch):
+        compose_dir = tmp_path / ".config" / "cove" / "compose"
+        compose_dir.mkdir(parents=True)
+        (compose_dir / ".version").write_text("0.1.0")
+        (compose_dir / "inventory.yml").write_text("---\n")
+        with patch("cove.cli.Path.home", return_value=tmp_path):
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["init", "--purge"])
+            assert result.exit_code == 0
+            assert not compose_dir.exists()
+
+    def test_init_purge_when_absent(self, tmp_path, monkeypatch):
+        with patch("cove.cli.Path.home", return_value=tmp_path):
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["init", "--purge"])
+            assert result.exit_code == 0
+            assert "Nothing to remove" in result.output

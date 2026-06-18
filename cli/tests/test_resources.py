@@ -8,7 +8,7 @@ import click
 import pytest
 
 from cove import __version__
-from cove.stateless import resolve_compose_dir, extract_resources, ensure_init
+from cove.stateless import resolve_compose_dir, extract_resources, ensure_init, maybe_reextract
 
 
 class TestResolveComposeDir:
@@ -185,3 +185,54 @@ class TestEnsureInit:
             result = ensure_init()
             assert result == target
             mock_extract.assert_not_called()
+
+class TestMaybeReextract:
+    def test_no_reextract_when_version_matches(self, tmp_path, monkeypatch):
+        target = tmp_path / ".config" / "cove" / "compose"
+        target.mkdir(parents=True)
+        (target / ".version").write_text(__version__)
+        with patch("cove.stateless.Path.home", return_value=tmp_path), patch(
+            "cove.stateless.extract_resources"
+        ) as mock_extract:
+            result = maybe_reextract()
+            assert result is False
+            mock_extract.assert_not_called()
+
+    def test_reextract_on_version_mismatch(self, tmp_path, monkeypatch):
+        target = tmp_path / ".config" / "cove" / "compose"
+        target.mkdir(parents=True)
+        (target / ".version").write_text("0.0.1")
+        with patch("cove.stateless.Path.home", return_value=tmp_path), patch(
+            "cove.stateless.extract_resources"
+        ) as mock_extract:
+            result = maybe_reextract()
+            assert result is True
+            mock_extract.assert_called_once_with(force=True)
+
+    def test_no_reextract_when_missing(self, tmp_path, monkeypatch):
+        with patch("cove.stateless.Path.home", return_value=tmp_path), patch(
+            "cove.stateless.extract_resources"
+        ) as mock_extract:
+            result = maybe_reextract()
+            assert result is False
+            mock_extract.assert_not_called()
+
+    def test_reextract_preserves_host_vars(self, tmp_path, monkeypatch):
+        home = tmp_path
+        target = home / ".config" / "cove" / "compose"
+        target.mkdir(parents=True)
+        (target / ".version").write_text("0.0.1")
+        (target / "inventory.yml").write_text("---\n")
+        state_hosts = home / ".config" / "cove" / "state" / "hosts"
+        state_hosts.mkdir(parents=True)
+        (state_hosts / "testhost.yml").write_text("admin_username: testuser\n")
+        with patch("cove.stateless.Path.home", return_value=home), patch(
+            "cove.stateless._bundled_compose_root"
+        ) as mock_root_fn:
+            mock_root = MagicMock()
+            mock_root.is_dir.return_value = True
+            mock_root.iterdir.return_value = []
+            mock_root_fn.return_value = mock_root
+            result = maybe_reextract()
+            assert result is True
+            assert (state_hosts / "testhost.yml").read_text() == "admin_username: testuser\n"
