@@ -7,6 +7,7 @@ where = ["."]
 
 [tool.setuptools.package-data]
 "cove.templates" = ["*.j2"]
+"cove.resources" = ["**/*"]
 
 [project]
 name = "cove-cli"

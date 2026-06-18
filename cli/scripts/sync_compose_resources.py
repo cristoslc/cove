@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Sync compose/ -> cli/cove/resources/compose/ (exclude rendered + PII files)."""
+
+from __future__ import annotations
+
+import shutil
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+SRC = REPO_ROOT / "compose"
+DST = REPO_ROOT / "cli" / "cove" / "resources" / "compose"
+
+EXCLUDE_NAMES = {".env", "default.conf", "cove.conf"}
+EXCLUDE_SUFFIXES = {".env"}
+EXCLUDE_DIRS = {"data", "logs", "raft", "__pycache__"}
+EXCLUDE_HOST_VARS_YML = True
+
+
+def _should_exclude(path: Path, relative: Path) -> bool:
+    parts = relative.parts
+    if parts[0] in EXCLUDE_DIRS:
+        return True
+    for part in parts[:-1]:
+        if part in EXCLUDE_DIRS:
+            return True
+    name = path.name
+    if name in EXCLUDE_NAMES:
+        return True
+    if name.endswith(".env"):
+        return True
+    if EXCLUDE_HOST_VARS_YML and parts[0] == "host_vars" and name.endswith(".yml"):
+        return True
+    return False
+
+
+def sync() -> None:
+    if not SRC.exists():
+        raise SystemExit(f"compose/ not found at {SRC}")
+    if DST.exists():
+        shutil.rmtree(DST)
+    DST.mkdir(parents=True)
+    for src in SRC.rglob("*"):
+        if src.is_dir():
+            continue
+        relative = src.relative_to(SRC)
+        if _should_exclude(src, relative):
+            continue
+        dst = DST / relative
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+    print(f"Synced {SRC} -> {DST}")
+
+
+if __name__ == "__main__":
+    sync()
