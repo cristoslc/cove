@@ -1,7 +1,7 @@
 # Cove Stateless Config — Morning Briefing
 
-**Date:** 2026-06-14
-**Status:** Phases 1–4 complete, end-to-end verified
+**Date:** 2026-06-14 (corrected 2026-06-17)
+**Status:** Phases 1–4 were implemented on branch `stateless-phase-2` (PR #9), but PR #9 was **closed without merging** and the branch was deleted. **No phase work has landed on `main`.** All Phases 1–5 remain unimplemented on trunk. The original "Phases 1–4 complete, end-to-end verified" claim below described the closed branch, not merged state — it was misleading and is retained only as a record of what was attempted.
 
 ## What got done overnight
 
