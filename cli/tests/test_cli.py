@@ -187,7 +187,9 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run:
+        ) as mock_run, patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ):
             mock_run.return_value.returncode = 0
 
             cove.cli.up.callback(no_provision=True, no_sudo=False, no_upgrade=True, log=False)
@@ -203,7 +205,9 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run, patch("click.prompt") as mock_prompt:
+        ) as mock_run, patch("click.prompt") as mock_prompt, patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ):
             mock_run.return_value.returncode = 0
 
             cove.cli.up.callback(no_provision=True, no_sudo=True, no_upgrade=True, log=False)
@@ -223,7 +227,9 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run, patch("click.prompt", return_value="pw"):
+        ) as mock_run, patch("click.prompt", return_value="pw"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ):
             mock_run.return_value.returncode = 0
 
             cove.cli.up.callback(no_provision=True, no_sudo=False, no_upgrade=True, log=False)
@@ -241,7 +247,9 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run, patch("click.prompt", return_value="pw"):
+        ) as mock_run, patch("click.prompt", return_value="pw"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ):
             mock_run.return_value.returncode = 0
 
             cove.cli.up.callback(no_provision=False, no_sudo=False, no_upgrade=True, log=False)
