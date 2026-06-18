@@ -3,11 +3,14 @@
 import json
 import os
 import platform
+import re
 import subprocess
 from pathlib import Path
 
 import click
 import yaml
+
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9-]+$")
 
 
 def _state_hosts_dir() -> Path:
@@ -66,6 +69,11 @@ def _detect_values() -> dict:
 def ensure_host_vars(compose_dir: Path) -> Path:
     hosts_dir = _state_hosts_dir()
     hostname = platform.node().split(".")[0]
+    if not _HOSTNAME_RE.match(hostname):
+        raise click.ClickException(
+            f"Hostname {hostname!r} contains invalid characters; "
+            "cannot create host_vars file."
+        )
     host_vars = hosts_dir / f"{hostname}.yml"
 
     if host_vars.exists():
