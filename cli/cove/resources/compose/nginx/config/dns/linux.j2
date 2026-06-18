@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+FILE="/etc/dnsmasq.d/cove-{{ ansible_hostname }}.conf"
+if [ "$EUID" -ne 0 ]; then exec sudo bash "$0"; fi
+cat > "$FILE" <<'EOF'
+server=/cove.{{ ansible_hostname }}/{{ ts_ip }}#5353
+EOF
+if systemctl is-active --quiet dnsmasq 2>/dev/null; then
+    systemctl restart dnsmasq
+    echo "dnsmasq restarted"
+else
+    echo "Config written to $FILE — start or reload dnsmasq to apply"
+fi
+echo "Test: dig git.cove.{{ ansible_hostname }}"
