@@ -13,12 +13,9 @@ PII_PATTERNS = [
     "mbpbk-202602",
 ]
 
-EXCLUDE_PATHS = [
-    "docs/",
-    ".git/",
-    ".worktrees/",
-    "tests/test_no_pii.py",
-]
+# Directory prefixes (relative to repo root) excluded from PII scanning.
+EXCLUDE_DIRS = ("docs/", ".git/", ".worktrees/")
+_SELF = Path(__file__).resolve()
 
 
 def _tracked_files() -> list[str]:
@@ -28,10 +25,19 @@ def _tracked_files() -> list[str]:
         text=True,
         check=True,
     )
-    return [
-        line for line in result.stdout.splitlines()
-        if line and not any(line.startswith(ex) or ex in line for ex in EXCLUDE_PATHS)
-    ]
+    out = []
+    for line in result.stdout.splitlines():
+        if not line:
+            continue
+        if any(line.startswith(d) for d in EXCLUDE_DIRS):
+            continue
+        try:
+            if Path(line).resolve() == _SELF:
+                continue
+        except OSError:
+            pass
+        out.append(line)
+    return out
 
 
 @pytest.mark.parametrize("pattern", PII_PATTERNS)
