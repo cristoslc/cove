@@ -21,6 +21,9 @@ def resolve_compose_dir() -> Path:
         p = Path(env)
         if (p / "inventory.yml").exists():
             return p
+        raise click.ClickException(
+            f"COVE_COMPOSE_DIR={env} does not contain inventory.yml."
+        )
 
     cwd = Path.cwd()
     for candidate in [cwd / "compose", cwd / ".worktrees" / cwd.name / "compose"]:
@@ -29,7 +32,7 @@ def resolve_compose_dir() -> Path:
 
     result = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, cwd=str(cwd),
+        capture_output=True, text=True, cwd=cwd,
     )
     if result.returncode == 0:
         git_root = Path(result.stdout.strip())
@@ -79,16 +82,9 @@ def extract_resources(force: bool = False) -> Path:
 def _copy_resource(src, dst: Path) -> None:
     src_path = Path(str(src))
     if src_path.is_dir():
-        dst_dir = dst / src_path.name
-        dst_dir.mkdir(parents=True, exist_ok=True)
-        for child in src_path.rglob("*"):
-            if child.is_file():
-                rel = child.relative_to(src_path)
-                target_file = dst_dir / rel
-                target_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(str(child), str(target_file))
+        shutil.copytree(src_path, dst / src_path.name, dirs_exist_ok=True)
     else:
-        shutil.copy2(str(src_path), str(dst / src_path.name))
+        shutil.copy2(src_path, dst / src_path.name)
 
 
 def ensure_init() -> Path:
