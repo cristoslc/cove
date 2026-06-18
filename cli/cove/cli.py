@@ -16,21 +16,9 @@ from cove.project import (
     _render_agents_block, _write_detail_cove, _write_fj_detail, _write_project_override,
     _remove_detail_cove, _remove_project_override,
 )
-
-def _find_compose_dir() -> Path:
-    cwd = Path.cwd()
-    for candidate in [cwd / "compose", cwd / ".worktrees" / cwd.name / "compose"]:
-        if (candidate / "inventory.yml").exists():
-            return candidate
-    result = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, cwd=str(cwd),
-    )
-    if result.returncode == 0:
-        git_root = Path(result.stdout.strip())
-        if (git_root / "compose" / "inventory.yml").exists():
-            return git_root / "compose"
-    raise click.ClickException("Could not find compose/inventory.yml. Run from a cove project directory.")
+from cove.stateless import (
+    resolve_compose_dir, extract_resources, ensure_init, maybe_reextract,
+)
 
 
 @click.group()
@@ -40,12 +28,40 @@ def app():
 
 
 @app.command()
+@click.option("--force", is_flag=True, help="Re-extract resources even if version matches.")
+@click.option("--purge", is_flag=True, help="Remove ~/.config/cove/compose/ entirely.")
+def init(force, purge):
+    """Extract bundled compose resources to ~/.config/cove/compose/."""
+    if purge:
+        target = Path.home() / ".config" / "cove" / "compose"
+        if target.exists():
+            shutil.rmtree(target)
+            click.echo(f"Removed {target}")
+        else:
+            click.echo(f"Nothing to remove at {target}")
+        return
+    path = extract_resources(force=force)
+    click.echo(f"Compose resources extracted to {path}")
+    reqs = path / "requirements.yml"
+    if reqs.exists():
+        click.echo("Installing Ansible collections...")
+        subprocess.run(
+            ["ansible-galaxy", "collection", "install", "-r", str(reqs)],
+            check=False,
+        )
+    click.echo(f"cove {__version__} ready. Run `cove up` to bring up services.")
+
+
+@app.command()
 @click.option("--no-provision", is_flag=True, help="Skip Forgejo provisioning")
 @click.option("--no-sudo", is_flag=True, help="Skip sudo elevation for /etc/hosts (safe if already configured)")
+@click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
-def up(no_provision, no_sudo, log):
+def up(no_provision, no_sudo, no_upgrade, log):
     """Bring up cove containers and provision Forgejo."""
-    compose_dir = _find_compose_dir()
+    if not no_upgrade:
+        maybe_reextract()
+    compose_dir = resolve_compose_dir()
     inventory = compose_dir / "inventory.yml"
     bringup = compose_dir / "bringup.yml"
     provision = compose_dir / "provision_forgejo.yml"
@@ -130,7 +146,7 @@ def install(global_):
 @click.option("--volumes", is_flag=True, help="Also remove named volumes (destroys container data).")
 def down(volumes):
     """Stop cove containers."""
-    compose_dir = _find_compose_dir()
+    compose_dir = resolve_compose_dir()
     cmd = [
         "docker", "compose",
         "--project-directory", str(compose_dir),
@@ -149,7 +165,7 @@ def down(volumes):
 @click.option("-g", "--global", "global_", is_flag=True, help="Remove from global ~/.agents/AGENTS.md instead of local.")
 def uninstall(yes, global_):
     """Stop cove containers, remove credentials, and strip agent guidance."""
-    compose_dir = _find_compose_dir()
+    compose_dir = resolve_compose_dir()
 
     if not yes:
         click.confirm(

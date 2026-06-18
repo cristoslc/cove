@@ -27,6 +27,7 @@ PROJECT_ROOT = _project_root()
 COMPOSE_DIR = PROJECT_ROOT / "compose"
 
 import cove.cli
+from cove.stateless import resolve_compose_dir
 
 
 class TestDeploymentManifests:
@@ -123,9 +124,13 @@ class TestFindComposeDir:
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
+        monkeypatch.delenv("COVE_COMPOSE_DIR", raising=False)
 
-        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
-            result = cove.cli._find_compose_dir()
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run:
+            mock_run.return_value.returncode = 1
+            result = resolve_compose_dir()
             assert result == compose_sub
 
     def test_finds_via_git_root(self, tmp_path, monkeypatch):
@@ -134,6 +139,7 @@ class TestFindComposeDir:
         (compose_sub / "inventory.yml").write_text("---\n")
         nested = tmp_path / "a" / "b" / "c"
         nested.mkdir(parents=True)
+        monkeypatch.delenv("COVE_COMPOSE_DIR", raising=False)
 
         with patch.object(cove.cli.Path, "cwd", return_value=nested), patch(
             "subprocess.run"
@@ -141,27 +147,34 @@ class TestFindComposeDir:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = str(tmp_path) + "\n"
 
-            result = cove.cli._find_compose_dir()
+            result = resolve_compose_dir()
             assert result == compose_sub
 
     def test_raises_when_not_found(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("COVE_COMPOSE_DIR", raising=False)
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run:
+        ) as mock_run, patch(
+            "cove.stateless.Path.home", return_value=tmp_path
+        ):
             mock_run.return_value.returncode = 1
             mock_run.return_value.stderr = "not a git repo"
 
-            with pytest.raises(Exception, match="Could not find"):
-                cove.cli._find_compose_dir()
+            with pytest.raises(Exception, match="Run `cove init` first"):
+                resolve_compose_dir()
 
     def test_handles_worktree_path(self, tmp_path, monkeypatch):
         wt = tmp_path / ".worktrees" / str(tmp_path.name)
         compose_sub = wt / "compose"
         compose_sub.mkdir(parents=True)
         (compose_sub / "inventory.yml").write_text("---\n")
+        monkeypatch.delenv("COVE_COMPOSE_DIR", raising=False)
 
-        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
-            result = cove.cli._find_compose_dir()
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run:
+            mock_run.return_value.returncode = 1
+            result = resolve_compose_dir()
             assert result == compose_sub
 
 
@@ -177,7 +190,7 @@ class TestCoveUpCommand:
         ) as mock_run:
             mock_run.return_value.returncode = 0
 
-            cove.cli.up.callback(no_provision=True, no_sudo=False, log=False)
+            cove.cli.up.callback(no_provision=True, no_sudo=False, no_upgrade=True, log=False)
 
             args_list = [str(a) for a in mock_run.call_args[0][0]]
             assert "-K" in args_list, "cove up must pass -K to ansible-playbook"
@@ -193,7 +206,7 @@ class TestCoveUpCommand:
         ) as mock_run, patch("click.prompt") as mock_prompt:
             mock_run.return_value.returncode = 0
 
-            cove.cli.up.callback(no_provision=True, no_sudo=True, log=False)
+            cove.cli.up.callback(no_provision=True, no_sudo=True, no_upgrade=True, log=False)
 
             args_list = [str(a) for a in mock_run.call_args[0][0]]
             assert "ansible_become=no" in " ".join(args_list)
@@ -213,7 +226,7 @@ class TestCoveUpCommand:
         ) as mock_run, patch("click.prompt", return_value="pw"):
             mock_run.return_value.returncode = 0
 
-            cove.cli.up.callback(no_provision=True, no_sudo=False, log=False)
+            cove.cli.up.callback(no_provision=True, no_sudo=False, no_upgrade=True, log=False)
             assert mock_run.call_count == 1
 
     def test_full_up_calls_all_in_correct_order(self, tmp_path, monkeypatch):
@@ -231,7 +244,7 @@ class TestCoveUpCommand:
         ) as mock_run, patch("click.prompt", return_value="pw"):
             mock_run.return_value.returncode = 0
 
-            cove.cli.up.callback(no_provision=False, no_sudo=False, log=False)
+            cove.cli.up.callback(no_provision=False, no_sudo=False, no_upgrade=True, log=False)
             assert mock_run.call_count == 5
 
             all_args = [mock_run.call_args_list[i][0][0] for i in range(5)]
@@ -335,7 +348,7 @@ class TestCoveUninstallCommand:
     def test_uninstall_no_project_dir_exits_cleanly(self, tmp_path, monkeypatch):
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             runner = CliRunner()
-            with patch("cove.cli._find_compose_dir", side_effect=click.ClickException("no project")):
+            with patch("cove.cli.resolve_compose_dir", side_effect=click.ClickException("no project")):
                 result = runner.invoke(cove.cli.app, ["uninstall", "--yes"])
             assert result.exit_code != 0, "uninstall with no compose dir should fail"
 
