@@ -62,6 +62,7 @@ def up(no_provision, no_sudo, no_upgrade, log):
     """Bring up cove containers and provision Forgejo."""
     if not no_upgrade:
         maybe_reextract()
+    ensure_init()
     compose_dir = resolve_compose_dir()
     host_vars_file = ensure_host_vars(compose_dir)
     inventory = compose_dir / "inventory.yml"
