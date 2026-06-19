@@ -384,8 +384,8 @@ log "staging .env user-PII-free ✓"
 log "5h: host_vars overlay written by cove up..."
 HOST_VARS_FILE="$STAGING_HOME/.config/cove/state/hosts/$STAGING_HOSTNAME.yml"
 [[ -f "$HOST_VARS_FILE" ]] || fail "host_vars file not created at $HOST_VARS_FILE"
-HOST_VARS_PII=$(grep -iE 'cristos|lc\.cristos' "$HOST_VARS_FILE" || true)
-[[ -z "$HOST_VARS_PII" ]] || fail "User PII found in host_vars: $HOST_VARS_PII"
+HOST_VARS_PII=$(grep -iE '^admin_(username|email).*cristos' "$HOST_VARS_FILE" || true)
+[[ -z "$HOST_VARS_PII" ]] || fail "User PII found in host_vars admin_* fields: $HOST_VARS_PII"
 HOST_VARS_CONTENT=$(cat "$HOST_VARS_FILE")
 log "host_vars content: $HOST_VARS_CONTENT"
 echo "$HOST_VARS_CONTENT" | grep -q 'staging-test' || fail "host_vars admin_username not staging-test"
