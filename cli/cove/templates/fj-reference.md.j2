@@ -14,6 +14,24 @@ SSH (`git@forgejo-localhost:...`) is also available as an optional transport —
 
 `cove up` caches a persistent API token (`cove-push`) in git's credential helper so `fj` can push over HTTPS without prompting.
 
+## Draft / Ready status
+
+Forgejo uses the PR title to determine draft status:
+
+- **Draft:** title starts with `WIP:` (case-insensitive) — PR **cannot** be merged
+- **Ready:** title does **not** start with `WIP:`
+
+```bash
+# Create a draft PR
+fj pr create "WIP: my change"
+
+# Mark ready (remove WIP: prefix)
+fj pr edit <PR> title "my change"
+
+# Mark draft (add WIP: prefix)
+fj pr edit <PR> title "WIP: my change"
+```
+
 ## Checking CI status
 
 ```bash
