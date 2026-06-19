@@ -337,13 +337,13 @@ done
 log "Vault /v1/sys/health → $VAULT_STATUS ✓"
 
 # 5d. dnsmasq responds on staging port.
+# NOTE: Colima's port forwarding doesn't reliably pass UDP, so use TCP
+# (dnsmasq supports TCP DNS per RFC 5966). Prod's 5353 has the same limitation.
 log "5d: dnsmasq on :$STAGING_DNSMASQ..."
 DNS_RESULT=""
 for i in $(seq 1 15); do
-    dig @127.0.0.1 -p "$STAGING_DNSMASQ" cove +short > "$LOG_DIR/dns-check.txt" 2>&1 || true
+    dig @127.0.0.1 -p "$STAGING_DNSMASQ" cove +short +tcp > "$LOG_DIR/dns-check.txt" 2>&1 || true
     DNS_RESULT=$(tr -d ' \n' < "$LOG_DIR/dns-check.txt")
-    # dig +short outputs just the IP on success; on failure it outputs
-    # error text containing ";;" or "timed out".
     if [[ "$DNS_RESULT" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
         break
     fi
