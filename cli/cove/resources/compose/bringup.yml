@@ -60,14 +60,14 @@
           }}
 
     - name: Configure tailscale serve for HTTPS on port 443
-      when: ts_status.rc == 0
+      when: "ts_status.rc == 0 and not (cove_skip_tailscale_serve | default(false))"
       ansible.builtin.shell: |
         set -eo pipefail
         JSON=$(tailscale serve status --json 2>/dev/null || echo '{}')
         if echo "$JSON" | python3 -c "import json,sys; s=json.load(sys.stdin); exit(0 if s.get('Web',{}).get('443') else 1)"; then
           echo "already configured"
         else
-          tailscale serve --bg --https "443" https://127.0.0.1:8443
+          tailscale serve --bg --https "443" https://127.0.0.1:{{ nginx_https_port }}
           echo "configured"
         fi
       register: ts_serve_https
@@ -81,7 +81,7 @@
 
     - name: Install mkcert CA
       ansible.builtin.command: mkcert -install
-      when: mkcert_check.rc == 0
+      when: mkcert_check.rc == 0 and not (cove_skip_mkcert_install | default(false))
       changed_when: false
 
     - name: Detect mkcert CAROOT path
@@ -173,15 +173,15 @@
         state: present
       failed_when: false
 
-    - name: Forward localhost:443 → localhost:8443 via pf
+    - name: Forward localhost:443 → localhost:{{ nginx_https_port }} via pf
       become: true
       when: ansible_system == "Darwin"
       ansible.builtin.shell: |
         set -eo pipefail
-        if pfctl -s nat 2>/dev/null | grep -q '8443'; then
+        if pfctl -s nat 2>/dev/null | grep -q '{{ nginx_https_port }}'; then
           echo "already configured"
         else
-          RDR='rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443'
+          RDR='rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port {{ nginx_https_port }}'
           printf 'rdr-anchor "cove-https"\n%s\npass all\n' "$RDR" | pfctl -ef - >/dev/null 2>&1
           echo "configured"
         fi
@@ -263,7 +263,10 @@
           NGINX_CONF_DIR={{ nginx_conf_dir }}
           DNSMASQ_CONF_DIR={{ dnsmasq_conf_dir }}
           DNSMASQ_CONTAINER_NAME={{ dnsmasq_container_name }}
+          DNSPROXY_CONTAINER_NAME={{ dnsproxy_container_name }}
           DNSMASQ_PORT={{ dnsmasq_port }}
+          NGINX_HTTPS_PORT={{ nginx_https_port }}
+          NGINX_HTTP_PORT={{ nginx_http_port }}
           MKCERT_CAROOT={{ mkcert_caroot_path }}
 
     # CONTAINERS -------------------------------------------------------------
@@ -273,13 +276,16 @@
       changed_when: false
 
     - name: Bring up pod via docker compose
-      community.docker.docker_compose_v2:
-        project_src: "{{ compose_dir }}"
-        state: present
-        pull: "{{ pod_pull_policy }}"
-        wait: false
-        recreate: always
-        docker_host: "{{ docker_host_detect.stdout }}"
+      ansible.builtin.shell: |
+        docker compose \
+        {{ '--project-name ' + compose_project_name if compose_project_name is defined else '' }} \
+        --project-directory "{{ compose_dir }}" \
+        up -d --pull "{{ pod_pull_policy }}"
+      args:
+        chdir: "{{ compose_dir }}"
+      environment:
+        DOCKER_HOST: "{{ docker_host_detect.stdout }}"
+      changed_when: true
 
     - name: Wait for dnsmasq to respond
       ansible.builtin.wait_for:
@@ -289,7 +295,9 @@
 
     - name: Wait for nginx ingress (hc.cove)
       ansible.builtin.uri:
-        url: "https://hc.cove/"
+        url: "https://127.0.0.1:{{ nginx_https_port }}/"
+        headers:
+          Host: hc.cove
         status_code: 200
         validate_certs: false
       register: hc_check
@@ -299,7 +307,9 @@
 
     - name: Wait for Forgejo health endpoint
       ansible.builtin.uri:
-        url: "https://git.cove/api/healthz"
+        url: "https://127.0.0.1:{{ nginx_https_port }}/api/healthz"
+        headers:
+          Host: git.cove
         status_code: 200
         validate_certs: false
       register: forgejo_health
@@ -309,7 +319,9 @@
 
     - name: Wait for Vault to respond
       ansible.builtin.uri:
-        url: "https://vault.cove/v1/sys/health"
+        url: "https://127.0.0.1:{{ nginx_https_port }}/v1/sys/health"
+        headers:
+          Host: vault.cove
         status_code: [200, 429, 472, 473, 501, 503]
         validate_certs: false
       register: vault_health
@@ -325,8 +337,8 @@
             Vault  : https://vault.cove/ (TLS via nginx+mkcert)
             SSH    : 0.0.0.0:{{ forgejo_ssh_port }}
 
-          Bootstrap new devices: http://{{ ansible_default_ipv4.address }}:8080/config/
-          {% if ts_status.rc == 0 %}or https://{{ ts_ip }}:8443/config/{% endif %}
+          Bootstrap new devices: http://{{ ansible_default_ipv4.address }}:{{ nginx_http_port }}/config/
+          {% if ts_status.rc == 0 %}or https://{{ ts_ip }}:{{ nginx_https_port }}/config/{% endif %}
 
           Next steps:
             1. ansible-playbook -i inventory.yml bootstrap_vault.yml

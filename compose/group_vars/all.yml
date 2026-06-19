@@ -58,3 +58,6 @@ nginx_https_port: 8443
 dnsmasq_conf_dir: "{{ playbook_dir }}/dnsmasq"
 dnsmasq_container_name: cove-dnsmasq
 dnsmasq_port: 5353
+
+# --- dnsproxy ---
+dnsproxy_container_name: cove-dnsproxy

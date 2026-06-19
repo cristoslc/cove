@@ -1,6 +1,0 @@
-.env
-default.conf
-data/
-logs/
-vault/raft/
-host_vars/*.yml
