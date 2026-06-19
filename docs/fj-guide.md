@@ -22,11 +22,28 @@ Forgejo determines draft/pull-request state from the PR title:
 |--------|---------|
 | Create (with body file) | `fj issue create "Title" --body-file <path>` |
 | Create (editor) | `fj issue create` — opens `$EDITOR` for title + body |
+| Comment | `fj issue comment <ID> --body-file <path>` |
+| Edit title | `fj issue edit <ID> title "New title"` |
+| Assign | `fj issue assign <ID> <username>` |
+| Unassign | `fj issue unassign <ID> <username>` |
 | List | `fj issue list` |
-| View | `fj issue view <id>` |
-| Close | `fj issue close <id>` |
+| View | `fj issue view <ID>` |
+| Search | `fj issue search [query]` |
+| Close | `fj issue close <ID>` |
 
-**Important:** `fj issue create` does **not** have a `--title` flag — title is the first positional argument. For body text, always prefer `--body-file` over `--body` (see [docs/musings/fj-issue-create-body-file.md](docs/musings/fj-issue-create-body-file.md) for rationale).
+## Pull Requests
+
+| Action | Command |
+|--------|---------|
+| Create draft PR | `fj pr create "WIP: <title>"` |
+| Mark ready | `fj pr edit <PR> title "<title>"` (remove `WIP:` prefix) |
+| Mark draft | `fj pr edit <PR> title "WIP: <title>"` (add `WIP:` prefix) |
+| Check status | `fj pr view <PR>` (title prefix tells you) |
+| Comment | `fj pr comment <PR> --body-file <path>` |
+| Merge | `fj pr merge <PR>` |
+| Search | `fj pr search [query] [--state open\|closed\|all]` |
+
+**Important:** `fj issue create` does **not** have a `--title` flag — title is the first positional argument. For body text, always prefer `--body-file` over `--body` (see [docs/musings/fj-issue-create-body-file.md](docs/musings/fj-issue-create-body-file.md) for rationale). This applies to **all** `--body-file`-compatible commands (`fj issue comment`, `fj pr comment`).
 
 ## Cove-Specific Conventions
 
