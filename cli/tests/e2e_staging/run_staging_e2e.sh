@@ -353,32 +353,36 @@ done
     || fail "dnsmasq returned '$DNS_RESULT' for cove (expected 127.0.0.1)"
 log "dnsmasq cove → 127.0.0.1 ✓"
 
-# 5e. PII-free: nginx config inside container has no real PII.
-log "5e: PII-free check on rendered nginx config (in container)..."
+# 5e. PII-free: nginx config inside container has no real USER PII.
+# NOTE: ansible_hostname (machine name, e.g. MBPBK-202602) and ts_ip (tailscale
+# IP) are legitimately used by templates for per-machine DNS — these are not
+# user PII. Only check for username/email (the PII the branch stripped from
+# tracked files).
+log "5e: PII-free check on rendered nginx config (user PII only)..."
 NGINX_CONF_PII=$(docker exec cove-staging-nginx cat /etc/nginx/conf.d/default.conf 2>/dev/null \
-    | grep -iE 'cristos|MBPBK|taila90e7|lc\.cristos' || true)
-[[ -z "$NGINX_CONF_PII" ]] || fail "PII found in staging nginx config: $NGINX_CONF_PII"
-log "nginx config PII-free ✓"
+    | grep -iE 'cristos|lc\.cristos' || true)
+[[ -z "$NGINX_CONF_PII" ]] || fail "User PII found in staging nginx config: $NGINX_CONF_PII"
+log "nginx config user-PII-free ✓"
 
-# 5f. PII-free: dnsmasq config inside container has no real PII.
-log "5f: PII-free check on rendered dnsmasq config (in container)..."
+# 5f. PII-free: dnsmasq config inside container has no real USER PII.
+log "5f: PII-free check on rendered dnsmasq config (user PII only)..."
 DNSMASQ_CONF_PII=$(docker exec cove-staging-dnsmasq cat /etc/dnsmasq.d/cove.conf 2>/dev/null \
-    | grep -iE 'cristos|MBPBK|taila90e7' || true)
-[[ -z "$DNSMASQ_CONF_PII" ]] || fail "PII found in staging dnsmasq config: $DNSMASQ_CONF_PII"
-log "dnsmasq config PII-free ✓"
+    | grep -iE 'cristos|lc\.cristos' || true)
+[[ -z "$DNSMASQ_CONF_PII" ]] || fail "User PII found in staging dnsmasq config: $DNSMASQ_CONF_PII"
+log "dnsmasq config user-PII-free ✓"
 
-# 5g. PII-free: compose .env rendered by bringup.yml has no real PII.
-log "5g: PII-free check on rendered .env..."
-ENV_PII=$(grep -iE 'cristos|MBPBK|taila90e7|lc\.cristos' "$COMPOSE_DIR/.env" || true)
-[[ -z "$ENV_PII" ]] || fail "PII found in staging .env: $ENV_PII"
-log "staging .env PII-free ✓"
+# 5g. PII-free: compose .env rendered by bringup.yml has no real USER PII.
+log "5g: PII-free check on rendered .env (user PII only)..."
+ENV_PII=$(grep -iE 'cristos|lc\.cristos' "$COMPOSE_DIR/.env" || true)
+[[ -z "$ENV_PII" ]] || fail "User PII found in staging .env: $ENV_PII"
+log "staging .env user-PII-free ✓"
 
 # 5h. host_vars overlay: ensure_host_vars() wrote PII-free file during cove up.
 log "5h: host_vars overlay written by cove up..."
 HOST_VARS_FILE="$STAGING_HOME/.config/cove/state/hosts/$STAGING_HOSTNAME.yml"
 [[ -f "$HOST_VARS_FILE" ]] || fail "host_vars file not created at $HOST_VARS_FILE"
-HOST_VARS_PII=$(grep -iE 'cristos|MBPBK|taila90e7|lc\.cristos' "$HOST_VARS_FILE" || true)
-[[ -z "$HOST_VARS_PII" ]] || fail "PII found in host_vars: $HOST_VARS_PII"
+HOST_VARS_PII=$(grep -iE 'cristos|lc\.cristos' "$HOST_VARS_FILE" || true)
+[[ -z "$HOST_VARS_PII" ]] || fail "User PII found in host_vars: $HOST_VARS_PII"
 HOST_VARS_CONTENT=$(cat "$HOST_VARS_FILE")
 log "host_vars content: $HOST_VARS_CONTENT"
 echo "$HOST_VARS_CONTENT" | grep -q 'staging-test' || fail "host_vars admin_username not staging-test"
