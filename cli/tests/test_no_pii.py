@@ -15,7 +15,13 @@ PII_PATTERNS = [
 
 # Directory prefixes (relative to repo root) excluded from PII scanning.
 EXCLUDE_DIRS = ("docs/", ".git/", ".worktrees/")
-_SELF = Path(__file__).resolve()
+# Test files that legitimately reference PII patterns as test data (asserting
+# their ABSENCE in bundled resources). Excluded from the scan to avoid
+# self-triggering.
+_EXEMPT_FILES = {
+    Path(__file__).resolve(),
+    Path(__file__).parent.resolve() / "test_e2e_stateless.py",
+}
 
 
 def _tracked_files() -> list[str]:
@@ -32,7 +38,7 @@ def _tracked_files() -> list[str]:
         if any(line.startswith(d) for d in EXCLUDE_DIRS):
             continue
         try:
-            if Path(line).resolve() == _SELF:
+            if Path(line).resolve() in _EXEMPT_FILES:
                 continue
         except OSError:
             pass

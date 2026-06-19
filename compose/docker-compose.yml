@@ -66,8 +66,8 @@ services:
       # ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites (read-write) so the
       # action can write site files that nginx serves read-only here.
     ports:
-      - "0.0.0.0:8443:443"
-      - "0.0.0.0:8080:80"
+      - "0.0.0.0:${NGINX_HTTPS_PORT:-8443}:443"
+      - "0.0.0.0:${NGINX_HTTP_PORT:-8080}:80"
 
   dnsmasq:
     build: ${DNSMASQ_CONF_DIR:-./dnsmasq}
@@ -82,7 +82,7 @@ services:
 
   dnsproxy:
     image: adguard/dnsproxy:latest
-    container_name: cove-dnsproxy
+    container_name: ${DNSPROXY_CONTAINER_NAME:-cove-dnsproxy}
     restart: unless-stopped
     depends_on:
       dnsmasq:
