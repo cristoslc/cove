@@ -1,0 +1,23 @@
+# Cove Forgejo credential seed for 1Password.
+# Run: cove creds 1p-bulk-write seeds/forgejo-creds.yaml.example --execute
+# Copy to forgejo-creds.yaml and edit values for your host.
+
+items:
+  - title: "Forgejo {{ hostname }} Admin"
+    vault: Private
+    category: login
+    fields:
+      username: "{{ admin_username }}"
+      password: "{{generate:32}}"
+      email[text]: "{{ admin_email }}"
+      host[text]: "{{ hostname }}"
+      url[text]: http://localhost:3000
+
+  - title: "Forgejo {{ hostname }} SSH"
+    vault: Private
+    category: "Secure Note"
+    fields:
+      "private_key[concealed]": "{{file:~/.ssh/forgejo_{{ hostname }}_ed25519}}"
+      "public_key[text]": "{{file:~/.ssh/forgejo_{{ hostname }}_ed25519.pub}}"
+      "key_path[text]": "~/.ssh/forgejo_{{ hostname }}_ed25519"
+      "purpose[text]": Forgejo local instance auth on {{ hostname }}

@@ -61,6 +61,13 @@
             cd {{ playbook_dir }} && ansible-playbook -i inventory.yml bootstrap_vault.yml
       when: vault_health.json.sealed | default(true)
 
+    - name: Render vault-user seed from template
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/seeds/vault-user.yaml.example"
+        dest: "{{ playbook_dir }}/seeds/vault-user.yaml"
+        mode: "0600"
+      no_log: true
+
     - name: Seed 1P with vault user item (renders + executes under op run)
       ansible.builtin.command:
         argv:
