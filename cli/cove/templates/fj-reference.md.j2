@@ -2,18 +2,7 @@
 
 Forgejo's CLI (`fj`) is installed via Homebrew as a standalone binary. It auto-detects the remote host from the git remote in the current directory.
 
-## Basic usage
-
-```bash
-# Search issues
-fj issue search [query]
-
-# Create a PR
-fj pr create "WIP: title" [--body "..."] [--base main]
-
-# Check CI status
-fj actions tasks
-```
+See **[docs/fj-guide.md](../../docs/fj-guide.md)** for the full command reference (issues, PRs, conventions).
 
 ## Remote detection
 
@@ -24,6 +13,12 @@ SSH (`git@forgejo-localhost:...`) is also available as an optional transport —
 ## HTTPS auth
 
 `cove up` caches a persistent API token (`cove-push`) in git's credential helper so `fj` can push over HTTPS without prompting.
+
+## Checking CI status
+
+```bash
+fj actions tasks
+```
 
 ## PR comments
 
