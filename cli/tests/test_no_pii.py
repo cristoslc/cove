@@ -14,7 +14,7 @@ PII_PATTERNS = [
 ]
 
 # Directory prefixes (relative to repo root) excluded from PII scanning.
-EXCLUDE_DIRS = ("docs/", ".git/", ".worktrees/")
+EXCLUDE_DIRS = ("docs/", ".git/", ".worktrees/", "scripts/staging/")
 # Test files that legitimately reference PII patterns as test data (asserting
 # their ABSENCE in bundled resources). Excluded from the scan to avoid
 # self-triggering.
