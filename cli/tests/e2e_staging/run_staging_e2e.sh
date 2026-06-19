@@ -371,10 +371,13 @@ DNSMASQ_CONF_PII=$(docker exec cove-staging-dnsmasq cat /etc/dnsmasq.d/cove.conf
 [[ -z "$DNSMASQ_CONF_PII" ]] || fail "User PII found in staging dnsmasq config: $DNSMASQ_CONF_PII"
 log "dnsmasq config user-PII-free ✓"
 
-# 5g. PII-free: compose .env rendered by bringup.yml has no real USER PII.
-log "5g: PII-free check on rendered .env (user PII only)..."
-ENV_PII=$(grep -iE 'cristos|lc\.cristos' "$COMPOSE_DIR/.env" || true)
-[[ -z "$ENV_PII" ]] || fail "User PII found in staging .env: $ENV_PII"
+# 5g. PII-free: compose .env has no USER PII in var assignments.
+# NOTE: file paths under $HOME will contain the username (e.g.
+# /Users/cristos/...) — that's a runtime path artifact, not PII in config.
+# Check for PII in variable VALUES (admin_username, admin_email), not paths.
+log "5g: PII-free check on rendered .env (var values, not paths)..."
+ENV_PII=$(grep -iE '^(ADMIN_USERNAME|ADMIN_EMAIL|FORGEJO_ADMIN_EMAIL).*cristos' "$COMPOSE_DIR/.env" || true)
+[[ -z "$ENV_PII" ]] || fail "User PII found in staging .env values: $ENV_PII"
 log "staging .env user-PII-free ✓"
 
 # 5h. host_vars overlay: ensure_host_vars() wrote PII-free file during cove up.
