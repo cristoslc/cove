@@ -40,7 +40,7 @@ Forgejo determines draft/pull-request state from the PR title:
 | Mark draft | `fj pr edit <PR> title "WIP: <title>"` (add `WIP:` prefix) |
 | Check status | `fj pr view <PR>` (title prefix tells you) |
 | Comment | `fj pr comment <PR> --body-file <path>` |
-| Merge | `fj pr merge <PR>` |
+| Merge | `fj pr merge <PR>` | Fails if title starts with `WIP:` — remove prefix first |
 | Search | `fj pr search [query] [--state open\|closed\|all]` |
 
 **Important:** `fj issue create` does **not** have a `--title` flag — title is the first positional argument. For body text, always prefer `--body-file` over `--body` (see [docs/musings/fj-issue-create-body-file.md](docs/musings/fj-issue-create-body-file.md) for rationale). This applies to **all** `--body-file`-compatible commands (`fj issue comment`, `fj pr comment`).
