@@ -1,101 +1,109 @@
 # Cove Stateless Config — Morning Briefing
 
-**Date:** 2026-06-14 (corrected 2026-06-17)
-**Status:** Phases 1–4 were implemented on branch `stateless-phase-2` (PR #9), but PR #9 was **closed without merging** and the branch was deleted. **No phase work has landed on `main`.** All Phases 1–5 remain unimplemented on trunk. The original "Phases 1–4 complete, end-to-end verified" claim below described the closed branch, not merged state — it was misleading and is retained only as a record of what was attempted.
+**Date:** 2026-06-14 (rewritten 2026-06-19)
+**Status:** All 5 phases implemented on branch `cove-stateless-config` (PR #22), code-reviewed, and e2e-verified against a parallel staging stack. PR #22 is ready for operator review.
 
-## What got done overnight
+## Prior attempt (PR #9 — closed without merging)
 
-### Phase 1: PII cleanup (PR #7, merged to main)
-- Stripped `cristos` / `taila90e7` / `MBPBK` from 11 tracked files
-- Added `host_vars/localhost.yml.example` template
-- Updated `.gitignore`: `compose/host_vars/*.yml`, `compose/dnsmasq/cove.conf`
-- PII-grep test (test_no_pii.py) that fails if PII reappears
-- Deleted `compose/files/cove-sudoers` (PII sudoers config)
-- 68 tests pass
+Phases 1–4 were implemented on branch `stateless-phase-2` (PR #9), but PR #9 was **closed without merging** and the branch was deleted. No phase work landed on `main`. The original "Phases 1–4 complete, end-to-end verified" claim described the closed branch, not merged state.
 
-### Phase 2: Bundle compose/ as package resource (PR #9, draft)
-- `cli/cove/resources/compose/`: full copy of compose tree, 23 files
-- `cli/scripts/sync_compose_resources.py`: syncs compose/ → resources/compose/ with `--check` mode for CI drift detection
-- `pyproject.toml`: `cove.resources.compose` package-data entry
-- Deleted `compose/host_vars/MBPBK-202602.yml` (PII filename, dead file)
-- 73 tests pass (5 new sync tests)
+## Current sashay (PR #22 — open, draft)
 
-### Phase 3: Config resolver + init command (PR #9)
-- `cli/cove/config.py`: new module
-  - `find_compose_dir()`: priority order local ./compose/ → git root → `~/.config/cove/compose/`
-  - `extract_compose_resources()`: extracts bundled resources, writes VERSION marker
-  - Version mismatch re-extraction
-  - `ensure_ansible_collections()`: installs `community.docker` if missing
-- Replaced `_find_compose_dir()` in cli.py with `config.find_compose_dir()`
-- Added `cove init` subcommand
-- 87 tests pass (+14 config tests)
+**Branch:** `cove-stateless-config`
+**PR:** https://git.cove/cristos/cove/pulls/22
+**Base:** `main` @ `2a7eeca`
 
-### Phase 4: host_vars auto-detection (PR #9)
-- `_detect_hostname()`: tries `hostname -s`, falls back to `platform.node()`
-- `_detect_admin_email()`: tries `git config user.email`, falls back to `username@localhost`
-- `write_host_vars()`: writes `host_vars/<hostname>.yml` with auto-detected values
-- `extract_compose_resources()` calls `write_host_vars()` automatically
-- 94 tests pass (+7 host_vars tests)
-
-### Follow-up: __pycache__ leak fix (PR #9)
-- Python creates `__pycache__/` at runtime when importlib.resources accesses `__init__.py` in the resource tree
-- Added guard in `_extract_resource` to skip `__pycache__` and `.pyc` at every recursion level
-- 94 tests still pass
-
-## End-to-end verification: PASSED
+### Commits (13 total)
 
 ```
-$ uv venv /tmp/cove-e2e && source .venv/bin/activate
-$ uv pip install cove_cli-0.1.0-py3-none-any.whl
-$ rm -rf ~/.config/cove
-$ cd /tmp/cove-outside-repo  # NOT in the repo
-$ cove init
-Wrote host vars to /Users/cristos/.config/cove/compose/host_vars/MBPBK-202602.yml
-Extracted compose resources to /Users/cristos/.config/cove/compose
-Installing Ansible collection community.docker...
-Cove initialized at /Users/cristos/.config/cove/compose
-
-$ python3 -c "from cove.config import find_compose_dir; print(find_compose_dir())"
-/Users/cristos/.config/cove/compose
-# All required files present: inventory.yml, bringup.yml, docker-compose.yml, host_vars/
+4312081 fix: e2e host_vars PII check scopes to admin_* fields, not paths
+186b87d fix: e2e .env PII check scopes to var values, not file paths
+684d1a7 fix: e2e PII checks scope to user PII only (hostname/ts_ip are by design)
+680ceac fix: use dig +tcp for dnsmasq check (Colima doesn't forward UDP)
+a427735 fix: staging e2e — retry dnsmasq dig, safe colima cleanup
+5b88e9a feat: parameterize compose for parallel staging + e2e script
+fabe32c test: add proper e2e fixture + branch-verification tests
+5293803 fix: address remaining review findings — fail-loud, dead params, docs
+64d2cd9 fix: address review findings — auto-init in cove up, hostname validation
+2e6c9bd feat: stateless-config phase 5 — version re-extraction
+351773b feat: stateless-config phase 4 — host vars auto-detection
+274002a feat: stateless-config phase 3 — init + resolver
+8b41483 feat: stateless-config phase 2 — bundle compose resources
+96d97b2 feat: stateless-config phase 1 — PII cleanup
 ```
 
-What works:
-- ✅ `uv tool install cove-cli` (via wheel)
-- ✅ `cove init` from outside the repo
-- ✅ host_vars auto-detected (username from $USER, email from git config)
-- ✅ Ansible collection installed automatically
-- ✅ `find_compose_dir()` resolves to `~/.config/cove/compose/` from anywhere
-- ✅ `docker compose` relative paths work (nginx/, dnsmasq/, vault/vault.hcl)
-- ✅ Ansible playbook_dir resolves to extracted dir
-- ✅ 94 tests pass
+### What was implemented
+
+**Phase 1 — PII cleanup:** Stripped `cristos` / `lc.cristos@gmail.com` / `MBPBK-202602` / `taila90e7` from tracked files. group_vars/all.yml admin_username/admin_email set to "" with assert in bringup.yml. Seeds converted to .example templates. .gitignore covers host_vars/*.yml, dnsmasq/cove.conf, seeds/*.yaml. test_no_pii.py guards against PII reappearance.
+
+**Phase 2 — Bundle compose resources:** `cli/cove/resources/compose/` full PII-stripped copy. `cli/scripts/sync_compose_resources.py` syncs compose/ → resources/. pyproject.toml package-data `cove.resources = ["**/*"]`.
+
+**Phase 3 — init + resolver:** `cli/cove/stateless.py` — resolve_compose_dir() (COVE_COMPOSE_DIR → CWD/compose → worktree → git-root → ~/.config/cove/compose → error), extract_resources(), ensure_init(), maybe_reextract(). `cove init` subcommand with --force/--purge. `cove up` auto-inits.
+
+**Phase 4 — host vars auto-detection:** `cli/cove/state.py` — _detect_admin_username/email/op_vault/ts_dns_name from env vars + system. ensure_host_vars() writes `~/.config/cove/state/hosts/<hostname>.yml` (validated hostname, idempotent). bringup.yml's new `assert admin_username` task enforces non-empty.
+
+**Phase 5 — version re-extraction:** maybe_reextract() checks `.version` stamp against `__version__`, re-extracts on mismatch. `cove up --no-upgrade` skips. `cove init --purge` removes entirely.
+
+### Code review (4 specialist agents: security, style, logic, docs)
+
+7 findings fixed across 2 commits (`64d2cd9`, `5293803`):
+- LOGIC-HIGH: `cove up` didn't auto-init → fixed (ensure_init() call added)
+- SECURITY-MEDIUM: hostname path traversal → fixed (regex validation)
+- LOGIC-MEDIUM: COVE_COMPOSE_DIR silent fallthrough → fixed (raises now)
+- STYLE-MEDIUM: _copy_resource reimplemented copytree → fixed (shutil.copytree)
+- DOCS-MEDIUM: COVE_COMPOSE_DIR undiscoverable → fixed (help + example)
+- STYLE-LOW: dead compose_dir param → fixed (removed)
+- LOGIC-LOW: test_no_pii.py substring matching → fixed (startswith + self-path)
+
+### E2E verification (staging stack, real `cove up`)
+
+**Script:** `cli/tests/e2e_staging/run_staging_e2e.sh` (495 lines)
+**Strategy:** Parallel staging stack on alt ports (8444/8081/2223/5354), alt container names (cove-staging-*), alt data root, staging HOME under `~/.cache/cove-staging/`. No sudo. `cove up --no-sudo --no-provision` runs the full Ansible flow.
+
+**15 checks — ALL PASSED:**
+- cove init extracts bundled resources (PII-free) ✓
+- cove init is idempotent ✓
+- maybe_reextract triggers on version mismatch ✓
+- ensure_host_vars() wrote PII-free overlay during cove up ✓
+- resolve_compose_dir() honors COVE_COMPOSE_DIR ✓
+- resolve_compose_dir() raises on invalid COVE_COMPOSE_DIR ✓
+- PII guard fires on injected PII ✓
+- cove up --no-sudo --no-provision brought up staging stack ✓
+- Staging containers (nginx, forgejo, vault, dnsmasq) running ✓
+- Nginx serves HTTPS on staging port 8444 ✓
+- Forgejo /api/healthz → 200 ✓
+- Vault /v1/sys/health → 501 (sealed, expected) ✓
+- dnsmasq resolves cove → 127.0.0.1 (via dig +tcp — Colima doesn't forward UDP) ✓
+- Rendered configs (nginx, dnsmasq, .env, host_vars) user-PII-free ✓
+- cove down tears down staging cleanly ✓
+
+### Compose changes for staging support
+
+- docker-compose.yml: nginx ports + dnsproxy container name env-var parameterized
+- bringup.yml: skip vars (cove_skip_tailscale_serve, cove_skip_mkcert_install), docker_compose_v2 → shell docker compose, parameterized ports/pf/tailscale serve
+- dnsmasq/Dockerfile: removed COPY cove.conf (config is volume-mounted at runtime)
+- group_vars/all.yml: added dnsproxy_container_name
+
+## Test count
+
+| Stage | Tests | Notes |
+|-------|-------|-------|
+| Before | 115 | baseline (main) |
+| Phase 1-5 | 148 | +33 new tests |
+| E2e fixture | 173 | +25 packaging-layer e2e tests |
+| Staging e2e | 15 checks | script-based, real `cove up` |
+
+## Deferred work
+
+1. **Provisioning path not e2e-tested**: `--no-provision` skips bootstrap_vault, provision_vault_user, provision_forgejo. Seed templating (vault-user.yaml from .example), vault unseal, forgejo admin creation untested. Requires 1Password creds or stubs.
+2. **Sync script not wired to pre-commit**: `cli/scripts/sync_compose_resources.py` exists but not auto-run.
+3. **`cove init` ansible-galaxy uses `check=False`**: silently ignores failures.
+4. **Colima UDP limitation**: dnsmasq dig from host requires `+tcp` flag (Colima doesn't forward UDP). Affects prod too.
+5. **Sync script + resources must be re-run** after any compose/ edit.
 
 ## Open items for operator review
 
-1. **PR #9** is draft on `stateless-phase-2` branch, target main. All 4 phases. Ready to review/merge.
-2. **PII cleanup** has been done. Repo is now safe to push to GitHub. (Need to verify with `test_no_pii.py`.)
-3. **`cove up` from extracted config**: path resolution verified, but did NOT run full `cove up` end-to-end because it requires sudo and Docker. Operator should run `cove up --no-provision --no-sudo` from `/tmp/cove-outside-repo` to confirm full bringup.
-4. **Worktrees to clean up**: `.worktrees/stateless-phase-1` and `.worktrees/stateless-phase-2` should be removed after PR merge.
-5. **Cleanup branches**: `stateless-phase-1` and `stateless-phase-2` can be deleted after merge.
-
-## Test count progression
-
-| Phase | Tests | Notes |
-|-------|-------|-------|
-| Before | 66 | baseline |
-| Phase 1 | 68 | +2 PII grep tests |
-| Phase 2 | 73 | +5 sync script tests |
-| Phase 3 | 87 | +14 config module tests |
-| Phase 4 | 94 | +7 host_vars tests |
-
-## Commits on stateless-phase-2 (chronicle order)
-
-```
-20b859d fix: skip __pycache__ and .pyc during resource extraction
-4e07b8b stateless phase 4: host_vars auto-detection
-77328a5 stateless phase 3: config resolver, init command, resource extraction
-a854527 stateless phase 2: bundle compose/ as Python package resource
-38102d8 stateless phase 1: PII cleanup
-```
-
-All 5 commits pushed to fjl/stateless-phase-2, all have chronicle comments on PR #9.
+1. **PR #22** is draft, ready for review. Remove `WIP:` prefix to mark ready for merge.
+2. **Plan**: `docs/plans/cove-stateless-config.md` should be deleted after merge (all 5 phases complete).
+3. **Morning briefing**: this file should be deleted after merge (descendent plan implemented).
+4. **Cleanup**: worktree `.worktrees/cove-stateless-config` + branch `cove-stateless-config` after merge.
