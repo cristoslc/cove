@@ -54,9 +54,13 @@ cleanup() {
             | tee -a "$LOG_DIR/docker-compose-down.log" || true
     fi
     # Kill any orphaned Colima/limactl VMs spawned under staging HOME.
-    # (Preventive: .colima symlink should make staging reuse prod's VM, but
-    #  if a new VM was spawned, kill it here so we don't leak processes.)
-    if [[ -n "${STAGING_HOME:-}" ]]; then
+    # ONLY do this if .colima is NOT a symlink (i.e. staging spawned its own VM).
+    # If .colima is a symlink to $REAL_HOME/.colima, staging reused prod's VM
+    # and there is nothing to stop — stopping would kill prod's Colima!
+    if [[ -n "${STAGING_HOME:-}" && -L "$STAGING_HOME/.colima" ]]; then
+        log "Staging reused prod Colima VM via symlink — nothing to stop."
+    elif [[ -n "${STAGING_HOME:-}" && -d "$STAGING_HOME/.colima" ]]; then
+        log "Stopping staging-only Colima VM..."
         LIMA_HOME="$STAGING_HOME/.colima" colima stop -f 2>/dev/null || true
         LIMA_HOME="$STAGING_HOME/.colima" colima delete -f 2>/dev/null || true
     fi
@@ -334,9 +338,19 @@ log "Vault /v1/sys/health → $VAULT_STATUS ✓"
 
 # 5d. dnsmasq responds on staging port.
 log "5d: dnsmasq on :$STAGING_DNSMASQ..."
-dig @127.0.0.1 -p "$STAGING_DNSMASQ" cove +short > "$LOG_DIR/dns-check.txt" 2>&1 || true
-DNS_RESULT=$(tr -d ' \n' < "$LOG_DIR/dns-check.txt")
-[[ "$DNS_RESULT" == "127.0.0.1" ]] || fail "dnsmasq returned '$DNS_RESULT' for cove (expected 127.0.0.1)"
+DNS_RESULT=""
+for i in $(seq 1 15); do
+    dig @127.0.0.1 -p "$STAGING_DNSMASQ" cove +short > "$LOG_DIR/dns-check.txt" 2>&1 || true
+    DNS_RESULT=$(tr -d ' \n' < "$LOG_DIR/dns-check.txt")
+    # dig +short outputs just the IP on success; on failure it outputs
+    # error text containing ";;" or "timed out".
+    if [[ "$DNS_RESULT" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        break
+    fi
+    sleep 2
+done
+[[ "$DNS_RESULT" == "127.0.0.1" ]] \
+    || fail "dnsmasq returned '$DNS_RESULT' for cove (expected 127.0.0.1)"
 log "dnsmasq cove → 127.0.0.1 ✓"
 
 # 5e. PII-free: nginx config inside container has no real PII.
