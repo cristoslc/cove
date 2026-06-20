@@ -174,44 +174,56 @@ def down(volumes):
 
 
 @app.command()
-@click.option("--yes", is_flag=True, help="Confirm container/data destruction.")
+@click.option("-a", "--all", "all_", is_flag=True, help="Also stop containers and remove cached credentials (default: guidance only).")
+@click.option("-f", "--force", is_flag=True, help="Skip confirmation prompt.")
 @click.option("-g", "--global", "global_", is_flag=True, help="Remove from global ~/.agents/AGENTS.md instead of local.")
-def uninstall(yes, global_):
-    """Stop cove containers, remove credentials, and strip agent guidance."""
+def uninstall(all_, force, global_):
+    """Remove cove agent guidance.
+
+    By default, only strips cove guidance from AGENTS.md and removes spoke docs.
+    Containers and credentials are preserved. Use --all to also stop containers
+    and remove cached credentials (data in ~/Documents/cove-data/ is always preserved).
+    """
     compose_dir = resolve_compose_dir()
 
-    if not yes:
+    if all_:
+        scope = "guidance + containers + credentials"
+    else:
+        scope = "guidance only (containers and credentials preserved)"
+
+    if not force:
         click.confirm(
-            "Stop containers and remove credentials? (data in ~/Documents/cove-data/ is preserved)",
+            f"Remove {scope}?",
             abort=True,
         )
 
-    click.echo("Stopping containers...")
-    subprocess.run(
-        [
-            "docker", "compose",
-            "--project-directory", str(compose_dir),
-            "down", "--remove-orphans",
-        ],
-        check=False,
-    )
-
-    home = Path.home()
-    cache_dir = Path(os.environ.get("XDG_CACHE_HOME", home / ".cache")) / "cove"
-    if cache_dir.exists():
-        click.echo(f"Removing {cache_dir}...")
-        shutil.rmtree(str(cache_dir))
-
-    if platform.system() == "Darwin":
+    if all_:
+        click.echo("Stopping containers...")
         subprocess.run(
-            ["security", "delete-generic-password", "-s", "cove/vault/root-token"],
-            capture_output=True,
+            [
+                "docker", "compose",
+                "--project-directory", str(compose_dir),
+                "down", "--remove-orphans",
+            ],
+            check=False,
         )
-        for i in range(1, 6):
+
+        home = Path.home()
+        cache_dir = Path(os.environ.get("XDG_CACHE_HOME", home / ".cache")) / "cove"
+        if cache_dir.exists():
+            click.echo(f"Removing {cache_dir}...")
+            shutil.rmtree(str(cache_dir))
+
+        if platform.system() == "Darwin":
             subprocess.run(
-                ["security", "delete-generic-password", "-s", f"cove/vault/unseal-{i}"],
+                ["security", "delete-generic-password", "-s", "cove/vault/root-token"],
                 capture_output=True,
             )
+            for i in range(1, 6):
+                subprocess.run(
+                    ["security", "delete-generic-password", "-s", f"cove/vault/unseal-{i}"],
+                    capture_output=True,
+                )
 
     if global_:
         targets = [Path.home() / ".agents" / "AGENTS.md"]
