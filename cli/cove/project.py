@@ -64,6 +64,8 @@ def _render_agents_block(ctx: dict, detail_ref: str) -> str:
 f"- **Forgejo** at `https://git.cove/` (TLS via nginx+mkcert). "
 f"CLI: `fj` (see `{parent}/fj.md`). "
 f"PRs with `WIP:` title prefix are drafts and cannot be merged until the prefix is removed.\n"
+f"- **GitHub** CLI: `gh` (see `{parent}/gh.md`). "
+f"Use `gh pr ready` / `gh pr ready --undo` to toggle draft status.\n"
         f"- **Vault** at `https://vault.cove/` (TLS via nginx+mkcert). "
         f"Use `cove creds vault-get` / `cove creds vault-put` — never hardcode secrets.\n"
         f"- **Prerequisites (macOS):** `brew install colima mkcert && colima start && mkcert -install`\n"
@@ -90,6 +92,15 @@ def _write_fj_detail(fj_path: Path) -> None:
     )
     fj_path.write_text(template_text.strip() + "\n")
     click.echo(f"Wrote fj CLI reference to {fj_path}")
+
+
+def _write_gh_detail(gh_path: Path) -> None:
+    gh_path.parent.mkdir(parents=True, exist_ok=True)
+    template_text = (
+        files("cove.templates").joinpath("gh-reference.md.j2").read_text()
+    )
+    gh_path.write_text(template_text.strip() + "\n")
+    click.echo(f"Wrote gh CLI reference to {gh_path}")
 
 
 def _write_project_override(project_root: Path, ctx: dict) -> Path:
