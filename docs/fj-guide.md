@@ -42,6 +42,12 @@ Forgejo determines draft/pull-request state from the PR title:
 | Comment | `fj pr comment <PR> --body-file <path>` |
 | Merge | `fj pr merge <PR>` | Fails if title starts with `WIP:` — remove prefix first |
 | Search | `fj pr search [query] [--state open\|closed\|all]` |
+| **Diff** | `fj pr view <PR> diff` — **NOT** `fj pr diff` (no such subcommand) |
+| Diff (patch) | `fj pr view <PR> diff --patch` |
+| Files changed | `fj pr view <PR> files` |
+| Commits | `fj pr view <PR> commits` |
+
+**Subcommand nesting:** Diff, files, and commits are subcommands of `fj pr view`, not of `fj pr`. The PR ID goes **before** the subcommand: `fj pr view 12 diff`, never `fj pr diff 12` (that fails with `error: unrecognized subcommand 'diff'`). The analogous `gh` command is top-level — `gh pr diff 12` — because GitHub's CLI surface differs from Forgejo's.
 
 **Important:** `fj issue create` does **not** have a `--title` flag — title is the first positional argument. For body text, always prefer `--body-file` over `--body` (see [docs/musings/fj-issue-create-body-file.md](docs/musings/fj-issue-create-body-file.md) for rationale). This applies to **all** `--body-file`-compatible commands (`fj issue comment`, `fj pr comment`).
 

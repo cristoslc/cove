@@ -26,7 +26,10 @@ GitHub tracks draft status as a PR property (not title-based like Forgejo):
 | Add reviewer | `gh pr edit <PR> --add-reviewer <handle>` |
 | Add assignee | `gh pr edit <PR> --add-assignee <handle>` |
 | Comment | `gh pr comment <PR> --body-file <path>` |
-| Diff | `gh pr diff <PR>` |
+| Diff | `gh pr diff <PR>` — top-level subcommand (unlike `fj`, which nests it under `pr view`) |
+| Diff (patch) | `gh pr diff <PR> --patch` |
+| Diff (names only) | `gh pr diff <PR> --name-only` |
+| Files changed | `gh pr view <PR> --json files --jq '.files[].path'` |
 | Checks | `gh pr checks <PR>` |
 | Search | `gh pr search [query]` |
 
