@@ -1,0 +1,61 @@
+# `gh` CLI — GitHub
+
+GitHub's CLI (`gh`) is installed via Homebrew as a standalone binary. It authenticates via `gh auth login` and operates against `github.com` by default.
+
+See **[docs/gh-guide.md](../../docs/gh-guide.md)** for the full command reference (issues, PRs, CI, auth).
+
+## Remote detection
+
+`gh` reads the git remote URL from the current repo. It works with any `github.com` remote.
+
+## Auth
+
+```bash
+# Login (interactive browser flow or token)
+gh auth login
+
+# Check status
+gh auth status
+
+# Switch between accounts
+gh auth switch
+```
+
+## Draft / Ready status
+
+GitHub tracks draft status as a PR property (not title-based):
+
+```bash
+# Create a draft PR
+gh pr create --draft --title "my change" --body-file <path>
+
+# Mark ready
+gh pr ready <PR>
+
+# Mark draft
+gh pr ready <PR> --undo
+```
+
+## Checking CI status
+
+```bash
+# View latest CI run
+gh run view
+
+# List recent runs
+gh run list
+
+# Watch a run live
+gh run watch <run-id>
+```
+
+## PR comments
+
+```bash
+# Comment on a PR
+gh pr comment <PR> --body-file <path>
+```
+
+## Reference
+
+Full docs: `gh --help` or https://cli.github.com/manual/

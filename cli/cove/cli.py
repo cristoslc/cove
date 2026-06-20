@@ -13,7 +13,8 @@ from cove import __version__
 from cove.creds import creds
 from cove.project import (
     _inject, _strip, _container_env, _render_context, _render_guidance,
-    _render_agents_block, _write_detail_cove, _write_fj_detail, _write_project_override,
+    _render_agents_block, _write_detail_cove, _write_fj_detail, _write_gh_detail,
+    _write_project_override,
     _remove_detail_cove, _remove_project_override,
 )
 from cove.stateless import (
@@ -144,6 +145,7 @@ def install(global_):
 
     _write_detail_cove(detail_path, rendered)
     _write_fj_detail(detail_path.parent / "fj.md")
+    _write_gh_detail(detail_path.parent / "gh.md")
     if override:
         _write_project_override(override, ctx)
     agents_block = _render_agents_block(ctx, detail_ref)
@@ -221,7 +223,7 @@ def uninstall(yes, global_):
     for target in targets:
         _strip(target)
 
-    for spoke in ["cove.md", "fj.md"]:
+    for spoke in ["cove.md", "fj.md", "gh.md"]:
         p = detail_dir / spoke
         if p.exists():
             p.unlink()
