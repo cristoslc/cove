@@ -318,7 +318,49 @@ class TestCoveDownCommand:
 
 
 class TestCoveUninstallCommand:
-    def test_uninstall_refuses_without_yes(self, tmp_path, monkeypatch):
+    def test_uninstall_default_prompts_and_only_strips_guidance(self, tmp_path, monkeypatch):
+        """Default (no flags): prompts for confirmation, only strips guidance — does NOT touch containers."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        cache_dir = tmp_path / ".cache" / "cove"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "op-cache.json").write_text("{}")
+
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text(
+            "# My Project\n\n"
+            "<!-- cove-guidance start -->\n"
+            "## Cove\n\nsome guidance\n"
+            "<!-- cove-guidance end -->\n"
+        )
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.Path.home", return_value=tmp_path
+        ), patch("subprocess.run") as mock_run, patch("shutil.rmtree") as mock_rmtree:
+            mock_run.return_value.returncode = 0
+
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["uninstall"], input="y\n")
+
+            assert result.exit_code == 0
+            assert "guidance" in result.output.lower()
+            compose_down_calls = [
+                c for c in mock_run.call_args_list
+                if "compose" in str(c[0][0][:3])
+            ]
+            assert len(compose_down_calls) == 0, (
+                "default uninstall must not run docker compose down"
+            )
+            mock_rmtree.assert_not_called(), (
+                "default uninstall must not remove cache dir"
+            )
+
+        remaining = agents_md.read_text()
+        assert "cove-guidance" not in remaining
+        assert "# My Project" in remaining
+
+    def test_uninstall_default_aborts_on_no(self, tmp_path, monkeypatch):
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -326,9 +368,48 @@ class TestCoveUninstallCommand:
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             runner = CliRunner()
             result = runner.invoke(cove.cli.app, ["uninstall"], input="n\n")
-            assert result.exit_code != 0, "uninstall without confirmation must fail"
+            assert result.exit_code != 0, "uninstall without confirmation must abort"
 
-    def test_uninstall_yes_stops_containers_and_strips_guidance(self, tmp_path, monkeypatch):
+    def test_uninstall_force_skips_prompt_strips_guidance(self, tmp_path, monkeypatch):
+        """-f without --all: skips prompt, only strips guidance."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        cache_dir = tmp_path / ".cache" / "cove"
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "op-cache.json").write_text("{}")
+
+        agents_md = tmp_path / "AGENTS.md"
+        agents_md.write_text(
+            "# My Project\n\n"
+            "<!-- cove-guidance start -->\n"
+            "## Cove\n\nsome guidance\n"
+            "<!-- cove-guidance end -->\n"
+        )
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.Path.home", return_value=tmp_path
+        ), patch("subprocess.run") as mock_run, patch("shutil.rmtree") as mock_rmtree:
+            mock_run.return_value.returncode = 0
+
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["uninstall", "-f"])
+
+            assert result.exit_code == 0
+            compose_down_calls = [
+                c for c in mock_run.call_args_list
+                if "compose" in str(c[0][0][:3])
+            ]
+            assert len(compose_down_calls) == 0, (
+                "-f without --all must not run docker compose down"
+            )
+            mock_rmtree.assert_not_called()
+
+        remaining = agents_md.read_text()
+        assert "cove-guidance" not in remaining
+
+    def test_uninstall_all_stops_containers_and_strips_guidance(self, tmp_path, monkeypatch):
+        """--all -f: stops containers, removes credentials, strips guidance."""
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -338,29 +419,50 @@ class TestCoveUninstallCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "cove.cli.Path.home", return_value=tmp_path
-        ), patch("subprocess.run") as mock_run, patch(
-            "shutil.rmtree"
-        ) as mock_rmtree:
+        ), patch("subprocess.run") as mock_run, patch("shutil.rmtree"):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(yes=True, global_=False)
+            cove.cli.uninstall.callback(all_=True, force=True, global_=False)
 
             compose_down_calls = [
                 c for c in mock_run.call_args_list
                 if "compose" in str(c[0][0][:3])
             ]
             assert len(compose_down_calls) >= 1, (
-                "uninstall must run docker compose down"
+                "--all must run docker compose down"
+            )
+
+    def test_uninstall_all_prompts_without_force(self, tmp_path, monkeypatch):
+        """--all without -f: prompts for confirmation."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.Path.home", return_value=tmp_path
+        ), patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["uninstall", "--all"], input="n\n")
+
+            assert result.exit_code != 0, "--all without -f must prompt and abort on no"
+            compose_down_calls = [
+                c for c in mock_run.call_args_list
+                if "compose" in str(c[0][0][:3])
+            ]
+            assert len(compose_down_calls) == 0, (
+                "--all aborted must not run docker compose down"
             )
 
     def test_uninstall_no_project_dir_exits_cleanly(self, tmp_path, monkeypatch):
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             runner = CliRunner()
             with patch("cove.cli.resolve_compose_dir", side_effect=click.ClickException("no project")):
-                result = runner.invoke(cove.cli.app, ["uninstall", "--yes"])
+                result = runner.invoke(cove.cli.app, ["uninstall", "-f"])
             assert result.exit_code != 0, "uninstall with no compose dir should fail"
 
-    def test_uninstall_strips_cove_guidance_from_agents_md(self, tmp_path, monkeypatch):
+    def test_uninstall_all_strips_cove_guidance_from_agents_md(self, tmp_path, monkeypatch):
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -378,13 +480,13 @@ class TestCoveUninstallCommand:
         ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(yes=True, global_=False)
+            cove.cli.uninstall.callback(all_=True, force=True, global_=False)
 
             remaining = agents_md.read_text()
             assert "cove-guidance" not in remaining
             assert "# My Project" in remaining
 
-    def test_uninstall_removes_agents_md_if_only_guidance(self, tmp_path, monkeypatch):
+    def test_uninstall_all_removes_agents_md_if_only_guidance(self, tmp_path, monkeypatch):
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -401,7 +503,7 @@ class TestCoveUninstallCommand:
         ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(yes=True, global_=False)
+            cove.cli.uninstall.callback(all_=True, force=True, global_=False)
 
         assert not agents_md.exists(), "AGENTS.md with only guidance should be deleted"
 
@@ -494,6 +596,11 @@ class TestProgressiveDisclosure:
         assert "Forgejo" in content
         assert "agents-md-detail/cove.md" in content
         assert "Project override" in content
+        assert "origin" in content
+        assert "secondary remote" in content
+        assert "fj" in content
+        assert "gh" in content
+        assert "gl" in content
 
     def test_uninstall_strips_guidance_block(self, tmp_path):
         compose_sub = tmp_path / "compose"
@@ -520,7 +627,7 @@ class TestProgressiveDisclosure:
         ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(yes=True, global_=False)
+            cove.cli.uninstall.callback(all_=True, force=True, global_=False)
 
         remaining = agents_md.read_text()
         assert "cove-guidance" not in remaining
@@ -561,6 +668,8 @@ class TestProgressiveDisclosure:
         override_text = override.read_text()
         assert "example.com" in override_text
         assert "project-level override" in override_text
+        assert "origin" in override_text
+        assert "fj" in override_text
 
         agents_text = agents_md.read_text()
         assert "agents-md-detail/cove.md" in agents_text

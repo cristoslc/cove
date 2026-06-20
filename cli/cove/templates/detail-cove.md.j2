@@ -56,8 +56,29 @@ All HTTP traffic routes through nginx at `*.cove` subdomains. Ports bind on `0.0
 - **Local:** mkcert generates `cove` + `*.cove` cert in `{{ cove_data_root }}/certs/`. nginx terminates TLS. macOS resolver (`/etc/resolver/cove`) delegates `*.cove` DNS to dnsmasq on `127.0.0.1:5353`.
 - **Tailscale:** Tailscale cert (public FQDN) for remote access. Tailscale serve forwards `:443` → `127.0.0.1:443`.
 
+## Git remotes
+
+- Use `origin` for your **primary** remote (GitHub, GitLab, or Cove itself).
+- Add a **secondary** remote named after the forge:
+  - `fj` — Cove/Forgejo at `git.cove`
+  - `gh` — GitHub
+  - `gl` — GitLab
+- Example: `git remote add fj git@git.cove:owner/repo.git`
+- This convention lets agents push/pull to the right forge without guessing.
+
+## New projects
+
+When creating a new project to push to Cove:
+
+1. Create the repo on Forgejo at `https://git.cove/` first.
+2. `git init` locally, then `git remote add origin <your-primary-remote>` (e.g., GitHub).
+3. `git remote add fj git@git.cove:owner/repo.git`
+4. Push to both: `git push -u origin main && git push -u fj main`
+
+This keeps Cove as a mirror/backup while `origin` stays your primary collaboration forge.
+
 ## Constraints
 
 - Do not add cloud dependencies.
 - Do not assume internet access during builds or CI.
-- All git remotes go to Forgejo at `{{ forgejo_domain }}`.
+- Cove's own git remotes go to Forgejo at `{{ forgejo_domain }}`.

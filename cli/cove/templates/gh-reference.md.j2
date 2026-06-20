@@ -56,6 +56,32 @@ gh run watch <run-id>
 gh pr comment <PR> --body-file <path>
 ```
 
+## Viewing PR diffs and changed files
+
+GitHub uses a top-level `pr diff` subcommand (unlike `fj`, which nests it under `pr view`):
+
+```bash
+# View the diff
+gh pr diff <PR#>
+
+# Patch format (pipeable to git apply)
+gh pr diff <PR#> --patch
+
+# Only list changed file names (no diffs)
+gh pr diff <PR#> --name-only
+
+# Exclude files by glob (repeatable)
+gh pr diff <PR#> --exclude "**/*.lock"
+
+# Open in browser
+gh pr diff <PR#> --web
+
+# List files changed in the PR
+gh pr view <PR#> --json files --jq '.files[].path'
+```
+
+Without an argument, `gh pr diff` targets the PR for the current branch.
+
 ## Reference
 
 Full docs: `gh --help` or https://cli.github.com/manual/
