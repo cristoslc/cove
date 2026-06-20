@@ -101,6 +101,19 @@
         src: "{{ mkcert_caroot_path }}/rootCA.pem"
       register: root_ca_slurp
 
+    - name: Ensure certs directory in compose dir
+      ansible.builtin.file:
+        path: "{{ compose_dir }}/certs"
+        state: directory
+        mode: "0755"
+
+    - name: Copy rootCA.pem into compose dir for container mount
+      when: mkcert_caroot.rc == 0
+      ansible.builtin.copy:
+        dest: "{{ compose_dir }}/certs/rootCA.pem"
+        mode: "0644"
+        content: "{{ root_ca_slurp.content | b64decode }}"
+
     # Apple .mobileconfig profiles require the certificate as raw base64-encoded
     # DER, not PEM-wrapped. Strip the BEGIN/END CERTIFICATE headers and all
     # newlines to produce a single-line base64 string suitable for the
@@ -267,7 +280,6 @@
           DNSMASQ_PORT={{ dnsmasq_port }}
           NGINX_HTTPS_PORT={{ nginx_https_port }}
           NGINX_HTTP_PORT={{ nginx_http_port }}
-          MKCERT_CAROOT={{ mkcert_caroot_path }}
 
     # CONTAINERS -------------------------------------------------------------
     - name: Detect active docker context endpoint

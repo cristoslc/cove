@@ -61,7 +61,7 @@ services:
       - ${COVE_DATA_ROOT}/nginx/user.d:/etc/nginx/user.d:ro
       - ${COVE_DATA_ROOT}/nginx/config.html:/etc/nginx/config.html:ro
       - ${COVE_DATA_ROOT}/nginx/config/dns:/etc/nginx/config/dns:ro
-      - ${MKCERT_CAROOT}/rootCA.pem:/certs/rootCA.pem:ro
+      - ./certs/rootCA.pem:/certs/rootCA.pem:ro
       # NOTE: Forgejo Actions runners that use deploy-pages must also mount
       # ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites (read-write) so the
       # action can write site files that nginx serves read-only here.
