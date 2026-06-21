@@ -24,7 +24,20 @@ USERNAME = os.environ.get("USER", "")
 
 @click.group()
 def creds():
-    """Manage credentials."""
+    """Manage credentials.
+
+    Examples:
+
+        cove creds vault-get 'op://Private/My Secret/password'
+
+        cove creds vault-put 'op://Private/My Secret/password'
+
+        cove creds batch-pull
+
+        cove creds 1p-bulk-write spec.yml
+
+        cove creds 1p-bulk-write spec.yml --execute
+    """
 
 
 @creds.command("vault-put")
@@ -35,7 +48,14 @@ def creds():
     help="Bypass Vault cache and re-fetch from 1Password.",
 )
 def vault_put(op_ref: str, force_refresh: bool):
-    """Cache an op:// reference in Vault and emit the resolved value."""
+    """Cache an op:// reference in Vault and emit the resolved value.
+
+    Examples:
+
+        cove creds vault-put 'op://Private/Forgejo MacBook Admin/password'
+
+        cove creds vault-put 'op://Private/My Secret/password' --force-refresh
+    """
     try:
         value = vault_cache.vault_put_op_ref(op_ref, force_refresh=force_refresh)
     except (ValueError, RuntimeError) as e:
@@ -46,7 +66,14 @@ def vault_put(op_ref: str, force_refresh: bool):
 @creds.command("vault-get")
 @click.argument("op_ref")
 def vault_get(op_ref: str):
-    """Read a cached op:// reference. Checks local cache first, then Vault."""
+    """Read a cached op:// reference. Checks local cache first, then Vault.
+
+    Examples:
+
+        cove creds vault-get 'op://Private/Forgejo MacBook Admin/password'
+
+        cove creds vault-get 'op://Private/Vault MacBook user/password'
+    """
     from cove import local_cache as lc
 
     value = lc.get(op_ref)
@@ -74,7 +101,19 @@ def vault_get(op_ref: str):
     help="Run the generated script immediately (one biometric prompt).",
 )
 def one_password_bulk_write(spec: Path, execute: bool):
-    """Generate a self-deleting script that creates 1Password items."""
+    """Generate a self-deleting script that creates 1Password items.
+
+    The SPEC argument is a YAML file describing items to create. See
+    cli/tests/test_op_bulk_write.py for example spec formats.
+
+    Examples:
+
+        cove creds 1p-bulk-write spec.yml
+
+        cove creds 1p-bulk-write spec.yml --execute
+
+        cove creds 1p-bulk-write ~/projects/cove/secrets/1p-items.yml
+    """
     script, plan = op_bulk_write.render_script(spec)
 
     click.echo("Plan:")
@@ -116,7 +155,14 @@ def one_password_bulk_write(spec: Path, execute: bool):
     help="Ignore local cache and re-fetch from 1Password.",
 )
 def batch_pull_op(force_refresh: bool):
-    """Pull all known op:// refs in one batch (single biometric prompt)."""
+    """Pull all known op:// refs in one batch (single biometric prompt).
+
+    Examples:
+
+        cove creds batch-pull
+
+        cove creds batch-pull --force-refresh
+    """
     from cove import local_cache as lc
 
     if not force_refresh:

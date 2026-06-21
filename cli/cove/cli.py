@@ -26,14 +26,32 @@ from cove.state import ensure_host_vars
 @click.group()
 @click.version_option(version=__version__, prog_name="cove")
 def app():
-    """Cove management CLI."""
+    """Cove management CLI.
+
+    Examples:
+
+        cove init
+
+        cove up
+
+        cove down --volumes
+    """
 
 
 @app.command()
 @click.option("--force", is_flag=True, help="Re-extract resources even if version matches.")
 @click.option("--purge", is_flag=True, help="Remove ~/.config/cove/compose/ entirely.")
 def init(force, purge):
-    """Extract bundled compose resources to ~/.config/cove/compose/."""
+    """Extract bundled compose resources to ~/.config/cove/compose/.
+
+    Examples:
+
+        cove init
+
+        cove init --force
+
+        cove init --purge
+    """
     if purge:
         target = Path.home() / ".config" / "cove" / "compose"
         if target.exists():
@@ -64,6 +82,16 @@ def up(no_provision, no_sudo, no_upgrade, log):
 
     Compose dir is resolved in order: COVE_COMPOSE_DIR env, ./compose,
     .worktrees/<name>/compose, git-toplevel/compose, ~/.config/cove/compose.
+
+    Examples:
+
+        cove up
+
+        cove up --no-provision
+
+        cove up --no-sudo
+
+        cove up --log
     """
     if not no_upgrade:
         maybe_reextract()
@@ -74,7 +102,7 @@ def up(no_provision, no_sudo, no_upgrade, log):
     bringup = compose_dir / "bringup.yml"
     provision = compose_dir / "provision_forgejo.yml"
 
-    log_dir = None
+    log_dir: Path | None = None
     if log:
         log_dir = Path.home() / ".local" / "share" / "cove" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
@@ -83,11 +111,12 @@ def up(no_provision, no_sudo, no_upgrade, log):
         click.echo(label)
         cmd = base_cmd + [str(playbook)]
         if log:
+            assert log_dir is not None
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             logfile = log_dir / f"{ts}-{playbook.name}.log"
             with open(logfile, "w") as f:
                 proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-                for line in proc.stdout:
+                for line in proc.stdout or []:
                     click.echo(line, nl=False)
                     f.write(line)
                 proc.wait()
@@ -125,7 +154,14 @@ app.add_command(creds)
 @app.command()
 @click.option("-g", "--global", "global_", is_flag=True, help="Install to ~/.agents/AGENTS.md")
 def install(global_):
-    """Inject cove service guidance into the project or global Claude config."""
+    """Inject cove service guidance into the project or global Claude config.
+
+    Examples:
+
+        cove install
+
+        cove install --global
+    """
     forgejo = _container_env("cove-forgejo")
     vault = _container_env("cove-vault")
     ctx = _render_context(forgejo, vault)
@@ -158,6 +194,12 @@ def down(volumes):
     """Stop cove containers.
 
     Compose dir resolution: see `cove up --help` (COVE_COMPOSE_DIR env, etc.).
+
+    Examples:
+
+        cove down
+
+        cove down --volumes
     """
     compose_dir = resolve_compose_dir()
     cmd = [
@@ -183,6 +225,16 @@ def uninstall(all_, force, global_):
     By default, only strips cove guidance from AGENTS.md and removes spoke docs.
     Containers and credentials are preserved. Use --all to also stop containers
     and remove cached credentials (data in ~/Documents/cove-data/ is always preserved).
+
+    Examples:
+
+        cove uninstall
+
+        cove uninstall --all
+
+        cove uninstall --all --force
+
+        cove uninstall --global
     """
     compose_dir = resolve_compose_dir()
 
@@ -254,5 +306,12 @@ def uninstall(all_, force, global_):
 
 @app.command()
 def version():
-    """Print the CLI version."""
+    """Print the CLI version.
+
+    Examples:
+
+        cove version
+
+        cove --version
+    """
     click.echo(f"cove {__version__}")
