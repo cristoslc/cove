@@ -577,6 +577,24 @@ class TestProgressiveDisclosure:
         _remove_detail_cove(detail)
         assert not detail.exists()
 
+    def test_fj_spoke_doc_includes_issue_commands_and_title_caveat(self, tmp_path):
+        """Installed fj.md must document issue creation and warn about --title flag."""
+        from importlib.resources import files
+        from jinja2 import Environment, BaseLoader
+
+        template_text = files("cove.templates").joinpath("fj-reference.md.j2").read_text()
+        rendered = Environment(loader=BaseLoader()).from_string(template_text).render()
+
+        assert "fj issue create" in rendered, (
+            "fj-reference.md.j2 must document issue creation commands"
+        )
+        assert "--title" in rendered, (
+            "fj-reference.md.j2 must warn that fj issue create has no --title flag"
+        )
+        assert "positional argument" in rendered.lower(), (
+            "fj-reference.md.j2 must explain title is a positional argument"
+        )
+
     def test_inject_agents_block_contains_cove_info(self, tmp_path):
         agents_md = tmp_path / "AGENTS.md"
         agents_md.write_text("# Project\n")

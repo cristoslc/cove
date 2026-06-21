@@ -14,6 +14,27 @@ SSH (`git@forgejo-localhost:...`) is also available as an optional transport —
 
 `cove up` caches a persistent API token (`cove-push`) in git's credential helper so `fj` can push over HTTPS without prompting.
 
+## Issues
+
+```bash
+# Create an issue (title is the FIRST positional argument, NOT --title)
+fj issue create "Title" --body-file <path>
+
+# Comment on an issue
+fj issue comment <ID> --body-file <path>
+
+# List issues
+fj issue list
+
+# View an issue
+fj issue view <ID>
+
+# Close an issue
+fj issue close <ID>
+```
+
+**Important:** `fj issue create` does **not** have a `--title` flag — the title is the first positional argument. Using `--title` will fail with a syntax error. Always use `--body-file` for body text (not `--body`).
+
 ## Draft / Ready status
 
 Forgejo uses the PR title to determine draft status:
