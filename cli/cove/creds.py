@@ -103,15 +103,26 @@ def vault_get(op_ref: str):
 def one_password_bulk_write(spec: Path, execute: bool):
     """Generate a self-deleting script that creates 1Password items.
 
-    The SPEC argument is a YAML file describing items to create. See
-    cli/tests/test_op_bulk_write.py for example spec formats.
+    The SPEC argument is a YAML file with this format:
+
+    \b
+        items:
+          - title: My App
+            vault: Private
+            category: login
+            fields:
+              username: admin
+              password: "{{generate:32}}"
+              ssh-key[concealed]: "{{file:~/.ssh/id_ed25519}}"
+
+    Field values can be literals, {{generate:N}} (random password of N
+    chars, min 4), or {{file:path}} (read file contents).
 
     Examples:
 
+    \b
         cove creds 1p-bulk-write spec.yml
-
         cove creds 1p-bulk-write spec.yml --execute
-
         cove creds 1p-bulk-write ~/projects/cove/secrets/1p-items.yml
     """
     script, plan = op_bulk_write.render_script(spec)
