@@ -155,3 +155,43 @@ varies.
 - Should we keep `/etc/hosts` as a fallback for when the local dnsproxy isn't running?
   That would mean the resolver file points to the local dnsproxy, and `/etc/hosts` is
   the backup. But then we're maintaining both.
+
+## Escalation analysis
+
+A persistent root daemon with network access is a larger escalation surface than a
+one-shot file edit:
+
+| Approach | `sudo` frequency | Persistent footprint | Attack surface |
+|---|---|---|---|
+| `/etc/hosts` | Every `cove up` | None (transient write) | None after edit |
+| Local dnsproxy (launchd) | Once (install) | Root process on UDP:5353 | dnsproxy CVEs, plist tampering |
+| `pf` redirect + unpriv dnsproxy | Once (install) | Unpriv process on high port | dnsproxy CVEs only |
+
+The `pf` redirect option is the best compromise: add a `pf` anchor (like the existing
+443→8443 rule) to forward UDP:5353 → UDP:5354, then run the dnsproxy on 5354 as an
+unprivileged user. This avoids a root network service while keeping the one-time `sudo`.
+
+But the wildcard argument (above) makes this moot — we need DNS regardless, and the
+escalation is justified by the capability it unlocks.
+
+## The wildcard argument (decisive)
+
+`/etc/hosts` has **no wildcard support**. You cannot write:
+
+```
+*.pages.cove 127.0.0.1
+```
+
+Every subdomain must be listed explicitly. With Pages (each site gets its own
+`*.pages.cove` subdomain) and a potential `{service}.{project}.cove` naming model,
+the number of entries explodes and becomes unmanageable.
+
+DNS handles this trivially — dnsmasq's `address=/pages.cove/127.0.0.1` catches every
+subdomain with a single line. So the wildcard requirement **forces us onto a DNS path
+regardless**. The question isn't "can we avoid /etc/hosts?" — it's "how do we make DNS
+work on macOS given Colima's UDP gap?"
+
+This changes the escalation calculus too. The relay isn't a `/etc/hosts` replacement
+that happens to be more complex — it's an **enabler** for features (`*.pages.cove`,
+`{service}.{project}.cove`) that `/etc/hosts` literally cannot provide. The escalation
+is justified by the capability it unlocks.
