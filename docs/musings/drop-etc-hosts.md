@@ -85,3 +85,58 @@ running service.
 **vNext implements DoH for all hosts, including localhost.** No relay, no host process,
 no `/etc/hosts`. The container's dnsproxy is the single DoH endpoint for the entire
 cove mesh.
+
+## macOS 26 profile installation problem
+
+macOS 26 (Sequoia) removed `profiles -I` for CLI-based profile installation. Profiles
+must be installed via System Settings (GUI) or MDM. The `cove up` playbook's install
+task fails silently (`failed_when: false`).
+
+### Options
+
+| Option | Automation | User friction | Wildcard support | Notes |
+|---|---|---|---|---|
+| **Keep `/etc/hosts`** | Full (`sudo`) | None | No | Works, needs sudo per run, no `*.pages.cove` |
+| **`open` .mobileconfig** | Semi (opens dialog) | One click | Yes | `open cove-doh.mobileconfig` triggers System Settings |
+| **Local dnsproxy relay** | Full (one-time `sudo`) | None | Yes | launchd plist, UDP:5353 → DoH → container |
+| **Custom onboarding page** | None | Manual steps | Yes | Guide user through System Settings |
+| **`/etc/resolver/` + local dnsproxy** | Full (one-time `sudo`) | None | Yes | Resolver points to local dnsproxy on UDP:5353 |
+
+### Recommendation
+
+The `open` approach is the best near-term fix: `cove up` renders the profile, opens it
+via `open`, and prints a message asking the user to click Install. This is one click,
+no `sudo`, and enables wildcard DNS.
+
+For full automation, a local dnsproxy relay (launchd, one-time `sudo`) is the right
+long-term solution — it's the same pattern we discussed in the parley, now justified
+by macOS 26 removing the CLI install path. The relay listens on UDP:5353 and forwards
+to the container's DoH endpoint via TCP (which works through Colima).
+
+### Implementation sketch for `open` approach
+
+In `compose/bringup.yml`, replace the `profiles -I` task with:
+
+```yaml
+- name: Open DoH profile for installation
+  when: ansible_system == "Darwin"
+  ansible.builtin.command:
+    argv:
+      - open
+      - "{{ cove_data_root }}/nginx/config/doh/cove-doh.mobileconfig"
+  changed_when: false
+  failed_when: false
+```
+
+And add a debug message:
+
+```yaml
+- name: Remind user to install profile
+  when: ansible_system == "Darwin"
+  ansible.builtin.debug:
+    msg: |
+      DoH profile opened in System Settings.
+      Click Install to enable *.cove DNS resolution.
+      Alternatively, install manually from:
+        https://hc.cove:8443/config/doh/cove-doh.mobileconfig
+```
