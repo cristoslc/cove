@@ -55,6 +55,14 @@ Forgejo determines draft/pull-request state from the PR title:
 
 **`fj pr create` requires `--body-file` (no `$EDITOR` fallback):** When no `--body` or `--body-file` is provided, `fj pr create` attempts to open `$EDITOR` to compose the body. If `$EDITOR` is unset, the command fails (see Troubleshooting). Always pass `--body-file <path>` — this is the preferred Cove pattern and avoids the editor dependency entirely. As a fallback for interactive use, set `EDITOR=vim` in your shell environment.
 
+## Repos
+
+| Action | Command |
+|--------|---------|
+| Create | `fj repo create <name>` — **currently broken** (see [Troubleshooting](#fj-repo-create-alphadashdot-validation-error)), use the [API workaround](#create-a-repo-via-the-forgejo-api) instead |
+| List | `fj repo list` |
+| View | `fj repo view <owner>/<name>` |
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
@@ -69,3 +77,49 @@ Forgejo determines draft/pull-request state from the PR title:
 - All Cove git remotes point to `https://git.cove/` (Forgejo). Use `fj` for PR management, not `gh`.
 - Draft PRs from plans **MUST** have a `WIP: ` title prefix and be created in draft status (per AGENTS.md).
 - Every commit on a sashay PR **MUST** be immediately followed by a PR chronicle comment via `fj pr comment`.
+
+## Troubleshooting
+
+### `fj repo create` AlphaDashDot validation error
+
+`fj repo create <name>` fails for **any** repo name with:
+
+```
+validation failed: [Name]: AlphaDashDot
+```
+
+This is an **upstream `fj` bug** (not a Cove bug) — the `fj` client sends the
+repo name in a field that Forgejo's `AlphaDashDot` validator rejects. Until the
+upstream fix lands, create repos via the Forgejo API directly.
+
+### Create a repo via the Forgejo API
+
+Use the Forgejo REST API to create a repo, bypassing the broken `fj` subcommand:
+
+```shell
+curl -X POST https://git.cove/api/v1/user/repos \
+  -H "Authorization: token <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"repo-name"}'
+```
+
+**Retrieving the token:** `fj` stores its auth token at
+`~/Library/Application Support/Cyborus.forgejo-cli/keys.json` (the `token` field
+of the active host entry). Read it with `jq`:
+
+```shell
+jq -r '.hosts["git.cove"].token' \
+  ~/Library/Application\ Support/Cyborus.forgejo-cli/keys.json
+```
+
+Do **NOT** hardcode the token in docs, scripts, or commits. For long-term
+automation, store it in Vault and retrieve it with the Cove credential helpers:
+
+```shell
+cove creds vault-get forgejo-token
+cove creds vault-put forgejo-token
+```
+
+After creating the repo, add it as a remote per the
+[Cove conventions](#cove-specific-conventions): `origin` for the primary remote,
+`fj` for the Forgejo secondary remote (HTTPS, not SSH).
