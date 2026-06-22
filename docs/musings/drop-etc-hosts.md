@@ -1,197 +1,87 @@
-# Drop `/etc/hosts` — DNS via a local cove process
+# Drop `/etc/hosts` — DNS-over-HTTPS for all hosts
 
 ## The problem
 
 `cove up` writes entries to `/etc/hosts` so `git.cove`, `vault.cove`, etc. resolve on the
-development machine. This works but is a persistent side effect — the file accumulates
-entries across runs, and cleanup on `cove down` is unreliable. It also means every
-`cove up` needs `sudo` (or passwordless sudo for that specific task).
+development machine. This works but has persistent side effects — the file accumulates
+entries across runs, cleanup on `cove down` is unreliable, and every `cove up` needs
+`sudo`. Worse, `/etc/hosts` has no wildcard support, so `*.pages.cove` and
+`{service}.{project}.cove` are impossible to manage.
 
 The root cause: **Colima with Virtualization.Framework does not forward UDP ports**.
-macOS's system resolver (`/etc/resolver/`) only speaks UDP/TCP — it has no DoH support.
-So any DNS server inside a container is unreachable via UDP from the host.
+macOS's system resolver speaks UDP/TCP, but any DNS server inside a container is
+unreachable via UDP from the host.
 
-## The constraint
+## The solution: DoH configuration profiles
 
-We cannot avoid a UDP listener on the host. The macOS resolver API demands it. But that
-listener can be a thin shim that immediately converts to DNS-over-HTTPS (TCP, works
-through Colima) and forwards to the container's dnsproxy.
+macOS 14+ supports DNS-over-HTTPS natively via configuration profiles (`.mobileconfig`).
+The container's dnsproxy already terminates DoH on port 8053 (confirmed working —
+valid DNS wire-format POST to `https://hc.cove:8053/dns-query` returns correct answers).
 
-## Proposed architecture
+The stack:
 
 ```
-macOS resolver (UDP:5353) → local dnsproxy (UDP→DoH) → container dnsproxy (HTTPS:8053) → dnsmasq (TCP:5353)
+macOS resolver (DoH) → https://127.0.0.1:8053/dns-query → container dnsproxy → dnsmasq
 ```
 
-A local `dnsproxy` binary (same image as the container, extracted or installed via brew)
-runs as a launchd service. It listens on UDP:5353 and forwards to
-`https://127.0.0.1:8053/dns-query`. The container's dnsproxy already terminates HTTPS
-and forwards to dnsmasq over TCP.
+No relay, no host process, no `/etc/hosts`, no UDP. The entire chain is TCP-based and
+works through Colima's port forwarding.
 
-This replaces:
-- `/etc/hosts` entries (removed entirely)
-- The `sudo` requirement for DNS setup
-- The stale-entry accumulation problem
+## Cross-platform
+
+| Platform | Mechanism | Notes |
+|---|---|---|
+| **macOS** | `.mobileconfig` profile | Native DoH support since macOS 14 |
+| **iOS** | `.mobileconfig` profile | Same profile, different server URL (LAN/Tailscale IP) |
+| **Android** | Private DNS (DoT) | Or DoH via `dnsproxy` app |
+| **Windows 11** | Native DoH | Per-adapter DNS over HTTPS setting |
+| **Linux** | `systemd-resolved` | `resolvectl` with DoH server URL |
+
+The container's dnsproxy serves all of them. External devices use the cove machine's
+LAN or Tailscale IP instead of `127.0.0.1`.
 
 ## Impact on bounded contexts
-
-Currently the DNS boundary is fuzzy — `/etc/hosts` is a host-level concern managed by
-the compose playbook, but it's really a **platform integration** concern (macOS-specific
-DNS plumbing). Adding a local process clarifies this:
 
 | Context | Responsibility |
 |---|---|
 | **Container orchestration** | dnsmasq + dnsproxy inside Colima |
-| **Platform integration** | Local dnsproxy process on macOS |
-| **DNS resolution** | System resolver → local dnsproxy → container dnsproxy → dnsmasq |
+| **Platform integration** | Install DoH profile on each device |
+| **DNS resolution** | System resolver (DoH) → container dnsproxy → dnsmasq |
 
-The local dnsproxy is a **platform adapter** — it exists only because macOS's resolver
-speaks UDP and Colima doesn't forward UDP. On Linux (where Docker bridges forward UDP
-natively), it wouldn't exist.
+No platform adapter process needed. The DoH profile is a configuration artifact, not a
+running service.
 
 ## Trade-offs
 
 **For:**
 - No `/etc/hosts` side effects
-- No `sudo` for DNS (the launchd plist is installed once with `sudo`, then the daemon
-  runs as root automatically)
-- Cleaner domain model — DNS is DNS, not a hosts file hack
-- The local dnsproxy can be installed via brew (`adguardian/dnsproxy`) or extracted from
-  the container image
+- No `sudo` for DNS (profile install is one-time, can be scripted)
+- No persistent process on the host
+- Wildcard DNS works (`*.pages.cove`, `{service}.{project}.cove`)
+- Same mechanism works for external devices (phone, tablet, laptop)
+- DoH is encrypted (privacy on untrusted networks)
 
 **Against:**
-- Another process on the host (launchd-managed, minimal footprint)
-- Startup dependency: the local dnsproxy must wait for the container dnsproxy to be
-  healthy before it can serve queries
-- Slightly more complex bringup (install binary, write plist, load service, wait for
-  health)
-- The UDP→DoH→TCP chain adds latency vs. a direct kernel lookup
+- Profile install requires `sudo` (one-time, not per-run)
+- Loopback DoH URL (`https://127.0.0.1:8053/dns-query`) — macOS may reject it
+  (fallback: use LAN or Tailscale IP)
+- Slightly more latency than direct kernel lookup (TLS handshake per query, or
+  persistent connection)
+- dnsproxy's TLS cert must be trusted by the device (mkcert CA)
 
 ## Implementation sketch
 
 1. Expose dnsproxy's HTTPS port to the host (already done — `8053:8053`)
-2. In `cove up` (bringup playbook):
-   - Ensure `dnsproxy` binary is available (brew or extract from image)
-   - Write launchd plist for `dnsproxy --port=5353 --upstream=https://127.0.0.1:8053/dns-query`
-   - Load the service
-   - Wait for UDP:5353 to respond
-   - Remove `/etc/hosts` entries
-3. In `cove down`:
-   - Unload the launchd service
-   - (Optional) Remove the binary
+2. Generate a `.mobileconfig` profile for macOS/iOS with:
+   - DoH server URL: `https://127.0.0.1:8053/dns-query` (or LAN/Tailscale IP)
+   - Domain: `cove` (and `cove.{{ ansible_hostname }}`)
+   - TLS trust: embed mkcert root CA
+3. Install the profile via `sudo profiles -I -F cove-doh.mobileconfig`
+4. Remove `/etc/hosts` entries
+5. For external devices, serve the profile from the nginx config page
 
-## Cross-platform implications
+## Decision (parley, 2026-06-21)
 
-### Linux (native Docker, no Colima)
-
-Docker bridges forward UDP natively — no VF limitation. The container's dnsmasq on
-UDP:5353 is directly reachable from the host. The approach:
-
-- No local dnsproxy needed
-- `/etc/resolver/` is macOS-specific; Linux uses `/etc/resolv.conf` or
-  `systemd-resolved` for per-domain DNS
-- With `systemd-resolved`: `resolvectl domain cove "~cove" && resolvectl dns cove 172.x.0.x:5353`
-- With plain `/etc/resolv.conf`: add a `nameserver 172.x.0.x` line (but this is
-  global, not per-domain — messy)
-- The container IP on the Docker bridge is dynamic, so the resolver config must be
-  rendered at bringup time (already done for the macOS resolver file)
-
-**Verdict:** Simpler than macOS. No extra process. Just a different resolver config
-mechanism. The `cove up` playbook already has a Linux branch for DNS setup — it just
-needs to point to the container IP instead of localhost.
-
-### WSL2 (Docker Desktop)
-
-Docker Desktop on WSL2 *does* forward UDP ports — the Hyper-V networking stack handles
-it. So dnsmasq on UDP:5353 is reachable at `localhost:5353` from within the WSL2 distro.
-
-However, WSL2 has its own DNS quirks:
-
-- `/etc/resolv.conf` is auto-generated by WSL2 and points to a Windows-side resolver
-  (`127.0.0.53:53` via `systemd-resolved` or a generated file). Modifying it directly
-  is fragile — WSL2 may overwrite it on reboot.
-- `systemd-resolved` is available in modern WSL2 distros (Ubuntu 22.04+). Per-domain
-  DNS works: `resolvectl domain cove "~cove" && resolvectl dns cove 127.0.0.1:5353`
-- Without systemd, the options are:
-  - Disable WSL2's `/etc/resolv.conf` generation (`[network] generateResolvConf=false`
-    in `/etc/wsl.conf`) and manage DNS manually
-  - Use a local dnsproxy (same pattern as macOS, but the binary would be a native
-    Linux binary, not a brew formula)
-  - Accept `/etc/hosts` as the simplest path (WSL2 doesn't need `sudo` for hosts
-    edits within the distro)
-
-**Verdict:** WSL2 is the trickiest platform. It *can* reach the container's UDP:5353
-directly, but the resolver plumbing is fragile. `/etc/hosts` is actually the most
-pragmatic option here — WSL2 doesn't have the `sudo` friction that macOS does, and
-hosts entries within the distro are cleanly scoped.
-
-### Platform comparison
-
-| Aspect | macOS (Colima VF) | Linux (native Docker) | WSL2 (Docker Desktop) |
-|---|---|---|---|
-| UDP forwarding | No | Yes | Yes |
-| Local process needed | Yes (dnsproxy) | No | No (but resolver is fragile) |
-| Resolver mechanism | `/etc/resolver/` | `systemd-resolved` or `/etc/resolv.conf` | `systemd-resolved` or `/etc/hosts` |
-| `sudo` friction | High (every `cove up`) | Low (one-time setup) | None (within distro) |
-| Best approach | Local dnsproxy + `/etc/resolver/` | `resolvectl` + container IP | `/etc/hosts` (pragmatic) |
-
-### Architectural implication
-
-The local dnsproxy is a **macOS-only platform adapter**. Linux and WSL2 don't need it.
-This means the platform integration context has three implementations:
-
-1. **macOS:** Local dnsproxy (launchd) → container dnsproxy (DoH) → dnsmasq
-2. **Linux:** `resolvectl` → container dnsmasq (direct UDP)
-3. **WSL2:** `/etc/hosts` (pragmatic fallback)
-
-This is fine — platform adapters are a well-understood pattern. The key is that the
-container stack (dnsmasq + dnsproxy) is platform-agnostic; only the host-side plumbing
-varies.
-
-## Open questions
-
-- Should the local dnsproxy be installed via brew or extracted from the container image?
-  Brew is simpler for the user; extraction is more self-contained.
-- Should we keep `/etc/hosts` as a fallback for when the local dnsproxy isn't running?
-  That would mean the resolver file points to the local dnsproxy, and `/etc/hosts` is
-  the backup. But then we're maintaining both.
-
-## Escalation analysis
-
-A persistent root daemon with network access is a larger escalation surface than a
-one-shot file edit:
-
-| Approach | `sudo` frequency | Persistent footprint | Attack surface |
-|---|---|---|---|
-| `/etc/hosts` | Every `cove up` | None (transient write) | None after edit |
-| Local dnsproxy (launchd) | Once (install) | Root process on UDP:5353 | dnsproxy CVEs, plist tampering |
-| `pf` redirect + unpriv dnsproxy | Once (install) | Unpriv process on high port | dnsproxy CVEs only |
-
-The `pf` redirect option is the best compromise: add a `pf` anchor (like the existing
-443→8443 rule) to forward UDP:5353 → UDP:5354, then run the dnsproxy on 5354 as an
-unprivileged user. This avoids a root network service while keeping the one-time `sudo`.
-
-But the wildcard argument (above) makes this moot — we need DNS regardless, and the
-escalation is justified by the capability it unlocks.
-
-## The wildcard argument (decisive)
-
-`/etc/hosts` has **no wildcard support**. You cannot write:
-
-```
-*.pages.cove 127.0.0.1
-```
-
-Every subdomain must be listed explicitly. With Pages (each site gets its own
-`*.pages.cove` subdomain) and a potential `{service}.{project}.cove` naming model,
-the number of entries explodes and becomes unmanageable.
-
-DNS handles this trivially — dnsmasq's `address=/pages.cove/127.0.0.1` catches every
-subdomain with a single line. So the wildcard requirement **forces us onto a DNS path
-regardless**. The question isn't "can we avoid /etc/hosts?" — it's "how do we make DNS
-work on macOS given Colima's UDP gap?"
-
-This changes the escalation calculus too. The relay isn't a `/etc/hosts` replacement
-that happens to be more complex — it's an **enabler** for features (`*.pages.cove`,
-`{service}.{project}.cove`) that `/etc/hosts` literally cannot provide. The escalation
-is justified by the capability it unlocks.
+**vNext implements DoH for all hosts, including localhost.** No relay, no host process,
+no `/etc/hosts`. The container's dnsproxy is the single DoH endpoint for the entire
+cove mesh.
