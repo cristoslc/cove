@@ -51,6 +51,18 @@ Forgejo determines draft/pull-request state from the PR title:
 
 **Important:** `fj issue create` does **not** have a `--title` flag — title is the first positional argument. For body text, always prefer `--body-file` over `--body` (see [docs/musings/fj-issue-create-body-file.md](docs/musings/fj-issue-create-body-file.md) for rationale). This applies to **all** `--body-file`-compatible commands (`fj issue comment`, `fj pr comment`).
 
+**`fj pr create` title is positional, not `--title`:** Like `fj issue create`, `fj pr create` takes the title as its first positional argument. There is **no** `--title` flag — `fj pr create --title "WIP: foo"` fails with `error: unexpected argument '--title' found`. Use `fj pr create "WIP: <title>"` instead.
+
+**`fj pr create` requires `--body-file` (no `$EDITOR` fallback):** When no `--body` or `--body-file` is provided, `fj pr create` attempts to open `$EDITOR` to compose the body. If `$EDITOR` is unset, the command fails (see Troubleshooting). Always pass `--body-file <path>` — this is the preferred Cove pattern and avoids the editor dependency entirely. As a fallback for interactive use, set `EDITOR=vim` in your shell environment.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `error: unexpected argument '--title' found` | `fj pr create` has no `--title` flag; title is the first positional argument | Pass the title positionally: `fj pr create "WIP: <title>"` |
+| `fj pr create` fails when no `--body`/`--body-file` is given, with an editor-related error | `$EDITOR` is unset, and `fj pr create` tries to launch it for body input | Always use `--body-file <path>` (preferred). For interactive fallback, set `EDITOR=vim` in your shell |
+| `error: unrecognized subcommand 'diff'` | Diff is a subcommand of `fj pr view`, not `fj pr` | Use `fj pr view <PR> diff` (PR ID before the subcommand) |
+
 ## Cove-Specific Conventions
 
 - `fj` is aliased in the interactive shell — use `zsh -i -c 'fj ...'` when running from non-interactive contexts (e.g., agent sessions, scripts).
