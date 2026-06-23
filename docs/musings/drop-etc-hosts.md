@@ -104,16 +104,11 @@ task fails silently (`failed_when: false`).
 
 ### Recommendation
 
-The `open` approach is the best near-term fix: `cove up` renders the profile, opens it
-via `open`, and prints a message asking the user to click Install. This is one click,
-no `sudo`, and enables wildcard DNS.
+`open` is the right fix — one click, no `sudo`, no persistent daemon, no attack surface.
+The relay was a solution to a problem (`profiles -I` being available) that macOS 26
+removed. `open` is simpler, safer, and better in every dimension.
 
-For full automation, a local dnsproxy relay (launchd, one-time `sudo`) is the right
-long-term solution — it's the same pattern we discussed in the parley, now justified
-by macOS 26 removing the CLI install path. The relay listens on UDP:5353 and forwards
-to the container's DoH endpoint via TCP (which works through Colima).
-
-### Implementation sketch for `open` approach
+### Implementation sketch
 
 In `compose/bringup.yml`, replace the `profiles -I` task with:
 
@@ -126,11 +121,7 @@ In `compose/bringup.yml`, replace the `profiles -I` task with:
       - "{{ cove_data_root }}/nginx/config/doh/cove-doh.mobileconfig"
   changed_when: false
   failed_when: false
-```
 
-And add a debug message:
-
-```yaml
 - name: Remind user to install profile
   when: ansible_system == "Darwin"
   ansible.builtin.debug:
