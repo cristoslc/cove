@@ -39,11 +39,13 @@ All persistent state lives under `~/Documents/`. Plain directories on the host f
 
 ### One Address, Everywhere
 
-Every service has a single FQDN. That FQDN is the same whether you are on the host machine, on your phone via Tailscale, or disconnected from every network. What changes is how the name resolves — MagicDNS online, `/etc/hosts` + dnsmasq offline. The consumer never sees the difference.
+Every service has a single FQDN. That FQDN is the same whether you are on the host machine, on your phone, or disconnected from every network. What changes is how the name resolves — dnsmasq and local resolver config offline, with MagicDNS or Tailscale Split DNS as an enhancement when present. The consumer never sees the difference.
 
 ### Self-Contained
 
 Cove requires exactly three things from the host: Python, uv, and a container runtime (Colima on macOS, Docker Engine on Linux). Everything else — services, certificates, DNS, runners — is brought and managed by Cove. Uninstalling means deleting the containers and the data directory. Nothing is left in system paths, launch daemons, or hidden dotfiles.
+
+Third-party services (Tailscale, cloud DNS, etc.) may enhance Cove when present — remote access, encrypted transit, zero-config discovery — but Cove MUST NOT build on them as foundational infrastructure. A third-party rugpull (pricing change, account lockout, API deprecation, free-tier restriction) must not break Cove's core. Enhancement layer, not foundation.
 
 ## Audience
 
