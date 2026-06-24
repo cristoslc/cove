@@ -1,5 +1,7 @@
 # Drop `/etc/hosts` — DNS-over-HTTPS for all hosts
 
+**Status:** Superseded by [`cove-dns-architecture.md`](cove-dns-architecture.md). DoH profiles are no longer the primary path — macOS 26 broke `.mobileconfig` install, and the architecture reframe established dnsmasq + per-OS resolver config as the foundation. Kept for historical context.
+
 ## The problem
 
 `cove up` writes entries to `/etc/hosts` so `git.cove`, `vault.cove`, etc. resolve on the
