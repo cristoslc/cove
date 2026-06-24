@@ -19,6 +19,18 @@ And the agent MUST NOT use `--` flag syntax (e.g., `--comments` is wrong),
 And the agent MUST NOT use `fj pr <action>` directly (e.g., `fj pr diff 12` is wrong),
 And the agent MUST NOT fall back to the Forgejo API — the CLI has all inspection commands.
 
+**Creating issues and PRs with `--title`:**
+Given the agent needs to create an issue or PR,
+When the agent runs `fj issue create` or `fj pr create`,
+Then the agent MUST pass the title as the first positional argument (e.g., `fj issue create "My title"`),
+And the agent MUST NOT use `--title` (e.g., `fj issue create --title "My title"` is wrong — `fj` has no `--title` flag).
+
+**Providing body text with `--body-file`:**
+Given the agent needs to provide body text for an issue or PR (create, comment),
+When the agent runs `fj issue create`, `fj issue comment`, `fj pr create`, or `fj pr comment`,
+Then the agent MUST use `--body-file <path>` to supply body text from a file,
+And the agent MUST NOT use `--body` (e.g., `fj issue create "Title" --body "text"` is wrong — `fj` has no `--body` flag).
+
 SSH is available as an optional transport. `cove up` generates `~/.ssh/config.d/forgejo-localhost.conf` with a dedicated key at `~/.ssh/forgejo_{{ computer_name }}_ed25519` for users who need SSH.
 
 ## Vault / Credentials
