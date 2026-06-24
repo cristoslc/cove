@@ -59,19 +59,40 @@ fj pr edit <PR> title "WIP: my change"
 fj actions tasks
 ```
 
-## PR comments
+## The Core Pattern
 
-```bash
-# View all comments on a PR
-fj pr view <PR#> comments
-
-# View a specific comment by index (0-indexed)
-fj pr view <PR#> comment <IDX>
+```
+fj pr view <ID> <action>
 ```
 
-## Viewing PR diffs and changed files
+**All inspection actions are subcommands of `fj pr view`**, not of `fj pr`. The PR ID goes **before** the action. This is the inverse of `gh`, where actions are top-level subcommands of `gh pr`.
 
-**`fj` has NO top-level `pr diff` subcommand.** Diff is nested under `pr view`:
+### Common Mistakes
+
+```
+WRONG: fj pr diff 12              # "diff" is not a subcommand of "fj pr"
+RIGHT: fj pr view 12 diff         # "diff" is a subcommand of "fj pr view"
+
+WRONG: fj pr view 13 --comments   # --comments is not a flag
+RIGHT: fj pr view 13 comments     # "comments" is a positional subcommand
+
+WRONG: fj pr comments 13          # "comments" is not a subcommand of "fj pr"
+RIGHT: fj pr view 13 comments     # "comments" is under "fj pr view"
+```
+
+### `gh` → `fj` Mapping
+
+If you know `gh`, use this translation table:
+
+| `gh` command | `fj` equivalent |
+|---|---|
+| `gh pr diff 12` | `fj pr view 12 diff` |
+| `gh pr view 12 --comments` | `fj pr view 12 comments` |
+| `gh pr view 12 --files` | `fj pr view 12 files` |
+| `gh pr view 12 --commits` | `fj pr view 12 commits` |
+| `gh pr view 12 --labels` | `fj pr view 12 labels` |
+
+### All `fj pr view` subcommands
 
 ```bash
 # View the diff (base..head)
@@ -89,9 +110,19 @@ fj pr view <PR#> files
 
 # List commits on the PR branch
 fj pr view <PR#> commits
-```
 
-The PR ID goes **before** the `diff`/`files`/`commits` subcommand — `fj pr view 12 diff`, **not** `fj pr diff 12` (that fails with `error: unrecognized subcommand 'diff'`).
+# View all comments on a PR
+fj pr view <PR#> comments
+
+# View a specific comment by index (0-indexed)
+fj pr view <PR#> comment <IDX>
+
+# View the title and body
+fj pr view <PR#> body
+
+# View labels
+fj pr view <PR#> labels
+```
 
 ## Reference
 
