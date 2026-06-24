@@ -34,17 +34,17 @@ Three changes, in order:
 2. **Switch Cove's nginx publish to `0.0.0.0:443:443`** in `docker-compose.yml` (drop the `:8443` publish entirely — two ports was a holdover from the conflict era). Bind to `:443` directly.
 3. **Delete the two `become: true` tasks in `bringup.yml`** — the `/etc/hosts` lineinfile (lines 180-187) and the pf redirect (lines 189-203). Neither is needed once Cove owns `:443` and `/etc/hosts` is replaced by DoH.
 
-After this, the only remaining host-side ephemeral state is the `/etc/hosts` line — which is already specced for elimination by DoH in [`drop-etc-hosts.md`](drop-etc-hosts.md). Once DoH lands, `cove up` after reboot becomes unnecessary: Colima's LaunchAgent autostarts the VM, `restart: unless-stopped` brings the containers back, nginx serves `:443` directly, DoH resolves `*.cove`. Nothing for `cove up` to do.
+After this, the only remaining host-side ephemeral state is the `/etc/hosts` line — which is replaced by dnsmasq + `/etc/resolver/cove` per [`cove-dns-architecture.md`](cove-dns-architecture.md). Once that lands, `cove up` after reboot becomes unnecessary: Colima's LaunchAgent autostarts the VM, `restart: unless-stopped` brings the containers back, nginx serves `:443` directly, dnsmasq resolves `*.cove`. Nothing for `cove up` to do.
 
 ## Future: blocking LAN without losing Tailscale + localhost
 
-The "for now" decision is `0.0.0.0:443:443` — Cove is reachable from LAN and Tailscale on the standard port. The eventual requirement is to block LAN while keeping Tailscale + localhost. Three paths, deferred:
+The "for now" decision is `0.0.0.0:443:443` — Cove is reachable from LAN and Tailscale on the standard port. The eventual requirement is to block LAN while keeping Tailscale + localhost. Paths to consider, deferred:
 
-- **Tailscale serve** (ADR-013, superseded by ADR-014). ADR-014's rationale was about *local* ingress (nginx vs Caddy/Traefik), not remote exposure. The supersession may have been premature on the remote-exposure axis. Reopen when LAN-blocking becomes real.
+- **Tailscale serve** (ADR-013, superseded by ADR-014). Enhancement layer only — Cove MUST NOT depend on Tailscale as foundational infrastructure (per PURPOSE.md). Useful when present, but LAN-blocking can't hinge on it.
 - **IP-specific Docker binds** (`127.0.0.1:443:443` + `100.x.x.x:443:443`). Hardcodes a host-specific Tailscale IP into compose config — exactly the host-side state this reframe is trying to eliminate.
 - **pf allow-list on host** — reintroduces the pf-reboot-persistence problem we just escaped. Reject.
 
-Not deciding now. Note that ADR-013's supersession didn't fully settle the remote-exposure question.
+Not deciding now.
 
 ## What was rejected (and why)
 
