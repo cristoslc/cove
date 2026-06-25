@@ -51,7 +51,7 @@ If no known SSG is detected, the action defaults to serving the repository root 
 
 ## TLS
 
-mkcert generates locally-trusted wildcard certificates for `*.pages.cove`. All pages subdomains have valid TLS with no browser warnings when the mkcert root CA is installed (which `cove up` does automatically).
+Cove generates locally-trusted wildcard certificates for `*.pages.cove`. All pages subdomains have valid TLS with no browser warnings when the Cove root CA is installed (which `cove up` does automatically).
 
 ### Custom Domains
 

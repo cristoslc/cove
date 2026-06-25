@@ -37,7 +37,7 @@ Cove is a portable, offline-capable local developer platform. It runs Forgejo (G
 │  pf NAT: 127.0.0.1:443 → 127.0.0.1:8443                    │
 │  Tailscale Serve → https://127.0.0.1:443 (if tailnet)      │
 │                                                             │
-│  mkcert               OS Keychain                            │
+│  Cove PKI             OS Keychain                            │
 │   └─ *.cove, localhost  └─ cove/vault/unseal-{1..5}        │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
@@ -50,7 +50,7 @@ Cove is a portable, offline-capable local developer platform. It runs Forgejo (G
 - Python CLI for credential and lifecycle operations (`cli/`)
 - Nginx configuration for HTTPS reverse proxy (`compose/nginx/`)
 - dnsmasq configuration for offline wildcard DNS (`compose/dnsmasq/`)
-- mkcert TLS certificates for `*.cove` subdomains
+- Cove PKI certificates for `*.cove` subdomains
 - `/etc/hosts` entries and `/etc/resolver/` configuration
 - OS keychain entries for Vault unseal keys and root token
 - pf NAT rule forwarding `localhost:443` → `localhost:8443`
@@ -147,7 +147,7 @@ Serves static sites. Owns site artifacts, subdomain routing, and the deploy-publ
 
 ### Reverse Proxy (nginx)
 
-The single entry point for all HTTP/HTTPS traffic. Terminates TLS on port 8443 (host) using mkcert certificates, redirects HTTP on port 8080 to HTTPS. pf NAT forwards `localhost:443` → `8443`. Routes by `Host` header:
+The single entry point for all HTTP/HTTPS traffic. Terminates TLS on port 8443 (host) using Cove PKI certificates, redirects HTTP on port 8080 to HTTPS. pf NAT forwards `localhost:443` → `8443`. Routes by `Host` header:
 
 | Host Pattern | Target |
 |---|---|
@@ -169,7 +169,7 @@ Vault 1.20 with Raft storage. Accessible only through nginx at `https://vault.co
 
 A wildcard DNS resolver plus static file server that replicates GitHub Pages:
 - dnsmasq resolves `*.pages.cove` → `127.0.0.1`.
-- nginx serves static content from `~/Documents/cove-data/pages/sites/<owner>/<repo>/` with mkcert wildcard TLS.
+- nginx serves static content from `~/Documents/cove-data/pages/sites/<owner>/<repo>/` with Cove PKI wildcard TLS.
 - Three Forgejo composite actions (`cove/configure-pages`, `cove/upload-pages-artifact`, `cove/deploy-pages`) provide GitHub Pages workflow compatibility.
 
 ### CI Runners
@@ -190,7 +190,7 @@ All `*.cove` domains resolve via `/etc/hosts` to `127.0.0.1`. Tailscale MagicDNS
 
 - `/etc/hosts` maps `cove`, `git.cove`, `vault.cove`, `hc.cove` to `127.0.0.1`.
 - `/etc/resolver/cove` routes subdomain queries to `dnsmasq:5353`, which has a wildcard rule resolving `*.cove` → `127.0.0.1`.
-- nginx at `127.0.0.1:8443` uses mkcert certs — valid TLS, CA-accepted, no warnings.
+- nginx at `127.0.0.1:8443` uses Cove PKI certs — valid TLS, CA-accepted, no warnings.
 
 ## Data Persistence
 
@@ -211,8 +211,8 @@ All persistent state lives under `~/Documents/cove-data/`:
 │           ├── .index/  # User/org site
 │           └── <repo>/  # Per-repository site
 ├── certs/
-│   ├── cove.local.pem    # mkcert TLS certificate
-│   └── cove.local-key.pem # mkcert TLS private key
+│   ├── cove.local.pem    # Cove PKI TLS certificate
+│   └── cove.local-key.pem # Cove PKI TLS private key
 ├── nginx/
 │   └── conf.d/
 │       └── default.conf  # Rendered from Ansible template
@@ -229,7 +229,7 @@ Provisioning is Ansible-driven and sequential:
 ```
 bringup.yml
   ├─ Starts Colima (macOS)
-  ├─ Configures mkcert TLS for *.cove
+  ├─ Configures Cove PKI TLS for *.cove
   ├─ Creates data directories
   ├─ Configures /etc/hosts
   ├─ Configures pf NAT (443 → 8443)
@@ -273,7 +273,7 @@ provision_pages.yml
 
 ## TLS
 
-mkcert generates locally-trusted CA and certificates for `*.cove`, `localhost`, `127.0.0.1`, `::1`. Stored at `~/Documents/cove-data/certs/`. All services trust the mkcert root CA after `mkcert -install`. If Tailscale is available, its Tailscale FQDN certificate is also loaded for remote access via tailnet URLs.
+Cove generates a locally-trusted CA and certificates for `*.cove`, `localhost`, `127.0.0.1`, `::1` using Python's `cryptography` library. Stored at `~/Documents/cove-data/certs/`. The root CA is installed into the system trust store automatically. If Tailscale is available, its Tailscale FQDN certificate is also loaded for remote access via tailnet URLs.
 
 ## Credential Lifecycle
 

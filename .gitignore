@@ -24,7 +24,7 @@ cli/build/
 *.swp
 *.swo
 
-# TLS infra (auto-copied from mkcert by bringup.yml)
+# TLS infra (auto-copied from CA by bringup.yml)
 /compose/certs/
 
 # Compose runtime data (git repos, DB, SSH keys, TLS certs, Vault)

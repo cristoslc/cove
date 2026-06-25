@@ -75,7 +75,7 @@ def _cove_artifact(tmp_path_factory):
     if inst.returncode != 0:
         pytest.fail(f"pip install failed:\n{inst.stderr}")
     deps = subprocess.run(
-        [str(pip), "install", "click", "jinja2>=3.1", "pyyaml>=6.0.3", "requests>=2.33.0"],
+        [str(pip), "install", "click", "cryptography>=42.0.0", "jinja2>=3.1", "pyyaml>=6.0.3", "requests>=2.33.0"],
         capture_output=True,
         text=True,
     )
