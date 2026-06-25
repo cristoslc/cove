@@ -10,6 +10,7 @@ from pathlib import Path
 import click
 
 from cove import __version__
+from cove.certs import ca_path, ensure_ca, root_ca_pem, sign_cert
 from cove.creds import creds
 from cove.project import (
     _inject, _strip, _container_env, _render_context, _render_guidance,
@@ -146,6 +147,40 @@ def up(no_provision, no_sudo, no_upgrade, log):
         _run_ansible(provision, "Provisioning Forgejo...")
 
     click.echo("Cove is up.")
+
+
+@app.group()
+def certs():
+    """Manage TLS certificates."""
+
+
+@certs.command("ensure-ca")
+def certs_ensure_ca():
+    """Generate root CA if missing and install to system trust store."""
+    ensure_ca()
+    click.echo(f"Root CA: {ca_path() / 'rootCA.pem'}")
+
+
+@certs.command("ca-path")
+def certs_ca_path():
+    """Print the CA directory path."""
+    click.echo(ca_path())
+
+
+@certs.command("root-ca-pem")
+def certs_root_ca_pem():
+    """Print the root CA certificate in PEM format."""
+    click.echo(root_ca_pem(), nl=False)
+
+
+@certs.command()
+@click.option("--sans", multiple=True, required=True, help="Subject Alternative Names (repeatable)")
+@click.option("--key-file", required=True, type=click.Path(path_type=Path))
+@click.option("--cert-file", required=True, type=click.Path(path_type=Path))
+def sign(sans, key_file, cert_file):
+    """Generate a TLS certificate signed by the root CA."""
+    sign_cert(list(sans), key_file, cert_file)
+    click.echo(f"Signed: {cert_file}")
 
 
 app.add_command(creds)
