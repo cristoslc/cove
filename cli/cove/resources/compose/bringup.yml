@@ -73,32 +73,27 @@
       register: ts_serve_https
       changed_when: "'configured' in ts_serve_https.stdout and 'already' not in ts_serve_https.stdout"
 
-    - name: Ensure mkcert is available
-      ansible.builtin.command: which mkcert
-      register: mkcert_check
+    - name: Ensure root CA exists
+      ansible.builtin.command: cove certs ensure-ca
+      register: ca_ensure
       changed_when: false
       failed_when: false
 
-    - name: Install mkcert CA
-      ansible.builtin.command: mkcert -install
-      when: mkcert_check.rc == 0 and not (cove_skip_mkcert_install | default(false))
-      changed_when: false
-
-    - name: Detect mkcert CAROOT path
-      ansible.builtin.command: mkcert -CAROOT
-      register: mkcert_caroot
+    - name: Detect CA path
+      ansible.builtin.command: cove certs ca-path
+      register: ca_path_result
       changed_when: false
       failed_when: false
 
-    - name: Set MKCERT_CAROOT fact
-      when: mkcert_caroot.rc == 0
+    - name: Set CA path fact
+      when: ca_path_result.rc == 0
       ansible.builtin.set_fact:
-        mkcert_caroot_path: "{{ mkcert_caroot.stdout }}"
+        ca_path: "{{ ca_path_result.stdout }}"
 
     - name: Read root CA certificate
-      when: mkcert_caroot.rc == 0
+      when: ca_path_result.rc == 0
       ansible.builtin.slurp:
-        src: "{{ mkcert_caroot_path }}/rootCA.pem"
+        src: "{{ ca_path }}/rootCA.pem"
       register: root_ca_slurp
 
     - name: Ensure certs directory in compose dir
@@ -108,27 +103,17 @@
         mode: "0755"
 
     - name: Copy rootCA.pem into compose dir for container mount
-      when: mkcert_caroot.rc == 0
+      when: ca_path_result.rc == 0
       ansible.builtin.copy:
         dest: "{{ compose_dir }}/certs/rootCA.pem"
         mode: "0644"
         content: "{{ root_ca_slurp.content | b64decode }}"
 
-    # Apple .mobileconfig profiles require the certificate as raw base64-encoded
-    # DER, not PEM-wrapped. Strip the BEGIN/END CERTIFICATE headers and all
-    # newlines to produce a single-line base64 string suitable for the
-    # <data> element in the iOS configuration profile payload.
     - name: Base64-encode root CA (strip PEM headers for .mobileconfig)
-      when: mkcert_caroot.rc == 0
+      when: ca_path_result.rc == 0
       ansible.builtin.set_fact:
         root_ca_b64: "{{ (root_ca_slurp.content | b64decode | regex_replace('-----BEGIN CERTIFICATE-----\\n?', '') | regex_replace('-----END CERTIFICATE-----\\n?', '') | regex_replace('\\n', '') | trim) }}"
 
-    # Generate UUIDs for the iOS .mobileconfig profile.
-    # Apple requires a unique PayloadUUID for each payload entry
-    # and for the top-level Configuration profile itself.
-    #   ca_uuid      — identifies the root CA certificate payload
-    #   dns_uuid     — identifies the DNS settings payload
-    #   profile_uuid — identifies the top-level configuration profile
     - name: Generate UUIDs for iOS profile
       ansible.builtin.shell: python3 -c "import uuid; print(uuid.uuid4()); print(uuid.uuid4()); print(uuid.uuid4())"
       register: uuids
@@ -140,28 +125,40 @@
         dns_uuid: "{{ uuids.stdout_lines[1] }}"
         profile_uuid: "{{ uuids.stdout_lines[2] }}"
 
-    - name: Generate mkcert cert for *.cove + per-machine wildcard
+    - name: Generate cert for *.cove + per-machine wildcard
       ansible.builtin.command:
         argv:
-          - mkcert
-          - -key-file
-          - "{{ cove_data_root }}/certs/cove.local-key.pem"
-          - -cert-file
-          - "{{ cove_data_root }}/certs/cove.local.pem"
-          - "*.cove"
-          - "*.cove.{{ ansible_hostname }}"
           - cove
+          - certs
+          - sign
+          - --sans
+          - "*.cove"
+          - --sans
+          - "*.cove.{{ ansible_hostname }}"
+          - --sans
+          - cove
+          - --sans
           - git.cove
+          - --sans
           - vault.cove
+          - --sans
           - hc.cove
+          - --sans
           - ca.cove
+          - --sans
           - "*.pages.cove"
+          - --sans
           - localhost
+          - --sans
           - 127.0.0.1
+          - --sans
           - "::1"
+          - --key-file
+          - "{{ cove_data_root }}/certs/cove.local-key.pem"
+          - --cert-file
+          - "{{ cove_data_root }}/certs/cove.local.pem"
       args:
         creates: "{{ cove_data_root }}/certs/cove.local.pem"
-      when: mkcert_check.rc == 0
 
     - name: Validate TLS cert covers required hostnames
       ansible.builtin.shell: |
@@ -345,8 +342,8 @@
       ansible.builtin.debug:
         msg: |
           Containers are up.
-            Forgejo: https://git.cove/ (TLS via nginx+mkcert)
-            Vault  : https://vault.cove/ (TLS via nginx+mkcert)
+            Forgejo: https://git.cove/ (TLS via cove certs)
+            Vault  : https://vault.cove/ (TLS via cove certs)
             SSH    : 0.0.0.0:{{ forgejo_ssh_port }}
 
           Bootstrap new devices: http://{{ ansible_default_ipv4.address }}:{{ nginx_http_port }}/config/
