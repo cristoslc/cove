@@ -108,10 +108,10 @@ The result: the top level says "this is a Python project with infrastructure-as-
 
 ### What uvx doesn't solve
 
-- **sudo.** `cove up` needs root for `/etc/resolver/cove` and `mkcert -install`. `uvx` doesn't change that — the user still gets a sudo prompt. This is a UX problem, not a packaging problem. `cove up --no-sudo` already exists as a workaround.
-- **Docker.** The user needs a container runtime (Colima on macOS, Docker Engine on Linux). `uvx` can't install that. `cove up` already auto-starts Colima and switches the Docker context.
-- **Ansible.** The user needs `ansible-playbook` and `ansible-galaxy`. Cove could vendor Ansible as a Python dependency (`ansible-core` is on PyPI) or check for it at runtime. Vendoring adds ~30MB to the wheel but eliminates a prerequisite. Worth evaluating.
-- **mkcert.** The user needs `mkcert` for TLS certs. Cove could vendor a binary (mkcert is a single Go binary per platform) or check at runtime. Vendoring is feasible but adds platform-specific build complexity.
+- **sudo.** `/etc/resolver/cove` and system trust store installs both require root on macOS. Irreducible — no way around it without a kernel-level change. `cove up --no-sudo` is the honest escape hatch (DNS won't resolve, but the harbor is reachable by IP). The output should tell the user what they're missing.
+- **Docker.** The user needs a container runtime (Colima on macOS, Docker Engine on Linux). Irreducible — Docker Compose is the architecture. Cove auto-starts Colima and switches the Docker context. Add a prereq check that verifies Docker CLI is available and meets a minimum compatible version, failing early with a clear install message.
+- **Ansible.** Solved by adding `ansible-core` to `pyproject.toml` dependencies. Not vendoring — just declaring a PyPI dependency. ~30MB download on first install, cached by uv. No license issue (GPL-3.0 dependency doesn't affect Cove's license).
+- **mkcert.** Solved by replacing with a Python module using `cryptography` to generate the root CA. The install step still needs sudo (system trust store is root-owned), same as mkcert. This warrants its own spike/sashay with a thorough test suite.
 
 ### The gap: compose drift
 
@@ -156,9 +156,9 @@ No repo clone. No `pip install`. No manual `cove init`. One command.
 
 1. **Fix the build process** (Option D from above) — compose is canonical at top level, the build copies it into the wheel. The bundled copy is a build artifact, gitignored.
 2. **Rename the package** from `cove-cli` to `cove` on PyPI. `uvx cove` resolves the package name from the argument — `uvx cove-cli` would work but is ugly.
-3. **Add system-dependency checks** to `cove up` — Ansible, mkcert, Docker. Fail early with actionable messages.
-4. **Optionally vendor Ansible** as `ansible-core` in dependencies. Eliminates a host prerequisite. Worth the ~30MB wheel size increase for the "one prerequisite" story.
-5. **Optionally vendor mkcert** as a platform-specific binary downloaded at install time. More complex but eliminates another prerequisite.
+3. **Add `ansible-core` to `pyproject.toml` dependencies.** Eliminates a host prerequisite.
+4. **Add Docker prereq check** to `cove up` — verify Docker CLI is available and meets a minimum compatible version. Fail early with a clear install message.
+5. **Replace mkcert with Python `cryptography`** — its own spike/sashay with thorough test suite.
 6. **Publish to PyPI.** `uv publish` or `twine upload`. Add a CI step that publishes on tagged releases.
 
 The result: Cove becomes a true `uvx`-installable tool. The repo structure serves both the developer (canonical compose at top level) and the end user (self-contained wheel). The build process is the only bridge between them.
