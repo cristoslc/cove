@@ -91,3 +91,74 @@ The top-level `compose/` stays. The bundled copy is a build artifact, gitignored
 - `AGENTS.md` / `CLAUDE.md` — keep if useful for OpenCode-using contributors, or strip for a clean open-source surface.
 
 The result: the top level says "this is a Python project with infrastructure-as-code" — `cli/`, `compose/`, `docs/`, `.github/`. The wheel says "this is a self-contained tool." The build process owns the bridge between them.
+
+## The uvx target
+
+`uvx cove` or `uv tool install cove` is the right end state. One command, no repo clone, no manual setup. The user runs `uvx cove up` and gets a harbor. This is Cove's identity expressed as a distribution mechanism.
+
+### What uvx requires
+
+`uvx <package>` downloads the wheel from PyPI, creates a temporary venv, and runs the entry point. `uv tool install <package>` does the same but persists the venv. Both require:
+
+1. **A published wheel on PyPI** under the name `cove` (not `cove-cli` — `uvx cove` resolves the package name from the argument).
+2. **All resources bundled in the wheel.** Compose files, Jinja2 templates, seed templates — everything `cove up` needs must be in `cove.resources`. No external file dependencies at runtime.
+3. **All Python dependencies declared.** Already done: click, jinja2, pyyaml, requests.
+4. **A `[project.scripts]` entry point.** Already done: `cove = "cove.cli:app"`.
+5. **System dependency checks at runtime.** Docker and Ansible are not Python packages — they must be present on the host. `cove up` already checks for Docker. Add a check for Ansible (`ansible-playbook --version`) with a clear error message.
+
+### What uvx doesn't solve
+
+- **sudo.** `cove up` needs root for `/etc/resolver/cove` and `mkcert -install`. `uvx` doesn't change that — the user still gets a sudo prompt. This is a UX problem, not a packaging problem. `cove up --no-sudo` already exists as a workaround.
+- **Docker.** The user needs a container runtime (Colima on macOS, Docker Engine on Linux). `uvx` can't install that. `cove up` already auto-starts Colima and switches the Docker context.
+- **Ansible.** The user needs `ansible-playbook` and `ansible-galaxy`. Cove could vendor Ansible as a Python dependency (`ansible-core` is on PyPI) or check for it at runtime. Vendoring adds ~30MB to the wheel but eliminates a prerequisite. Worth evaluating.
+- **mkcert.** The user needs `mkcert` for TLS certs. Cove could vendor a binary (mkcert is a single Go binary per platform) or check at runtime. Vendoring is feasible but adds platform-specific build complexity.
+
+### The gap: compose drift
+
+The single thing that blocks `uvx cove` from working *today* is the compose drift. If the bundled copy is stale, `cove init` extracts broken infrastructure. Fixing the build process (Option D) is the prerequisite.
+
+Everything else is either already done or is a system-dependency question that applies equally to `pip install` and `uvx`.
+
+### What a clean `uvx cove up` looks like
+
+```
+$ uvx cove up
+Checking prerequisites...
+  ✓ Python 3.11+
+  ✓ Docker (Colima)
+  ✓ ansible-playbook
+  ✓ mkcert
+  ✓ mkcert root CA installed
+  ✓ /etc/resolver/cove
+Extracting compose resources...  (from bundled wheel data)
+Starting containers...
+  ✓ dnsmasq
+  ✓ nginx
+  ✓ forgejo
+  ✓ vault
+Bootstrapping Vault...
+Provisioning Forgejo...
+Provisioning Vault user...
+Provisioning Pages...
+
+Cove is running at https://cove.local/
+
+  Forgejo:  https://git.cove/
+  Vault:    https://vault.cove/
+  Pages:    https://pages.cove/
+
+Run `cove down` to stop.
+```
+
+No repo clone. No `pip install`. No manual `cove init`. One command.
+
+### What it would take to get there
+
+1. **Fix the build process** (Option D from above) — compose is canonical at top level, the build copies it into the wheel. The bundled copy is a build artifact, gitignored.
+2. **Rename the package** from `cove-cli` to `cove` on PyPI. `uvx cove` resolves the package name from the argument — `uvx cove-cli` would work but is ugly.
+3. **Add system-dependency checks** to `cove up` — Ansible, mkcert, Docker. Fail early with actionable messages.
+4. **Optionally vendor Ansible** as `ansible-core` in dependencies. Eliminates a host prerequisite. Worth the ~30MB wheel size increase for the "one prerequisite" story.
+5. **Optionally vendor mkcert** as a platform-specific binary downloaded at install time. More complex but eliminates another prerequisite.
+6. **Publish to PyPI.** `uv publish` or `twine upload`. Add a CI step that publishes on tagged releases.
+
+The result: Cove becomes a true `uvx`-installable tool. The repo structure serves both the developer (canonical compose at top level) and the end user (self-contained wheel). The build process is the only bridge between them.
