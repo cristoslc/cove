@@ -82,7 +82,11 @@ export COVE_TS_DNS_NAME="localhost"
 export COVE_COMPOSE_DIR="$COMPOSE_DIR"
 export COMPOSE_PROJECT_NAME="cove-staging"
 
-mkdir -p "$STAGING_DATA/certs"
+# Ensure CA exists and copy rootCA.pem for container mount
+"$COVE_BIN" certs ensure-ca 2>&1 | tee -a "$LOG_DIR/cove-up.log"
+CA_PATH=$("$COVE_BIN" certs ca-path)
+mkdir -p "$STAGING_DATA/certs" "$COMPOSE_DIR/certs"
+cp "$CA_PATH/rootCA.pem" "$COMPOSE_DIR/certs/rootCA.pem"
 ln -sf "$REAL_HOME/.docker" "$STAGING_HOME/.docker"
 ln -sf "$REAL_HOME/.colima" "$STAGING_HOME/.colima"
 
