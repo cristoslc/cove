@@ -155,9 +155,14 @@ def certs():
 
 
 @certs.command("ensure-ca")
-def certs_ensure_ca():
+@click.option("--skip-trust-store", is_flag=True, help="Generate CA files but skip system trust store install.")
+def certs_ensure_ca(skip_trust_store):
     """Generate root CA if missing and install to system trust store."""
-    ensure_ca()
+    if skip_trust_store:
+        from cove.certs import _ensure_ca
+        _ensure_ca()
+    else:
+        ensure_ca()
     click.echo(f"Root CA: {ca_path() / 'rootCA.pem'}")
 
 

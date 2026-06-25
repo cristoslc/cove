@@ -83,7 +83,7 @@ export COVE_COMPOSE_DIR="$COMPOSE_DIR"
 export COMPOSE_PROJECT_NAME="cove-staging"
 
 # Ensure CA exists and copy rootCA.pem for container mount
-"$COVE_BIN" certs ensure-ca 2>&1 | tee -a "$LOG_DIR/cove-up.log"
+"$COVE_BIN" certs ensure-ca --skip-trust-store 2>&1 | tee -a "$LOG_DIR/cove-up.log"
 CA_PATH=$("$COVE_BIN" certs ca-path)
 mkdir -p "$STAGING_DATA/certs" "$COMPOSE_DIR/certs"
 cp "$CA_PATH/rootCA.pem" "$COMPOSE_DIR/certs/rootCA.pem"
@@ -111,6 +111,7 @@ dnsmasq_conf_dir: $COMPOSE_DIR/dnsmasq
 dnsmasq_port: $STAGING_DNSMASQ
 dnsproxy_container_name: cove-staging-dnsproxy
 cove_skip_tailscale_serve: true
+cove_skip_ca_install: true
 compose_project_name: cove-staging
 EOF
 
