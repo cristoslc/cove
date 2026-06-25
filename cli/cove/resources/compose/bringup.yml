@@ -74,7 +74,9 @@
       changed_when: "'configured' in ts_serve_https.stdout and 'already' not in ts_serve_https.stdout"
 
     - name: Ensure root CA exists
-      ansible.builtin.command: cove certs ensure-ca
+      ansible.builtin.command: >
+        cove certs ensure-ca
+        {% if cove_skip_ca_install | default(false) %}--skip-trust-store{% endif %}
       register: ca_ensure
       changed_when: false
       failed_when: false
