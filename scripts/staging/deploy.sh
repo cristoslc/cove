@@ -121,6 +121,7 @@ ln -sf cove.local-key.pem "$STAGING_DATA/certs/privkey.pem"
 
 # ── cove up ────────────────────────────────────────────────────────────────
 set +e
+export PATH="$UV_VENV/bin:$PATH"
 "$COVE_BIN" up --no-sudo --no-provision 2>&1 | tee -a "$LOG_DIR/cove-up.log"
 UP_RC=${PIPESTATUS[0]}
 set -e
