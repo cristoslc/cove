@@ -58,7 +58,7 @@
           - cove
           - creds
           - 1p-bulk-write
-          - "{{ playbook_dir }}/../seeds/forgejo-creds.yaml"
+          - "{{ playbook_dir }}/seeds/forgejo-creds.yaml"
           - --execute
       when: pwd_check.rc != 0
 

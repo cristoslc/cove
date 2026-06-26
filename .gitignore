@@ -18,6 +18,11 @@ node_modules/
 cli/build/
 *.egg-info/
 
+# Personal agent configs
+.claude/
+.goose/
+bin/
+
 # IDE
 .idea/
 .vscode/
@@ -41,8 +46,6 @@ cli/build/
 /compose/dnsmasq/cove.conf
 
 # User-specific credential seeds
-/seeds/*.yaml
-!/seeds/*.example
 /compose/seeds/*.yaml
 !/compose/seeds/*.example
 
@@ -63,3 +66,6 @@ plan.yaml
 
 # Bundled compose resources (build artifact — sync from compose/ via cli/scripts/sync_compose_resources.py)
 cli/cove/resources/compose/
+
+# Staging pipeline (Cove's own CI, not user-facing)
+scripts/staging/
