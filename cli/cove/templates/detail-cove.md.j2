@@ -5,7 +5,7 @@ All services are offline-first.
 
 ## Forgejo
 
-- Web: `https://git.cove/` (TLS via nginx+mkcert)
+- Web: `https://git.cove/` (TLS via cove certs)
 - CLI: `fj` — see `~/.agents/agents-md-detail/fj.md` for full reference
 - GitHub CLI: `gh` — see `~/.agents/agents-md-detail/gh.md` for full reference
 
@@ -41,7 +41,7 @@ Never hardcode secrets. Use:
 - `cove creds batch-pull` — refresh all cached refs in one batch (single biometric prompt)
 - `cove creds 1p-bulk-write <seeds.yaml> --execute` — write seed items to 1Password
 
-Vault address: `https://vault.cove/` (TLS via nginx+mkcert)
+Vault address: `https://vault.cove/` (TLS via cove certs)
 
 ## CLI reference
 
@@ -62,7 +62,7 @@ Vault address: `https://vault.cove/` (TLS via nginx+mkcert)
 |---------|----------|----------|-------|
 | Forgejo | forgejo:3000 | https://git.cove/ | via nginx proxy |
 | Vault | vault:8200 | https://vault.cove/ | via nginx proxy |
-| Nginx | — | 0.0.0.0:443 | mkcert TLS termination |
+| Nginx | — | 0.0.0.0:443 | cove certs TLS termination |
 | Forgejo SSH | 0.0.0.0:2222 | — | optional, direct |
 | dnsmasq | 0.0.0.0:5353 | — | offline wildcard DNS |
 
@@ -71,11 +71,10 @@ All HTTP traffic routes through nginx at `*.cove` subdomains. Ports bind on `0.0
 ## Prerequisites (macOS)
 
 - **Colima** — Docker runtime. Install: `brew install colima && colima start`
-- **mkcert** — Local TLS certificates. Install: `brew install mkcert && mkcert -install`
 
 ## TLS
 
-- **Local:** mkcert generates `cove` + `*.cove` cert in `{{ cove_data_root }}/certs/`. nginx terminates TLS. macOS resolver (`/etc/resolver/cove`) delegates `*.cove` DNS to dnsmasq on `127.0.0.1:5353`.
+- **Local:** Cove generates `cove` + `*.cove` cert in `{{ cove_data_root }}/certs/`. nginx terminates TLS. macOS resolver (`/etc/resolver/cove`) delegates `*.cove` DNS to dnsmasq on `127.0.0.1:5353`.
 - **Tailscale:** Tailscale cert (public FQDN) for remote access. Tailscale serve forwards `:443` → `127.0.0.1:443`.
 
 ## Git remotes
