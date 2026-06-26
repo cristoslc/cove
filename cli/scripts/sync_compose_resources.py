@@ -14,6 +14,7 @@ EXCLUDE_NAMES = {".env", "default.conf", "cove.conf"}
 EXCLUDE_SUFFIXES = {".env"}
 EXCLUDE_DIRS = {"data", "logs", "raft", "__pycache__"}
 EXCLUDE_HOST_VARS_YML = True
+EXCLUDE_SEEDS_YAML = True  # seeds/*.yaml contains PII, only ship *.example
 
 
 def _should_exclude(path: Path, relative: Path) -> bool:
@@ -29,6 +30,8 @@ def _should_exclude(path: Path, relative: Path) -> bool:
     if name.endswith(".env"):
         return True
     if EXCLUDE_HOST_VARS_YML and parts[0] == "host_vars" and name.endswith(".yml"):
+        return True
+    if EXCLUDE_SEEDS_YAML and parts[0] == "seeds" and name.endswith(".yaml") and not name.endswith(".example"):
         return True
     return False
 
