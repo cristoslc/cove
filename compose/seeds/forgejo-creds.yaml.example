@@ -1,5 +1,5 @@
 # Cove Forgejo credential seed for 1Password.
-# Run: cove creds 1p-bulk-write seeds/forgejo-creds.yaml.example --execute
+# Run: cove creds 1p-bulk-write compose/seeds/forgejo-creds.yaml.example --execute
 # Copy to forgejo-creds.yaml and edit values for your host.
 
 items:
