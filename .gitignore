@@ -60,3 +60,6 @@ compose/nginx/default.conf
 .subagents/
 prompts/
 plan.yaml
+
+# Bundled compose resources (build artifact — sync from compose/ via cli/scripts/sync_compose_resources.py)
+cli/cove/resources/compose/
