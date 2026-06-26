@@ -1,7 +1,8 @@
 # Sashay: Replace mkcert with Python `cryptography`
 
-**PR:** TBD
+**PR:** https://git.cove/cristos/cove/pulls/33
 **Branch:** `sashay-replace-mkcert` (new, off `main`)
+**Status:** Complete
 **Architecture:** `docs/musings/cove-repo-fair.md`, `docs/musings/parleys/2026-06-25-uvx-dependencies.md`
 
 ## Scope
@@ -140,7 +141,25 @@ dependencies = [
 
 The `# TLS infra` section ignores `/compose/certs/`. That stays — the certs are still auto-copied by bringup. But the mkcert-specific comment should be updated.
 
-## Out of scope
+## Chronicle
+
+**Completed:** 2026-06-25
+**Commits:** 5 (b8359ac → 2b2769a)
+**Tests:** 212 passed (35 new + 177 existing)
+**Staging:** Cert generation verified end-to-end. Docker mount error on nginx container is pre-existing (Colima read-only filesystem), not related to this change.
+
+### Deviations from plan
+
+- **`certs.py` location:** Root CA stored at `~/.config/cove/pki/` (not `~/Library/Application Support/mkcert/`). Cross-platform, no macOS-specific path.
+- **`--skip-trust-store` flag:** Added to `cove certs ensure-ca` for staging deploy, which runs without sudo. Corresponding `cove_skip_ca_install` Ansible var added to `bringup.yml`.
+- **Staging PATH fix:** Ansible calls `cove` from system PATH, not the staging venv. Added `export PATH="$UV_VENV/bin:$PATH"` before `cove up` in `deploy.sh`.
+- **Staging cert handling:** `deploy.sh` now runs `cove certs ensure-ca --skip-trust-store` and copies `rootCA.pem` directly before `cove up`, since the Ansible `when` conditions on CA tasks don't fire in staging (different HOME).
+- **`.gitignore` comment:** Updated from "mkcert" to "CA" — no structural change needed.
+- **`ansible-core` dependency:** Not added in this sashay — deferred to the compose drift sashay per the parley.
+
+### Files changed
+
+18 files, +1138 / -114 lines across `cli/`, `compose/`, `scripts/`, `docs/`, and project root.
 
 - System trust store install without sudo — irreducible (kernel-level requirement on both macOS and Linux).
 - Replacing the `openssl` cert validation step — that's a separate concern.
