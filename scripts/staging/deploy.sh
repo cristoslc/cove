@@ -49,7 +49,6 @@ log "Staging URL:   $STAGING_URL"
 
 # ── Prerequisites ──────────────────────────────────────────────────────────
 [[ -d "$CLI_DIR/cove/resources/compose" ]] || fail "Bundled resources missing"
-command -v mkcert >/dev/null 2>&1 || fail "mkcert not found"
 command -v docker >/dev/null 2>&1 || fail "docker not found"
 docker compose version >/dev/null 2>&1 || fail "docker compose v2 not found"
 colima status >/dev/null 2>&1 || fail "Colima not running"
@@ -83,13 +82,11 @@ export COVE_TS_DNS_NAME="localhost"
 export COVE_COMPOSE_DIR="$COMPOSE_DIR"
 export COMPOSE_PROJECT_NAME="cove-staging"
 
-REAL_CAROOT="$REAL_HOME/Library/Application Support/mkcert"
-export MKCERT_CAROOT="$REAL_CAROOT"
-mkdir -p "$STAGING_DATA/certs"
-cp "$REAL_CAROOT/rootCA.pem" "$STAGING_DATA/certs/rootCA.pem"
-cp "$REAL_CAROOT/rootCA-key.pem" "$STAGING_DATA/certs/rootCA-key.pem" 2>/dev/null || true
-mkdir -p "$STAGING_HOME/Library/Application Support"
-ln -sf "$REAL_CAROOT" "$STAGING_HOME/Library/Application Support/mkcert"
+# Ensure CA exists and copy rootCA.pem for container mount
+"$COVE_BIN" certs ensure-ca --skip-trust-store 2>&1 | tee -a "$LOG_DIR/cove-up.log"
+CA_PATH=$("$COVE_BIN" certs ca-path)
+mkdir -p "$STAGING_DATA/certs" "$COMPOSE_DIR/certs"
+cp "$CA_PATH/rootCA.pem" "$COMPOSE_DIR/certs/rootCA.pem"
 ln -sf "$REAL_HOME/.docker" "$STAGING_HOME/.docker"
 ln -sf "$REAL_HOME/.colima" "$STAGING_HOME/.colima"
 
@@ -114,8 +111,7 @@ dnsmasq_conf_dir: $COMPOSE_DIR/dnsmasq
 dnsmasq_port: $STAGING_DNSMASQ
 dnsproxy_container_name: cove-staging-dnsproxy
 cove_skip_tailscale_serve: true
-cove_skip_mkcert_install: true
-mkcert_caroot_path: $REAL_CAROOT
+cove_skip_ca_install: true
 compose_project_name: cove-staging
 EOF
 
@@ -130,6 +126,7 @@ ln -sf cove.local-key.pem "$STAGING_DATA/certs/privkey.pem"
 
 # ── cove up ────────────────────────────────────────────────────────────────
 set +e
+export PATH="$UV_VENV/bin:$PATH"
 "$COVE_BIN" up --no-sudo --no-provision 2>&1 | tee -a "$LOG_DIR/cove-up.log"
 UP_RC=${PIPESTATUS[0]}
 set -e

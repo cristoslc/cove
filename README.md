@@ -52,13 +52,13 @@ cove uninstall --yes     # Destroy everything: containers, data, keychain, cache
 ```
 cove up
   ├─ batch-pull           # One biometric prompt for all 1Password refs
-  ├─ bringup              # Start Colima, mkcert TLS, /etc/hosts, docker compose up
+  ├─ bringup              # Start Colima, TLS certs, /etc/hosts, docker compose up
   ├─ bootstrap_vault      # Initialize/unseal Vault from OS keychain
   ├─ provision_vault      # Userpass user + admin policy
   └─ provision_forgejo    # Admin user, SSH key, repo, push token
 ```
 
-All data lives in `~/Documents/cove-data/`. TLS via mkcert with wildcard `*.cove` certificates. Tailscale Serve provides HTTPS access from any device on your tailnet via pf NAT forwarding (`127.0.0.1:443` → `8443`).
+All data lives in `~/Documents/cove-data/`. TLS via cove certs with wildcard `*.cove` certificates. Tailscale Serve provides HTTPS access from any device on your tailnet via pf NAT forwarding (`127.0.0.1:443` → `8443`).
 
 ## Forgejo CLI
 
