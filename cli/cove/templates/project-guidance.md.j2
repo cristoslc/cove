@@ -2,7 +2,7 @@
 
 This machine runs Cove — a local developer platform (forge, vault, CI, registry, pages). All services are offline-first.
 
-- **Forgejo** at `https://git.cove/` (TLS via nginx+mkcert). CLI: `fj` (auto-detects host from git remote).
-- **Vault** at `https://vault.cove/` (TLS via nginx+mkcert). Use `cove creds vault-get` / `cove creds vault-put` — never hardcode secrets.
-- **Prerequisites (macOS):** `brew install colima mkcert && colima start && mkcert -install`
+- **Forgejo** at `https://git.cove/` (TLS via cove certs). CLI: `fj` (auto-detects host from git remote).
+- **Vault** at `https://vault.cove/` (TLS via cove certs). Use `cove creds vault-get` / `cove creds vault-put` — never hardcode secrets.
+- **Prerequisites (macOS):** `brew install colima && colima start`
 - **Constraints:** No cloud dependencies. No internet during builds/CI. All git remotes go to Forgejo.
