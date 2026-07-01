@@ -75,10 +75,9 @@ def init(force, purge):
 
 @app.command()
 @click.option("--no-provision", is_flag=True, help="Skip Forgejo provisioning")
-@click.option("--no-sudo", is_flag=True, help="Skip sudo elevation for /etc/hosts (safe if already configured)")
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
-def up(no_provision, no_sudo, no_upgrade, log):
+def up(no_provision, no_upgrade, log):
     """Bring up cove containers and provision Forgejo.
 
     Compose dir is resolved in order: COVE_COMPOSE_DIR env, ./compose,
@@ -89,8 +88,6 @@ def up(no_provision, no_sudo, no_upgrade, log):
         cove up
 
         cove up --no-provision
-
-        cove up --no-sudo
 
         cove up --log
     """
@@ -129,11 +126,7 @@ def up(no_provision, no_sudo, no_upgrade, log):
             raise SystemExit(result.returncode)
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
-    base_cmd.extend(["-e", f"@{host_vars_file}"])
-    if not no_sudo:
-        base_cmd.append("-K")
-    else:
-        base_cmd.extend(["-e", "ansible_become=no"])
+    base_cmd.extend(["-e", f"@{host_vars_file}", "-K"])
 
     if not no_provision:
         click.echo("Pulling credentials from 1Password...")
@@ -146,7 +139,30 @@ def up(no_provision, no_sudo, no_upgrade, log):
         _run_ansible(compose_dir / "provision_vault_user.yml", "Provisioning Vault user...")
         _run_ansible(provision, "Provisioning Forgejo...")
 
+    from cove.status import check_all, print_status
+    results = check_all()
+    print_status(results)
+    if not all(r.ok for r in results):
+        raise SystemExit(1)
     click.echo("Cove is up.")
+
+
+@app.command()
+def status():
+    """Check health of cove services.
+
+    Verifies containers are running, nginx ingress responds,
+    Forgejo and Vault APIs are reachable, and DNS resolves correctly.
+
+    Examples:
+
+        cove status
+    """
+    from cove.status import check_all, print_status
+    results = check_all()
+    print_status(results)
+    if not all(r.ok for r in results):
+        raise SystemExit(1)
 
 
 @app.group()

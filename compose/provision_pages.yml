@@ -7,7 +7,9 @@
   tasks:
     - name: Check Forgejo is reachable
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/version"
+        url: "{{ forgejo_api_url }}api/v1/version"
+        headers:
+          Host: git.cove
         status_code: [200, 403]
         validate_certs: false
       register: forgejo_check
@@ -18,20 +20,22 @@
       block:
         - name: Try Forgejo health endpoint directly
           ansible.builtin.uri:
-            url: "https://git.cove/api/healthz"
+            url: "https://127.0.0.1:{{ nginx_https_port }}/api/healthz"
+            headers:
+              Host: git.cove
             status_code: 200
             validate_certs: false
           register: forgejo_direct_check
           retries: 5
           delay: 3
 
-        - name: Set forgejo_root_url to nginx proxy
+        - name: Set forgejo_api_url to nginx proxy
           ansible.builtin.set_fact:
-            forgejo_root_url: "https://git.cove/"
+            forgejo_api_url: "https://127.0.0.1:{{ nginx_https_port }}/"
 
     - name: Fail if Forgejo unreachable
       ansible.builtin.fail:
-        msg: "Forgejo not responding at {{ forgejo_root_url }} or directly on port 3000. Run bringup.yml and provision_forgejo.yml first."
+        msg: "Forgejo not responding at {{ forgejo_api_url }} or directly on port 3000. Run bringup.yml and provision_forgejo.yml first."
       when: forgejo_check is failed and forgejo_direct_check is defined and forgejo_direct_check is failed
 
     - name: Delete stale cove-provision token
@@ -93,8 +97,9 @@
 
     - name: Check for cove organization
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/orgs/cove"
+        url: "{{ forgejo_api_url }}api/v1/orgs/cove"
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
         status_code: [200, 404]
         validate_certs: false
@@ -102,9 +107,10 @@
 
     - name: Create cove organization
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/orgs"
+        url: "{{ forgejo_api_url }}api/v1/orgs"
         method: POST
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
           Content-Type: application/json
         body_format: json
@@ -119,9 +125,10 @@
 
     - name: Create Cove Pages repositories
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/orgs/cove/repos"
+        url: "{{ forgejo_api_url }}api/v1/orgs/cove/repos"
         method: POST
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
           Content-Type: application/json
         body_format: json
@@ -140,9 +147,10 @@
 
     - name: Set COVE_FQDN org-level variable for Actions
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/orgs/cove/actions/variables"
+        url: "{{ forgejo_api_url }}api/v1/orgs/cove/actions/variables"
         method: POST
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
           Content-Type: application/json
         body_format: json
@@ -155,9 +163,10 @@
 
     - name: Push action code via Forgejo API
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/repos/cove/{{ item.repo }}/contents/{{ item.file }}"
+        url: "{{ forgejo_api_url }}api/v1/repos/cove/{{ item.repo }}/contents/{{ item.file }}"
         method: PUT
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
           Content-Type: application/json
         body_format: json

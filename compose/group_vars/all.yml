@@ -10,6 +10,7 @@ forgejo_http_port: 3000
 forgejo_ssh_port: 2222
 forgejo_domain: git.cove
 forgejo_root_url: "https://git.cove/"
+forgejo_api_url: "https://127.0.0.1:{{ nginx_https_port }}/"
 forgejo_ssh_domain: git.cove
 
 # --- Vault ---
@@ -18,7 +19,7 @@ vault_image_digest: "sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a
 vault_image: "hashicorp/vault:{{ vault_image_tag }}@{{ vault_image_digest }}"
 vault_container_name: cove-vault
 vault_port: 8200
-vault_addr: "https://vault.cove"
+vault_addr: "https://127.0.0.1:{{ nginx_https_port }}"
 vault_key_shares: 5
 vault_key_threshold: 3
 vault_keystore_prefix: "cove/vault"
