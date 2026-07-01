@@ -10,6 +10,8 @@
     - name: Check Vault seal status
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
+        headers:
+          Host: vault.cove
         status_code: [200, 429, 501, 503]
         validate_certs: false
       register: vault_health
@@ -117,8 +119,10 @@
 
     - name: Complete Forgejo install
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}"
+        url: "{{ forgejo_api_url }}"
         method: POST
+        headers:
+          Host: git.cove
         body_format: form-urlencoded
         validate_certs: false
         body:
@@ -144,7 +148,9 @@
 
     - name: Wait for Forgejo to come back post-install
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/version"
+        url: "{{ forgejo_api_url }}api/v1/version"
+        headers:
+          Host: git.cove
         status_code: [200, 403]
         validate_certs: false
       register: post_install_version
@@ -226,8 +232,9 @@
 
     - name: Check whether repo exists
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/repos/{{ repo_owner }}/{{ repo_name }}"
+        url: "{{ forgejo_api_url }}api/v1/repos/{{ repo_owner }}/{{ repo_name }}"
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
         validate_certs: false
         status_code: [200, 404]
@@ -236,9 +243,10 @@
 
     - name: Create empty repo
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/user/repos"
+        url: "{{ forgejo_api_url }}api/v1/user/repos"
         method: POST
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
           Content-Type: application/json
         validate_certs: false
@@ -255,9 +263,10 @@
 
     - name: Enable autodetect manual merge on repo
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/repos/{{ repo_owner }}/{{ repo_name }}"
+        url: "{{ forgejo_api_url }}api/v1/repos/{{ repo_owner }}/{{ repo_name }}"
         method: PATCH
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
           Content-Type: application/json
         validate_certs: false
@@ -269,8 +278,9 @@
 
     - name: List existing SSH keys on Forgejo user
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/user/keys"
+        url: "{{ forgejo_api_url }}api/v1/user/keys"
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
         validate_certs: false
         return_content: true
@@ -279,9 +289,10 @@
 
     - name: Register SSH public key on Forgejo
       ansible.builtin.uri:
-        url: "{{ forgejo_root_url }}api/v1/user/keys"
+        url: "{{ forgejo_api_url }}api/v1/user/keys"
         method: POST
         headers:
+          Host: git.cove
           Authorization: "token {{ api_token }}"
           Content-Type: application/json
         validate_certs: false

@@ -55,12 +55,12 @@
         ts_ip: >-
           {{
             (ts_status.stdout | from_json).Self.TailscaleIPs[0]
-            if (ts_status.rc == 0 and (ts_status.stdout | from_json).Self.TailscaleIPs | length > 0)
+            if (ts_status.rc == 0 and (ts_status.stdout | from_json).Self.Online)
             else ansible_default_ipv4.address
           }}
 
     - name: Configure tailscale serve for HTTPS on port 443
-      when: "ts_status.rc == 0 and not (cove_skip_tailscale_serve | default(false))"
+      when: "ts_status.rc == 0 and (ts_status.stdout | default('{}') | from_json).Self.Online"
       ansible.builtin.shell: |
         set -eo pipefail
         JSON=$(tailscale serve status --json 2>/dev/null || echo '{}')

@@ -49,6 +49,8 @@
     - name: Check if Vault is open
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
+        headers:
+          Host: vault.cove
         status_code: [200, 429, 501, 503]
         validate_certs: false
       register: vault_health
@@ -105,6 +107,7 @@
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/auth"
         headers:
+          Host: vault.cove
           X-Vault-Token: "{{ vault_token }}"
         status_code: 200
         validate_certs: false
@@ -116,6 +119,7 @@
         url: "{{ vault_addr }}/v1/sys/auth/userpass"
         method: POST
         headers:
+          Host: vault.cove
           X-Vault-Token: "{{ vault_token }}"
         body_format: json
         body:
@@ -129,6 +133,7 @@
         url: "{{ vault_addr }}/v1/sys/policies/acl/{{ vault_ui_policy_name }}"
         method: POST
         headers:
+          Host: vault.cove
           X-Vault-Token: "{{ vault_token }}"
         body_format: json
         body:
@@ -144,6 +149,7 @@
         url: "{{ vault_addr }}/v1/auth/userpass/users/{{ vault_ui_username }}"
         method: POST
         headers:
+          Host: vault.cove
           X-Vault-Token: "{{ vault_token }}"
         body_format: json
         body:

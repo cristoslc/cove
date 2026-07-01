@@ -189,35 +189,14 @@ class TestCoveUpCommand:
             "subprocess.run"
         ) as mock_run, patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
-        ):
+        ), patch("cove.status.check_all") as mock_check:
             mock_run.return_value.returncode = 0
+            mock_check.return_value = []
 
-            cove.cli.up.callback(no_provision=True, no_sudo=False, no_upgrade=True, log=False)
+            cove.cli.up.callback(no_provision=True, no_upgrade=True, log=False)
 
             args_list = [str(a) for a in mock_run.call_args[0][0]]
             assert "-K" in args_list, "cove up must pass -K to ansible-playbook"
-
-    def test_no_sudo_omits_ask_pass(self, tmp_path, monkeypatch):
-        compose_sub = tmp_path / "compose"
-        compose_sub.mkdir()
-        (compose_sub / "inventory.yml").write_text("---\n")
-        (compose_sub / "bringup.yml").write_text("---\n")
-
-        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
-            "subprocess.run"
-        ) as mock_run, patch("click.prompt") as mock_prompt, patch(
-            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
-        ):
-            mock_run.return_value.returncode = 0
-
-            cove.cli.up.callback(no_provision=True, no_sudo=True, no_upgrade=True, log=False)
-
-            args_list = [str(a) for a in mock_run.call_args[0][0]]
-            assert "ansible_become=no" in " ".join(args_list)
-            mock_prompt.assert_not_called()
-
-            args_list = [str(a) for a in mock_run.call_args[0][0]]
-            assert "-K" not in args_list, "cove up --no-sudo must omit -K"
 
     def test_no_provision_skips_forgejo(self, tmp_path, monkeypatch):
         compose_sub = tmp_path / "compose"
@@ -229,10 +208,11 @@ class TestCoveUpCommand:
             "subprocess.run"
         ) as mock_run, patch("click.prompt", return_value="pw"), patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
-        ):
+        ), patch("cove.status.check_all") as mock_check:
             mock_run.return_value.returncode = 0
+            mock_check.return_value = []
 
-            cove.cli.up.callback(no_provision=True, no_sudo=False, no_upgrade=True, log=False)
+            cove.cli.up.callback(no_provision=True, no_upgrade=True, log=False)
             assert mock_run.call_count == 1
 
     def test_full_up_calls_all_in_correct_order(self, tmp_path, monkeypatch):
@@ -249,10 +229,11 @@ class TestCoveUpCommand:
             "subprocess.run"
         ) as mock_run, patch("click.prompt", return_value="pw"), patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
-        ):
+        ), patch("cove.status.check_all") as mock_check:
             mock_run.return_value.returncode = 0
+            mock_check.return_value = []
 
-            cove.cli.up.callback(no_provision=False, no_sudo=False, no_upgrade=True, log=False)
+            cove.cli.up.callback(no_provision=False, no_upgrade=True, log=False)
             assert mock_run.call_count == 5
 
             all_args = [mock_run.call_args_list[i][0][0] for i in range(5)]
@@ -281,6 +262,61 @@ class TestCoveUpCommand:
             assert any("provision_forgejo.yml" in p for p in call_4_args), (
                  "fifth call must be provision_forgejo.yml"
             )
+
+
+class TestCoveStatusCommand:
+    def test_status_all_ok(self, tmp_path, monkeypatch):
+        with patch("cove.status._check_containers") as mock_containers, patch(
+            "cove.status._check_nginx_ingress"
+        ) as mock_nginx, patch(
+            "cove.status._check_forgejo"
+        ) as mock_forgejo, patch(
+            "cove.status._check_vault"
+        ) as mock_vault, patch(
+            "cove.status._check_dns"
+        ) as mock_dns:
+            from cove.status import CheckResult
+            mock_containers.return_value = [
+                CheckResult(name="Forgejo", ok=True, detail="Up 2 hours"),
+                CheckResult(name="nginx", ok=True, detail="Up 2 hours"),
+                CheckResult(name="Vault", ok=True, detail="Up 2 hours (healthy)"),
+                CheckResult(name="dnsmasq", ok=True, detail="Up 2 hours"),
+                CheckResult(name="dnsproxy", ok=True, detail="Up 2 hours"),
+            ]
+            mock_nginx.return_value = CheckResult(name="nginx ingress", ok=True, detail="cove ingress ok")
+            mock_forgejo.return_value = CheckResult(name="Forgejo API", ok=True, detail="ok")
+            mock_vault.return_value = CheckResult(name="Vault API", ok=True, detail="initialized, unsealed")
+            mock_dns.return_value = CheckResult(name="DNS resolution", ok=True, detail="git.cove → 127.0.0.1")
+
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["status"])
+            assert result.exit_code == 0, result.output
+            assert "5/5" in result.output or "9/9" in result.output
+
+    def test_status_fails_on_container_down(self, tmp_path, monkeypatch):
+        with patch("cove.status._check_containers") as mock_containers, patch(
+            "cove.status._check_nginx_ingress"
+        ) as mock_nginx, patch(
+            "cove.status._check_forgejo"
+        ) as mock_forgejo, patch(
+            "cove.status._check_vault"
+        ) as mock_vault, patch(
+            "cove.status._check_dns"
+        ) as mock_dns:
+            from cove.status import CheckResult
+            mock_containers.return_value = [
+                CheckResult(name="Forgejo", ok=False, detail="Container cove-forgejo is not running",
+                            hints=["Run `docker compose ... up -d forgejo`"]),
+            ]
+            mock_nginx.return_value = CheckResult(name="nginx ingress", ok=True, detail="cove ingress ok")
+            mock_forgejo.return_value = CheckResult(name="Forgejo API", ok=True, detail="ok")
+            mock_vault.return_value = CheckResult(name="Vault API", ok=True, detail="initialized, unsealed")
+            mock_dns.return_value = CheckResult(name="DNS resolution", ok=True, detail="git.cove → 127.0.0.1")
+
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["status"])
+            assert result.exit_code != 0, "status should fail when a container is down"
+            assert "✗" in result.output
 
 
 class TestCoveDownCommand:
@@ -707,10 +743,11 @@ class TestNoUpgradeFlag:
             "subprocess.run"
         ) as mock_run, patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
-        ), patch("cove.cli.maybe_reextract") as mock_reextract:
+        ), patch("cove.cli.maybe_reextract") as mock_reextract, patch("cove.status.check_all") as mock_check:
             mock_run.return_value.returncode = 0
+            mock_check.return_value = []
             cove.cli.up.callback(
-                no_provision=True, no_sudo=False, no_upgrade=True, log=False
+                no_provision=True, no_upgrade=True, log=False
             )
             mock_reextract.assert_not_called()
 
