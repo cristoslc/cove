@@ -49,6 +49,8 @@
     - name: Wait for Vault to respond on /v1/sys/health
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
+        headers:
+          Host: vault.cove
         validate_certs: false
         # 200=initialized+unsealed+active, 429=unsealed-standby, 501=not-initialized, 503=sealed
         status_code: [200, 429, 501, 503]
@@ -66,6 +68,8 @@
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/init"
         method: POST
+        headers:
+          Host: vault.cove
         body_format: json
         body:
           secret_shares: "{{ vault_key_shares }}"
@@ -149,6 +153,8 @@
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/unseal"
         method: POST
+        headers:
+          Host: vault.cove
         body_format: json
         body:
           key: "{{ item }}"
@@ -164,6 +170,8 @@
     - name: Re-check health
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
+        headers:
+          Host: vault.cove
         status_code: [200, 429]
         validate_certs: false
       register: post_unseal_health
@@ -207,6 +215,7 @@
         url: "{{ vault_addr }}/v1/sys/mounts/secret"
         method: POST
         headers:
+          Host: vault.cove
           X-Vault-Token: "{{ vault_admin_token }}"
         body_format: json
         body:

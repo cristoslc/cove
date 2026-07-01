@@ -9,7 +9,7 @@ Coverage of the complete user flow per test-driven-design.md E2E Protocol:
   init          -> extract bundled resources
   init --force  -> re-extract even if version matches
   init --purge  -> remove installed resources
-  up --no-sudo  -> auto-init + resolve + host_vars detection (no ansible-playbook
+  up --no-provision -> auto-init + resolve + host_vars detection (no ansible-playbook
                    run; we don't bring up the actual Docker stack here)
   version       -> smoke
   idempotency   -> init twice, version file stable
@@ -138,7 +138,7 @@ class TestE2EStatelessPiiFree:
 
 
 class TestE2EHostVarsAutoDetect:
-    """Phase 4: `cove up --no-sudo` triggers host_vars detection.
+    """Phase 4: `cove up --no-provision` triggers host_vars detection.
 
     We can't run the full bringup playbook (needs Docker + sudo), but we can
     exercise the state.py detection path by importing it in the artifact venv
