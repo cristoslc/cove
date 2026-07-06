@@ -106,6 +106,59 @@ Dagu replaces the health daemon: a scheduled DAG that runs every 60s, checks eac
 
 Dagu itself is covered by `restart: unless-stopped` in Docker Compose, same as every other Cove service. No launchd needed.
 
+## Script Runtime: The Container-Within-Container Problem
+
+Dagu runs inside a Docker container. The `ghcr.io/dagucloud/dagu` image ships Alpine + the Dagu binary — no `curl`, no `openssl`, no `docker` CLI, no `cove` command. Every DAG step that references host tools or host paths needs a strategy.
+
+Three approaches:
+
+| Approach | How It Works | Pros | Cons |
+|----------|-------------|------|------|
+| **Docker step** | Each step runs in a purpose-built ephemeral container via Dagu's `container:` step type | Clean isolation, right tools per step, no custom image | Container startup overhead per step (~1s), need to share data between steps |
+| **Custom Dagu image** | Extend the Dagu image with `docker-cli`, `openssl`, `curl`, `cove` | Simple `run:` steps, no per-step overhead | Maintain a Dockerfile, image drifts from upstream |
+| **Bind-mount host binaries** | Mount `/usr/local/bin` and `/var/run/docker.sock` | No custom image | Fragile, host-specific paths, breaks on different macOS setups |
+
+**Recommendation: Docker step type for most things, custom image for the Dagu container itself.**
+
+### Docker Step Pattern
+
+Dagu supports running steps in arbitrary containers. Each step specifies its own image with the tools it needs:
+
+```yaml
+steps:
+  - id: check_forgejo
+    container:
+      image: curlimages/curl:latest
+    run: curl -sf http://forgejo:3000/api/healthz
+```
+
+This is the right pattern for Cove because:
+- **Health checks** need `curl` → `curlimages/curl` (4MB)
+- **Cert renewal** needs `openssl` + `cove` → custom `cove-tools` image or `alpine:latest` with `apk add openssl`
+- **Vault backup** needs `docker` CLI → `docker:latest` (Docker-in-Docker image with CLI)
+- **No single image** needs all tools — each step pulls only what it needs
+
+### Data Sharing Between Steps
+
+Dagu passes data between steps via:
+- **`stdout` captured as step output** — for simple values (status, counts)
+- **Artifacts** — for files (backup tarballs, reports)
+- **Mounted volumes** — DAGs share the Dagu container's filesystem; Docker steps can mount the same host volumes
+
+For the cert renewal DAG, the cert files live on the host at `~/Documents/cove-data/certs/`. The Dagu container already mounts this path. Docker steps can mount the same path with `-v`.
+
+### Custom Dagu Image (Optional)
+
+If per-step container overhead is annoying, build a thin extension:
+
+```dockerfile
+FROM ghcr.io/dagucloud/dagu:latest
+RUN apk add --no-cache curl docker-cli openssl
+COPY --from=cove-cli /usr/local/bin/cove /usr/local/bin/cove
+```
+
+But this adds maintenance burden. Start with Docker steps; only build a custom image if the overhead proves problematic.
+
 ## First DAGs
 
 ```yaml
@@ -114,6 +167,8 @@ name: health-check
 schedule: "* * * * *"
 steps:
   - id: check_forgejo
+    container:
+      image: curlimages/curl:8
     run: curl -sf http://forgejo:3000/api/healthz
     retry_policy:
       limit: 2
@@ -121,6 +176,8 @@ steps:
     continue_on:
       failure: true
   - id: check_vault
+    container:
+      image: curlimages/curl:8
     run: curl -sf http://vault:8200/v1/sys/health
     retry_policy:
       limit: 2
@@ -128,6 +185,8 @@ steps:
     continue_on:
       failure: true
   - id: check_nginx
+    container:
+      image: curlimages/curl:8
     run: curl -sf https://nginx/api/healthz
     retry_policy:
       limit: 2
@@ -138,9 +197,7 @@ steps:
     depends: [check_forgejo, check_vault, check_nginx]
     run: |
       if [ "$DAGU_STEP_STATUS" != "success" ]; then
-        curl -X POST -H "Content-Type: application/json" \
-          -d '{"text": "Cove service degraded"}' \
-          http://ntfy.cove/alert
+        echo "Cove service degraded"
       fi
 ```
 
@@ -150,7 +207,10 @@ name: cert-renewal
 schedule: "0 6 * * *"
 steps:
   - id: check_expiry
+    container:
+      image: alpine:3.21
     run: |
+      apk add --no-cache openssl >/dev/null 2>&1
       EXPIRY=$(openssl x509 -enddate -noout -in /data/certs/cove.local.pem | cut -d= -f2)
       EXPIRY_EPOCH=$(date -d "$EXPIRY" +%s)
       NOW=$(date +%s)
@@ -159,12 +219,27 @@ steps:
       [ "$DAYS_LEFT" -lt 7 ]
     continue_on:
       failure: true
+    volumes:
+      - ~/Documents/cove-data/certs:/data/certs:ro
   - id: renew
     depends: [check_expiry]
-    run: cove certs renew
+    container:
+      image: alpine:3.21
+    run: |
+      apk add --no-cache openssl >/dev/null 2>&1
+      # regenerate cert — delegates to cove CLI via docker exec on the host
+      # or implements cert renewal inline (openssl + python)
+      echo "Cert renewal not yet implemented"
+    volumes:
+      - ~/Documents/cove-data/certs:/data/certs
   - id: restart_nginx
     depends: [renew]
+    container:
+      image: docker:28-cli
     run: docker compose -f /compose/docker-compose.yml restart nginx
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/Documents/code/cove/compose:/compose:ro
 ```
 
 ```yaml
@@ -173,13 +248,29 @@ name: vault-backup
 schedule: "0 3 * * 0"
 steps:
   - id: snapshot
+    container:
+      image: docker:28-cli
     run: |
       docker exec cove-vault vault operator raft snapshot export /tmp/vault-snapshot.snap
       tar czf /data/backups/vault-$(date +%Y%m%d).tar.gz -C /tmp vault-snapshot.snap
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/Documents/cove-data/backups:/data/backups
   - id: cleanup
     depends: [snapshot]
+    container:
+      image: alpine:3.21
     run: find /data/backups -name 'vault-*.tar.gz' -mtime +90 -delete
+    volumes:
+      - ~/Documents/cove-data/backups:/data/backups
 ```
+
+### Key Observations
+
+1. **Docker step type** means each step pulls its own image. `curlimages/curl:8` is 4MB, `alpine:3.21` is 7MB, `docker:28-cli` is 20MB. After first pull, they're cached. Startup overhead is ~1s per step.
+2. **Volume mounts** are per-step in Dagu's Docker step type. Each step that needs access to host files (certs, backups, compose files) must declare its own volumes.
+3. **`cove` CLI** is not available inside any container. Cert renewal either needs a custom image with `cove` baked in, or the DAG implements cert renewal inline (openssl commands + Python from the `cryptography` library). The latter is more portable.
+4. **`docker` CLI** in the `docker:28-cli` image talks to the host's Docker daemon via the mounted socket. `docker compose` works because the compose file is mounted at `/compose`.
 
 ## Ansible Provisioning
 
