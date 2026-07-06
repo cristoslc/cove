@@ -110,54 +110,77 @@ Dagu itself is covered by `restart: unless-stopped` in Docker Compose, same as e
 
 Dagu runs inside a Docker container. The `ghcr.io/dagucloud/dagu` image ships Alpine + the Dagu binary — no `curl`, no `openssl`, no `docker` CLI, no `cove` command. Every DAG step that references host tools or host paths needs a strategy.
 
-Three approaches:
+### Established Patterns
 
-| Approach | How It Works | Pros | Cons |
-|----------|-------------|------|------|
-| **Docker step** | Each step runs in a purpose-built ephemeral container via Dagu's `container:` step type | Clean isolation, right tools per step, no custom image | Container startup overhead per step (~1s), need to share data between steps |
-| **Custom Dagu image** | Extend the Dagu image with `docker-cli`, `openssl`, `curl`, `cove` | Simple `run:` steps, no per-step overhead | Maintain a Dockerfile, image drifts from upstream |
-| **Bind-mount host binaries** | Mount `/usr/local/bin` and `/var/run/docker.sock` | No custom image | Fragile, host-specific paths, breaks on different macOS setups |
+The ecosystem has converged on three patterns for running ops scripts from a containerized scheduler:
 
-**Recommendation: Docker step type for most things, custom image for the Dagu container itself.**
+**Pattern A: Per-step ephemeral containers** (Dagu's `container:` step type, also Ofelia's `job-run`)
 
-### Docker Step Pattern
-
-Dagu supports running steps in arbitrary containers. Each step specifies its own image with the tools it needs:
+Each step spins up a purpose-built container with exactly the tools it needs, then discards it. The scheduler talks to the Docker daemon via the mounted socket.
 
 ```yaml
 steps:
   - id: check_forgejo
     container:
-      image: curlimages/curl:latest
+      image: curlimages/curl:8
     run: curl -sf http://forgejo:3000/api/healthz
 ```
 
-This is the right pattern for Cove because:
-- **Health checks** need `curl` → `curlimages/curl` (4MB)
-- **Cert renewal** needs `openssl` + `cove` → custom `cove-tools` image or `alpine:latest` with `apk add openssl`
-- **Vault backup** needs `docker` CLI → `docker:latest` (Docker-in-Docker image with CLI)
-- **No single image** needs all tools — each step pulls only what it needs
+Pros: Clean isolation, right tools per step, no custom images to maintain. Cons: ~1s startup per step, each step pulls its image (cached after first use).
+
+**Pattern B: Shared container with `docker exec`** (Dagu's top-level `container:` field, also Ofelia's `job-exec`)
+
+All steps run inside one long-lived container via `docker exec`. The scheduler starts the container at DAG launch, runs all steps inside it, then stops it.
+
+```yaml
+container:
+  image: cove-tools:latest
+  pullPolicy: never  # pre-built, not pulled per run
+steps:
+  - id: check_expiry
+    run: openssl x509 -enddate -noout -in /data/certs/cove.local.pem
+  - id: renew
+    run: cove certs renew
+```
+
+Pros: No per-step overhead, tools available for all steps, data persists between steps naturally. Cons: Need a custom image with all tools, single image must satisfy all DAGs.
+
+**Pattern C: Dedicated tools container + shared volume** (sidecar pattern, common in K8s)
+
+A separate "tools" container runs alongside the scheduler, sharing a volume. Steps write requests to the volume, the tools container picks them up and executes them. Overkill for single-host Docker Compose.
+
+### Recommendation: Pattern A (per-step containers) for Cove
+
+Pattern A is the right fit because:
+- **No custom image to maintain** — `curlimages/curl:8` (4MB), `alpine:3.21` (7MB), `docker:28-cli` (20MB) are all off-the-shelf
+- **Each DAG uses only what it needs** — health checks don't need `openssl`, backups don't need `curl`
+- **Image cache** means the ~1s startup is a one-time cost per image per host
+- **Matches Dagu's native model** — Dagu's `container:` step type was designed for exactly this
+
+If per-step overhead becomes annoying in practice, graduate to Pattern B: a single `cove-tools` image with `curl`, `openssl`, `docker-cli`, and the `cove` CLI baked in. Build it in the Cove repo's compose pipeline so it stays in sync with the `cove` CLI version.
 
 ### Data Sharing Between Steps
 
 Dagu passes data between steps via:
 - **`stdout` captured as step output** — for simple values (status, counts)
 - **Artifacts** — for files (backup tarballs, reports)
-- **Mounted volumes** — DAGs share the Dagu container's filesystem; Docker steps can mount the same host volumes
+- **Mounted volumes** — Docker steps can mount host paths; the Dagu container's own volumes are not inherited by child containers
 
-For the cert renewal DAG, the cert files live on the host at `~/Documents/cove-data/certs/`. The Dagu container already mounts this path. Docker steps can mount the same path with `-v`.
+For Pattern A, each step that needs host files (certs, backups, compose files) declares its own volume mounts. This is verbose but explicit:
 
-### Custom Dagu Image (Optional)
-
-If per-step container overhead is annoying, build a thin extension:
-
-```dockerfile
-FROM ghcr.io/dagucloud/dagu:latest
-RUN apk add --no-cache curl docker-cli openssl
-COPY --from=cove-cli /usr/local/bin/cove /usr/local/bin/cove
+```yaml
+steps:
+  - id: check_expiry
+    container:
+      image: alpine:3.21
+    run: |
+      apk add --no-cache openssl >/dev/null 2>&1
+      openssl x509 -enddate -noout -in /data/certs/cove.local.pem
+    volumes:
+      - ~/Documents/cove-data/certs:/data/certs:ro
 ```
 
-But this adds maintenance burden. Start with Docker steps; only build a custom image if the overhead proves problematic.
+For Pattern B, the shared container mounts all needed volumes once, and all steps inherit them.
 
 ## First DAGs
 
