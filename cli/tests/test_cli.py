@@ -71,6 +71,39 @@ class TestDeploymentManifests:
             "docker_compose_v2 wait should be false to avoid sealed-Vault failures"
         )
 
+    def test_tailscale_tasks_safe_when_daemon_dead(self):
+        """All tailscale tasks must survive `tailscale status --json` returning {}."""
+        bp = COMPOSE_DIR / "bringup.yml"
+        with open(bp) as f:
+            data = yaml.safe_load(f)
+
+        tasks = data[0]["tasks"] if isinstance(data, list) else data.get("tasks", [])
+        tailscale_tasks = [
+            t for t in tasks
+            if isinstance(t, dict) and "tailscale" in (t.get("name", "") or "").lower()
+        ]
+        assert tailscale_tasks, "No tailscale tasks found"
+
+        for task in tailscale_tasks:
+            name = task.get("name", "")
+            # Every set_fact expression that accesses .Self must use | default() guard
+            expr = task.get("ansible.builtin.set_fact", {})
+            for k, v in expr.items():
+                if isinstance(v, str) and ".Self." in v:
+                    has_guard = "| default(" in v
+                    assert has_guard, (
+                        f"Task '{name}' accesses .Self without | default() guard: {v}"
+                    )
+
+            # Every when expression that accesses .Self must guard against Self is none
+            when = task.get("when")
+            if when and ".Self." in str(when):
+                when_str = str(when)
+                has_self_guard = "Self is not none" in when_str or "Self is none" in when_str
+                assert has_self_guard, (
+                    f"Task '{name}' when expression accesses .Self without 'Self is not none' guard: {when_str}"
+                )
+
     def test_provision_forgejo_has_autodetect_manual_merge(self):
         pf = COMPOSE_DIR / "provision_forgejo.yml"
         assert pf.exists(), f"provision_forgejo.yml not found at {pf}"

@@ -8,7 +8,7 @@ import click
 import pytest
 
 from cove import __version__
-from cove.stateless import resolve_compose_dir, extract_resources, ensure_init, maybe_reextract
+from cove.stateless import resolve_compose_dir, extract_resources, ensure_init, maybe_reextract, _bundled_content_hash
 
 
 class TestResolveComposeDir:
@@ -95,7 +95,9 @@ class TestExtractResources:
         target = home / ".config" / "cove" / "compose"
         with patch("cove.stateless.Path.home", return_value=home), patch(
             "cove.stateless._bundled_compose_root"
-        ) as mock_root_fn:
+        ) as mock_root_fn, patch(
+            "cove.stateless._bundled_content_hash", return_value="abc"
+        ):
             mock_root = MagicMock()
             mock_root.is_dir.return_value = True
             mock_root.iterdir.return_value = []
@@ -103,19 +105,21 @@ class TestExtractResources:
             result = extract_resources()
             assert result == target
             assert target.exists()
-            assert (target / ".version").read_text() == __version__
+            assert (target / ".version").read_text() == "abc"
 
     def test_idempotent_same_version(self, tmp_path, monkeypatch):
         home = tmp_path
         target = home / ".config" / "cove" / "compose"
         target.mkdir(parents=True)
-        (target / ".version").write_text(__version__)
+        (target / ".version").write_text("abc")
         (target / "inventory.yml").write_text("---\n")
         with patch("cove.stateless.Path.home", return_value=home), patch(
             "cove.stateless._bundled_compose_root"
         ) as mock_root_fn, patch(
             "cove.stateless.shutil.rmtree"
-        ) as mock_rmtree:
+        ) as mock_rmtree, patch(
+            "cove.stateless._bundled_content_hash", return_value="abc"
+        ):
             mock_root = MagicMock()
             mock_root.is_dir.return_value = True
             mock_root_fn.return_value = mock_root
@@ -133,7 +137,9 @@ class TestExtractResources:
             "cove.stateless._bundled_compose_root"
         ) as mock_root_fn, patch(
             "cove.stateless.shutil.rmtree", side_effect=shutil.rmtree
-        ) as mock_rmtree:
+        ) as mock_rmtree, patch(
+            "cove.stateless._bundled_content_hash", return_value="abc"
+        ):
             mock_root = MagicMock()
             mock_root.is_dir.return_value = True
             mock_root.iterdir.return_value = []
@@ -141,7 +147,7 @@ class TestExtractResources:
             result = extract_resources(force=True)
             assert result == target
             mock_rmtree.assert_called_once_with(target)
-            assert (target / ".version").read_text() == __version__
+            assert (target / ".version").read_text() == "abc"
 
     def test_raises_when_bundled_missing(self, tmp_path, monkeypatch):
         home = tmp_path
@@ -161,26 +167,30 @@ class TestEnsureInit:
         target = home / ".config" / "cove" / "compose"
         with patch("cove.stateless.Path.home", return_value=home), patch(
             "cove.stateless._bundled_compose_root"
-        ) as mock_root_fn:
+        ) as mock_root_fn, patch(
+            "cove.stateless._bundled_content_hash", return_value="abc"
+        ):
             mock_root = MagicMock()
             mock_root.is_dir.return_value = True
             mock_root.iterdir.return_value = []
             mock_root_fn.return_value = mock_root
             result = ensure_init()
             assert result == target
-            assert (target / ".version").read_text() == __version__
+            assert (target / ".version").read_text() == "abc"
 
     def test_ensures_init_noop_if_present(self, tmp_path, monkeypatch):
         home = tmp_path
         target = home / ".config" / "cove" / "compose"
         target.mkdir(parents=True)
-        (target / ".version").write_text(__version__)
+        (target / ".version").write_text("abc")
         (target / "inventory.yml").write_text("---\n")
         with patch("cove.stateless.Path.home", return_value=home), patch(
             "cove.stateless._bundled_compose_root"
         ) as mock_root_fn, patch(
             "cove.stateless.extract_resources"
-        ) as mock_extract:
+        ) as mock_extract, patch(
+            "cove.stateless._bundled_content_hash", return_value="abc"
+        ):
             mock_root_fn.return_value = MagicMock()
             result = ensure_init()
             assert result == target
@@ -190,10 +200,12 @@ class TestMaybeReextract:
     def test_no_reextract_when_version_matches(self, tmp_path, monkeypatch):
         target = tmp_path / ".config" / "cove" / "compose"
         target.mkdir(parents=True)
-        (target / ".version").write_text(__version__)
+        (target / ".version").write_text("abc")
         with patch("cove.stateless.Path.home", return_value=tmp_path), patch(
             "cove.stateless.extract_resources"
-        ) as mock_extract:
+        ) as mock_extract, patch(
+            "cove.stateless._bundled_content_hash", return_value="abc"
+        ):
             result = maybe_reextract()
             assert result is False
             mock_extract.assert_not_called()
@@ -204,7 +216,9 @@ class TestMaybeReextract:
         (target / ".version").write_text("0.0.1")
         with patch("cove.stateless.Path.home", return_value=tmp_path), patch(
             "cove.stateless.extract_resources"
-        ) as mock_extract:
+        ) as mock_extract, patch(
+            "cove.stateless._bundled_content_hash", return_value="abc"
+        ):
             result = maybe_reextract()
             assert result is True
             mock_extract.assert_called_once_with(force=True)

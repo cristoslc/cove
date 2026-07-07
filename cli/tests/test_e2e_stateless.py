@@ -45,10 +45,10 @@ class TestE2EStatelessInit:
         assert target.exists(), "compose dir not created"
         assert (target / "inventory.yml").exists(), "inventory.yml missing"
         assert (target / ".version").exists(), ".version stamp missing"
-        # .version content matches the built version
-        r2 = cove_run(["version"])
-        assert r2.returncode == 0
-        assert (target / ".version").read_text().strip() in r2.stdout
+        # .version content is a content hash, not a version string
+        assert len((target / ".version").read_text().strip()) == 64, (
+            ".version should be a 64-char SHA-256 hex digest"
+        )
 
     def test_init_is_idempotent(self, cove_run, cove_home):
         cove_run(["init"])
@@ -100,8 +100,7 @@ class TestE2EStatelessVersion:
         r = cove_run(["init"])
         assert r.returncode == 0, r.stderr
         vfile = (target / ".version").read_text().strip()
-        r2 = cove_run(["version"])
-        assert vfile in r2.stdout, "version stamp not refreshed on mismatch"
+        assert len(vfile) == 64, "version stamp should be a 64-char SHA-256 hex digest"
 
 
 class TestE2EStatelessPiiFree:

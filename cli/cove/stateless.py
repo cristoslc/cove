@@ -1,5 +1,6 @@
 """Resource resolution and extraction for stateless CLI."""
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -13,6 +14,24 @@ from cove import __version__
 
 def _config_compose_dir() -> Path:
     return Path.home() / ".config" / "cove" / "compose"
+
+
+def _bundled_compose_root():
+    return files("cove.resources") / "compose"
+
+
+def _bundled_content_hash() -> str:
+    """SHA-256 of all bundled resource file contents (sorted by path)."""
+    h = hashlib.sha256()
+    root = Path(str(_bundled_compose_root()))
+    if not root.is_dir():
+        return ""
+    paths = sorted(
+        p for p in root.rglob("*") if p.is_file() and p.name != ".version"
+    )
+    for p in paths:
+        h.update(p.read_bytes())
+    return h.hexdigest()
 
 
 def resolve_compose_dir() -> Path:
@@ -48,10 +67,6 @@ def resolve_compose_dir() -> Path:
     )
 
 
-def _bundled_compose_root():
-    return files("cove.resources") / "compose"
-
-
 def extract_resources(force: bool = False) -> Path:
     target = _config_compose_dir()
     src_root = _bundled_compose_root()
@@ -60,12 +75,13 @@ def extract_resources(force: bool = False) -> Path:
             "Bundled compose resources not found. Reinstall cove-cli."
         )
 
+    content_hash = _bundled_content_hash()
     version_file = target / ".version"
     if (
         not force
         and target.exists()
         and version_file.exists()
-        and version_file.read_text().strip() == __version__
+        and version_file.read_text().strip() == content_hash
     ):
         return target
 
@@ -75,7 +91,7 @@ def extract_resources(force: bool = False) -> Path:
 
     for item in src_root.iterdir():
         _copy_resource(item, target)
-    version_file.write_text(__version__)
+    version_file.write_text(content_hash)
     return target
 
 
@@ -91,7 +107,7 @@ def ensure_init() -> Path:
     target = _config_compose_dir()
     version_file = target / ".version"
     if target.exists() and version_file.exists():
-        if version_file.read_text().strip() == __version__:
+        if version_file.read_text().strip() == _bundled_content_hash():
             return target
     return extract_resources()
 
@@ -101,7 +117,7 @@ def maybe_reextract() -> bool:
     version_file = target / ".version"
     if not target.exists() or not version_file.exists():
         return False
-    if version_file.read_text().strip() != __version__:
+    if version_file.read_text().strip() != _bundled_content_hash():
         extract_resources(force=True)
         return True
     return False
