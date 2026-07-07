@@ -90,20 +90,50 @@ Applying ADR-016 to Dagu:
 
 The residual risk is sustainability: if dagucloud abandons the project, a fork depends on community capacity that exists but isn't large. Mitigation: the exit cost is low (YAML DAGs, file-backed state, no DB), so even a worst-case rugpull is a migration to a different tool, not a data-extraction crisis.
 
-### T8 — Shape 1 vs Shape 2 for Dagu in Tier 2 (open)
+### T8 — Shape 1 vs Shape 2 for Dagu in Tier 2 (resolved)
 
-Dagu clears Tier 2, but the shape question (T1) is still open. The essential use case is per-project ("runs with the project's own tooling"). A single Cove-hosted Dagu instance serving multiple projects would need all project directories mounted into the Dagu container — a scope/blast-radius question.
+Dagu clears Tier 2. The shape question resolved via a **phased approach**: Shape 2 (shared `dagu.cove`) for MVP, graduation to Shape 1 (per-project `cove-dagu` images) when `*.apps.cove` machinery is ready.
 
-Two options:
-- **(a) Shape 1 — Cove ships a `cove-dagu` image.** Projects that want the dashboard DX pull it into their own compose stack, with their own repo mounted. No Cove-hosted instance. Lock-in is per-project and opt-in.
-- **(b) Shape 2 — Cove hosts a Dagu instance as an extended service.** DAGs for multiple projects coexist, each with `working_dir` pointing at a mounted project path. The dashboard is shared. But: the Dagu container has access to all project paths, and a misconfigured DAG could touch another project's files.
+**Resolution path:**
 
-The parley record flagged this as blocked on T5/T6; those are now resolved (ADR-016). The remaining question is whether the operator wants a shared dashboard (Shape 2, one place to see all scheduled jobs across projects) or per-project dashboards (Shape 1, each project's Dagu is isolated).
+1. **MVP — Shape 2 (shared `dagu.cove`, API-only).** Cove hosts one Dagu instance at `dagu.cove`. All DAGs are API-only `run:` steps using cove-tools (curl, openssl, jq, python3, mc) — trigger Forgejo Actions, read/write MinIO objects, query Vault, call service HTTP APIs. No project filesystems mounted. Blast-radius risk is contained because DAGs can't touch the filesystem — they can only call HTTP endpoints.
+
+2. **Graduation — Shape 1 (per-project `cove-dagu` images).** When `*.apps.cove` is built (hyphen-based naming: `dagu-<project>.apps.cove`, single-label wildcard cert `*.apps.cove`, dnsmasq `address=/.apps.cove/127.0.0.1`, nginx routing per project), projects that need file-level scripting pull `cove-dagu:latest` into their own compose stack.
+
+**Script isolation via `.cove/dagu/` bind-mount convention:**
+
+Each project keeps Dagu scripts in `.cove/dagu/` (versioned with the project, reviewed in same PRs). The shared Dagu container mounts each project's `.cove/dagu/` subdir read-only at a per-project path:
+
+```yaml
+volumes:
+  - /Users/cristos/Documents/code/myapp/.cove/dagu:/dags/myapp:ro
+  - /Users/cristos/Documents/code/otherapp/.cove/dagu:/dags/otherapp:ro
+```
+
+This gives:
+- Scripts versioned with the project (in `.cove/dagu/`, reviewed in same PRs)
+- Dagu can execute them (in `dags_dir`, where Dagu looks)
+- No project data access (only `.cove/dagu/` is mounted, not `src/`, `data/`, `db/`)
+- No cross-project file access (each project's mount is at a distinct path)
+- Read-only mount → Dagu can execute the script but can't modify it
+
+A script that needs project files fetches them via Forgejo's raw file API: `curl -s https://git.cove/myowner/myapp/raw/branch/main/config.json`. Filesystem writes target MinIO objects (`mc cp /tmp/report.json s3/myapp-bucket/reports/`), not the project tree.
+
+**Index/state for scheduled jobs:** Dagu's run history *is* the index — every DAG run records stdout, outputs, artifacts, and logs in the UI. For cursors/incremental positions, Dagu's `persistent_state:` per-DAG JSON object survives across runs. For manifest-style records, the DAG appends to a MinIO object (`s3/myapp-backups/index.jsonl`). No external index DB needed.
+
+**Convention is stable across both shapes:** When a project graduates to its own `cove-dagu` container (Shape 1), the same `.cove/dagu/` dir is used — just mounted read-write alongside the full project. Same YAML, same scripts, no migration. Exit cost is low (YAML DAGs, file-backed state, no DB).
+
+**Dagu multitenancy note:** Dagu does NOT support native multitenancy. RBAC is user-level (who can edit which DAGs), not project-level (DAGs can't isolate from each other). The `.cove/dagu/` bind-mount convention + API-only execution is the isolation mechanism, not Dagu's auth model.
+
+**Why not Shape 1 only (skip the shared MVP)?** `localhost:PORT` is hard to track across 6-12 projects. `*.apps.cove` is a platform feature that benefits all per-project services, not just Dagu — building it for Dagu alone would be tail-wagging-the-dog. The shared `dagu.cove` MVP gives one dashboard for all scheduled work while `*.apps.cove` matures as a separate platform sashay.
+
+**Why not Shape 2 only (no graduation)?** Projects that need file-level scripting (run `./scripts/migrate.sh` in the project dir) can't do it in the shared container without mounting all project dirs — which destroys blast-radius isolation. Shape 1 is the escape hatch for projects that outgrow API-only.
 
 ## Record
 
 - T1-T2 resolved early in this parley session.
 - T3-T6 resolved through ADR-016 (the two-tier rubric) and the fork-safety compound-signal calibration.
 - T7 resolved: Dagu clears the Tier 2 bar. Primary factors pass; fork-safety passes weakly (GPLv3 solid, community is the question mark but agentic-coding era lowers the threshold); secondary factors weak but not disqualifying.
-- T8 open: Shape 1 (cove-dagu image, per-project) vs Shape 2 (Cove-hosted instance, shared dashboard). Blocked on operator preference for shared vs per-project dashboard UX.
+- T8 resolved: **Phased approach.** MVP = Shape 2 (shared `dagu.cove`, API-only, `.cove/dagu/` bind-mount convention for script isolation). Graduation = Shape 1 (per-project `cove-dagu` images) when `*.apps.cove` is built. Dagu run history is the index; `persistent_state` and MinIO objects for cursors/manifests. Convention stable across both shapes.
 - ADR-015 superseded by ADR-016 (`a58b380`).
+- Parley closed: all tensions resolved.
