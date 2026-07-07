@@ -1,0 +1,15 @@
+# Cove MinIO credential seed for 1Password.
+# Run: cove creds 1p-bulk-write compose/seeds/minio-creds.yaml --execute
+# Copy to minio-creds.yaml and edit values for your host.
+
+items:
+  - title: "MinIO {{ hostname }} Root"
+    vault: Private
+    category: login
+    fields:
+      username: "cove-minio"
+      password: "{{generate:32}}"
+      host[text]: "{{ hostname }}"
+      url[text]: "https://s3.cove/"
+      console_url[text]: "https://console.s3.cove/"
+      purpose[text]: "MinIO root credentials for Cove stack on {{ hostname }}"
