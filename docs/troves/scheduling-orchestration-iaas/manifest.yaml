@@ -1,0 +1,61 @@
+id: scheduling-orchestration-iaas
+created: 2026-07-06
+tags:
+  - scheduling
+  - workflow-orchestration
+  - iaas
+  - portability
+  - cron
+  - cncf
+  - serverless-workflow
+  - tosca
+  - temporal
+  - dagu
+  - airflow
+  - argo
+sources:
+  - slug: xgrid-temporal-airflow-argo
+    url: https://www.xgrid.co/resources/temporal-vs-airflow-vs-argo-workflow-orchestration/
+    fetched: 2026-07-06
+  - slug: akka-temporal-alternatives
+    url: https://akka.io/blog/temporal-alternatives
+    fetched: 2026-07-06
+  - slug: bytebase-oss-orchestration
+    url: https://www.bytebase.com/blog/top-open-source-workflow-orchestration-tools/
+    fetched: 2026-07-06
+  - slug: uplift-cloud-scheduling-services
+    url: https://upliftorch.com/tools/cron-parser/en/blog/cron-cloud-services.html
+    fetched: 2026-07-06
+  - slug: cncf-serverless-workflow-project
+    url: https://www.cncf.io/projects/serverless-workflow/
+    fetched: 2026-07-06
+  - slug: serverless-workflow-spec-readme
+    url: https://github.com/serverlessworkflow/specification/blob/main/README.md
+    fetched: 2026-07-06
+  - slug: serverless-workflow-io
+    url: https://serverlessworkflow.io/
+    fetched: 2026-07-06
+  - slug: automatiko-serverless-vs-bpmn
+    url: https://blog.automatiko.io/2022/05/15/serverless-vs-bpmn.html
+    fetched: 2026-07-06
+  - slug: oasis-tosca-spec
+    url: https://docs.oasis-open.org/tosca/TOSCA/v1.0/TOSCA-v1.0.html
+    fetched: 2026-07-06
+  - slug: oasis-tosca-tc
+    url: https://www.oasis-open.org/committees/tc_home.php?wg_abbrev=tosca
+    fetched: 2026-07-06
+  - slug: wikipedia-tosca
+    url: https://en.wikipedia.org/wiki/OASIS_TOSCA
+    fetched: 2026-07-06
+  - slug: k8s-cronjob-docs
+    url: https://kubernetes.io/docs/concepts/workloads/controllers/cron-jobs/
+    fetched: 2026-07-06
+  - slug: sma-replace-k8s-cronjob
+    url: https://smatechnologies.com/blog/replace-kubernetes-cronjob-scheduler
+    fetched: 2026-07-06
+  - slug: deepwiki-serverless-workflow
+    url: https://deepwiki.com/serverlessworkflow/specification
+    fetched: 2026-07-06
+  - slug: gillesbarbier-serverless-workflow-dsl
+    url: https://gillesbarbier.medium.com/understanding-the-serverless-workflow-1-0-dsl-6e874a1fd511
+    fetched: 2026-07-06
