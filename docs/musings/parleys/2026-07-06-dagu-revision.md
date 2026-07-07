@@ -9,18 +9,13 @@ status: in_progress
 
 ## Opening Position
 
-The musing proposes adding Dagu to the Cove compose stack as a script scheduler, with a custom Docker API proxy to enable safe `container:` step spawning without the lethal trifecta of raw socket access. Dagu is positioned as infrastructure (scheduling), not a Cove manager — it calls HTTP APIs, doesn't restart containers.
+The musing proposes adding Dagu to the Cove compose stack as **platform infrastructure** — a scheduling service available to the operator and to user apps, alongside Forgejo, Vault, MinIO, and ntfy. Dagu is not a Cove manager. It does not ship Cove-specific DAGs, does not restart Cove containers, does not monitor Cove health. Cove ships the empty service; the operator/user writes their own DAGs.
 
-The architecture is clean on paper but has a circular dependency at its core: the DAGs need to *store* their outputs (backups, cert renewals) but the proxy strips all host mounts. The musing hand-waves this as "upload to Forgejo releases, S3-compatible storage, or a Cove backup API endpoint" — none of which exist.
+This framing emerged during the parley. The original musing positioned Dagu as a Cove manager (health checks, backups, cert renewal as Cove-shipped DAGs) with a Docker API proxy for safe `container:` step spawning. Both of those were rejected — Dagu is platform infra, and it runs `run:` steps inside a custom cove-tools image with no Docker socket access at all.
 
 ## Tension Backlog
 
-1. **Output storage circular dependency** — DAGs produce data (Vault snapshots, backups) but can't write to host paths. No backup target exists. *(raising first)*
-2. **Proxy complexity vs. Pattern B** — Do we need `container:` steps (and the proxy) at all, or does a custom cove-tools image with `run:` steps suffice?
-3. **Health checks without recovery** — Dagu detects+notifies but can't self-heal. What's the actual value of detect-only health checks?
-4. **Network egress from spawned containers** — Proxy blocks mounts but not outbound network. A compromised Dagu can exfiltrate via network.
-5. **cove-tools portability claim** — Claimed reusable in swain-box, but swain-box is a VM with no Docker.
-6. **Cert check fidelity** — `openssl s_client` checks the live served cert, not the stored cert file. Different failure modes.
+All tensions raised during the parley are resolved below. No open tensions remain.
 
 ## Tensions
 
@@ -47,9 +42,9 @@ DAGs push outputs to MinIO via S3 API. This also resolves T2 (no proxy needed) �
 ### T3: Health checks without recovery
 
 **Raised:** 2026-07-06
-**Status:** open
+**Status:** resolved (moot)
 
-Dagu detects+notifies but can't self-heal (no socket access). What's the actual value of detect-only health checks? Notifications from a container can't reach macOS Notification Center. Options: ntfy webhook, email, MinIO webhook, or a Cove status API that `cove status` reads. Need to define the notification path.
+**Resolution:** This tension was based on the stale framing where Dagu manages Cove health. Dagu is platform infra, not a Cove manager. If the operator wants health monitoring via Dagu, they write their own health-check DAG that calls Cove HTTP APIs and publishes alerts to ntfy. That's a user workflow, not Cove infrastructure. The notification path (ntfy) was resolved in T8.
 
 ---
 
@@ -65,18 +60,18 @@ No spawned containers — cove-tools runs as a single container with no socket a
 ### T5: cove-tools portability claim
 
 **Raised:** 2026-07-06
-**Status:** open
+**Status:** resolved (deferred)
 
-cove-tools claimed reusable in swain-box. swain-box is a VM with no Docker. For cove-tools to work there, either Docker gets installed in the VM or cove-tools ships as a native package. The image is portable; the *consumption* path isn't. Defer until swain-box actually needs it.
+cove-tools claimed reusable in swain-box. swain-box is a VM with no Docker. For cove-tools to work there, either Docker gets installed in the VM or cove-tools ships as a native package. The image is portable; the *consumption* path isn't. Defer until swain-box actually needs it — not a blocker for the Dagu sashay.
 
 ---
 
 ### T6: Cert check fidelity
 
 **Raised:** 2026-07-06
-**Status:** open
+**Status:** resolved (moot)
 
-`openssl s_client` checks the live served cert, not the stored cert file. Different failure modes (nginx serving a stale cert vs. cert file on disk being expired). Which matters for Cove? Probably the live cert, but worth confirming.
+This tension was based on the stale framing where Cove ships a cert-renewal DAG. Dagu is platform infra, not a Cove manager. If the operator wants cert monitoring via Dagu, they write their own DAG. The fidelity of `openssl s_client` vs filesystem cert checks is a user workflow concern, not a Cove architecture decision.
 
 ---
 
@@ -123,62 +118,43 @@ Key finding from the diagrams: MVP and v1 are identical (no phasing needed withi
 ### T11: Credential bootstrapping — Vault token to snapshot Vault
 
 **Raised:** 2026-07-06
-**Status:** open
+**Status:** resolved
 
-The vault-backup DAG needs a Vault token with snapshot capability. The musing says Dagu fetches secrets from Vault via its built-in Vault secret provider. But:
+**Resolution:** Bootstrap credentials (Vault snapshot token, MinIO root creds) live in `compose/.env`, not in Vault. Dagu reads them as environment variables. No circular dependency — Dagu doesn't need Vault to be up to read its credentials. Dagu does routine snapshots, not disaster recovery. If Vault is down, backup fails, ntfy alerts, operator restores from last good snapshot in MinIO. Explicit failure mode, not implicit.
 
-1. Vault tokens aren't stored in Vault by default — you have to put them there.
-2. If Vault is sealed, Dagu can't read the token from Vault to snapshot Vault.
-3. If Vault is down, the backup DAG fails — which is exactly when you'd want a backup.
-
-This is a credential bootstrapping circular dependency. The token that lets Dagu back up Vault can't come from Vault if Vault is the thing being backed up.
-
-Same class of problem as T12 (MinIO credentials stored in Vault, Dagu needs Vault to read them to upload the Vault snapshot).
-
-Options:
-- Store the Vault snapshot token in an env var or file mounted into the Dagu container (not in Vault itself)
-- Use Vault's root token (stored in OS keychain) — but Dagu is in a container, can't read keychain
-- Accept that Dagu can only back up Vault when Vault is healthy (not a disaster recovery tool, just a routine snapshot tool)
-
-The last option is probably the right one: Dagu does *routine* snapshots, not disaster recovery. If Vault is down, the snapshot fails, ntfy alerts, and the operator restores from the last successful snapshot. That's a reasonable failure mode. But it should be explicit, not implicit.
+Separate musing written: `docs/musings/cove-secrets-in-keychain.md` — keychain replaces `.env` for all Cove secrets. Dagu sashay uses existing `.env` pattern; keychain migration is a separate sashay.
 
 ---
 
 ### T12: MinIO credentials — same bootstrapping problem
 
 **Raised:** 2026-07-06
-**Status:** open
+**Status:** resolved
 
-MinIO root credentials (`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`) need to live somewhere. If in Vault, Dagu needs Vault to read them to upload the Vault snapshot. Same circular dependency as T11.
-
-Options:
-- Store MinIO creds in an env file or `.env` (already the pattern for other compose secrets)
-- Store MinIO creds in Vault, accept that Dagu can't back up Vault if Vault is down (same resolution as T11)
-- Create a Dagu-specific MinIO service account with limited scope (write-only to a `cove-backups` bucket)
+Same resolution as T11. MinIO root creds in `.env`. Dagu reads them as env vars. No Vault dependency for MinIO access.
 
 ---
 
 ### T13: ntfy auth for MVP
 
 **Raised:** 2026-07-06
-**Status:** open
+**Status:** resolved
 
-ntfy can run authless behind nginx TLS for a single-operator stack. But if it's platform infra for `*.app.cove`, per-topic tokens need to exist. Is authless acceptable for MVP, or should we set up token auth from day 1 to avoid a security debt accrual?
+**Resolution:** Authless for MVP, with explicit note that per-topic tokens are required before any `*.app.cove` app uses ntfy. The MVP threat model is local network eavesdropping — if you're on the same WiFi, you can read ntfy topics. But you can also read all Cove HTTP traffic without TLS pinning, so ntfy isn't the weakest link. Not worth the friction (bootstrap tokens, UI auth prompts) for a single-operator localhost stack.
+
+Also resolved: ntfy is justified, not scope creep. Forgejo can create alerts (issues, webhooks) but can't deliver push notifications to phone/desktop outside the browser. ntfy's cross-platform push (phone app, desktop PWA) fills a gap Forgejo doesn't cover.
 
 ---
 
 ### T14: DAGs — host-mounted or version-controlled?
 
 **Raised:** 2026-07-06
-**Status:** open
+**Status:** resolved (moot)
 
-`~/Documents/cove-data/dagu/dags/` is host-mounted into the Dagu container. The host can write DAGs that Dagu runs. Is this the intended workflow (operator edits DAGs directly), or should DAGs be version-controlled in a Forgejo repo and synced into the container?
+**Resolution:** This tension was based on a stale framing where Cove ships "official DAGs" (health check, backup, cert renewal) that manage Cove itself. That framing is dead — Dagu is platform infra, not a Cove manager. Cove provisions the empty `dags/` directory and the Dagu service. The operator/user writes their own DAGs. Cove never touches them. Same model as Forgejo: Cove ships the service, the user puts repos in it.
 
-Host-mounted: simple, fast iteration, no sync step. No audit trail, no history, no review.
-Forgejo-synced: versioned, reviewable, CI-validatable. Slower iteration, needs a sync mechanism (git pull on schedule or webhook-triggered pull).
-
-For Cove ops DAGs (health check, backup, cert), version control is probably overkill. For user-app DAGs in the future state, version control matters. Defer?
+The version-control question (host-mounted vs Forgejo-synced) is a user workflow choice, not a Cove architecture decision. Some users edit DAGs directly, some sync from git. Dagu supports both. Not Cove's problem.
 
 ---
 
-(Parley in progress — tensions appended as they're raised and resolved)
+(Parley complete — all tensions resolved)
