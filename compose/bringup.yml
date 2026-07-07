@@ -46,21 +46,35 @@
       no_log: true
 
     - name: Get tailscale DNS name
-      when: ts_status.rc == 0
+      when:
+        - ts_status.rc == 0
+        - (ts_status.stdout | default('{}') | from_json).Self is not none
       ansible.builtin.set_fact:
-        ts_dns_name: "{{ (ts_status.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
+        ts_dns_name: "{{ (ts_status.stdout | default('{}') | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
 
-    - name: Get tailscale IP (fallback to LAN IP if Tailscale is down or has no IPs)
+    - name: Get tailscale IP
+      when:
+        - ts_status.rc == 0
+        - (ts_status.stdout | default('{}') | from_json).Self is not none
+        - (ts_status.stdout | default('{}') | from_json).Self.TailscaleIPs is not none
+        - (ts_status.stdout | default('{}') | from_json).Self.TailscaleIPs | length > 0
       ansible.builtin.set_fact:
-        ts_ip: >-
-          {{
-            (ts_status.stdout | from_json).Self.TailscaleIPs[0]
-            if (ts_status.rc == 0 and (ts_status.stdout | from_json).Self.Online)
-            else ansible_default_ipv4.address
-          }}
+        ts_ip: "{{ (ts_status.stdout | default('{}') | from_json).Self.TailscaleIPs[0] }}"
+
+    - name: Fallback to LAN IP if Tailscale is down or has no IPs
+      when: >
+        ts_status.rc != 0
+        or (ts_status.stdout | default('{}') | from_json).Self is none
+        or (ts_status.stdout | default('{}') | from_json).Self.TailscaleIPs is none
+        or (ts_status.stdout | default('{}') | from_json).Self.TailscaleIPs | length == 0
+      ansible.builtin.set_fact:
+        ts_ip: "{{ ansible_default_ipv4.address }}"
 
     - name: Configure tailscale serve for HTTPS on port 443
-      when: "ts_status.rc == 0 and (ts_status.stdout | default('{}') | from_json).Self.Online"
+      when:
+        - ts_status.rc == 0
+        - (ts_status.stdout | default('{}') | from_json).Self is not none
+        - (ts_status.stdout | default('{}') | from_json).Self.Online
       ansible.builtin.shell: |
         set -eo pipefail
         JSON=$(tailscale serve status --json 2>/dev/null || echo '{}')
