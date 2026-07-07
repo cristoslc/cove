@@ -16,6 +16,7 @@ from cove import op_bulk_write, vault_cache
 OP_REFS = {
     "forgejo_admin": "op://Private/Forgejo {hostname} Admin/password",
     "vault_user": "op://Private/Vault {hostname} {username}/password",
+    "minio_root": "op://Private/MinIO {hostname} Root/password",
 }
 
 HOSTNAME = platform.node().split(".")[0]
