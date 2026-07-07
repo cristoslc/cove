@@ -71,29 +71,39 @@ The operator named factors: rugpull, pricing, sustainability, governance, and a 
 
 The operator cited "n8n-level lock-in" as a personal red line. Worth pinning down what specifically about n8n constitutes unacceptable lock-in, to calibrate the rubric's thresholds. Hypothesis: n8n's lock-in is (a) visual workflow format with no portable text representation, (b) Fair-code license (not OSI-approved), (c) single-vendor with no foundation path. Dagu shares (c) but not (a) or (b). Where does the operator's line actually fall?
 
-### T7 — Dagu specifically under the extended rubric (open, blocked on T5/T6)
+### T7 — Dagu under the Tier 2 rubric (resolved)
 
-Once the rubric exists, Dagu gets evaluated:
-- **Rugpull:** single-vendor (dagucloud), GPLv3, no foundation. Higher risk than Airflow/Argo.
-- **Pricing:** managed Dagu exists but pricing not public; the project's "thousands of runs per day on one machine" positioning means self-hosting is viable at small scale.
-- **Sustainability:** active development, recent v1.x releases, but small community compared to Airflow/Argo. No published governance model. Single maintainer/company.
-- **Governance:** single-vendor. No foundation path.
-- **Exit cost:** DAGs are YAML, file-backed. Exit cost = rewriting YAML in a different format. Lower than Temporal (rewrite code + migrate DB) but higher than cron (rewrite crontab line).
-- **Lock-in surface:** the DAG format. State is file-backed JSON, exportable. Not data lock-in.
+Applying ADR-016 to Dagu:
 
-Dagu's profile under the rubric: single-vendor governance (red flag for sustainability), but low exit cost (YAML DAGs, file-backed state, no DB lock-in). Whether the operator accepts this trade is the open question.
+| Factor | Dagu's profile | Assessment |
+|---|---|---|
+| **Cost-to-graduate** | Self-hosted Dagu is the *full* feature set — RBAC, SSO, OIDC, API keys, audit logs all in the GPLv3 binary. No feature gate between self-host and cloud. Managed Dagu (gVisor on GKE) is optional. If Dagu Cloud gets expensive, you keep running the same binary on your own infra. | **Passes.** No pricing cliff. |
+| **Feature parity** | Self-host = full features. No "Community Edition" paywalling. | **Passes strongly.** |
+| **Exit cost** | DAGs are YAML, file-backed. State is JSON files. No DB. Migration cost = rewriting YAML in a different format (lower than Temporal's code+DB migration; higher than cron's crontab line). Not an opaque/proprietary format. | **Passes.** |
+| **Fork-safety (compound)** | GPLv3 (OSI-approved). Community is active but small — single company (dagucloud), no published contributor diversity numbers. Recent v1.x releases with active development. The agentic-coding era lowers the maintenance tax for a fork, but the community is small enough that a fork's sustainability is uncertain. | **Passes weakly.** The license permits a fork; the community is big enough to *plausibly* sustain one but not clearly big enough to guarantee it. This is Dagu's weakest signal. |
+| **Governance** | Single-vendor (dagucloud). No foundation involvement. No published governance model. | **Weak — secondary factor, not disqualifying.** |
+| **Community health** | Active development, recent releases, but small community compared to Airflow/Argo. No corporate users publicly listed. | **Moderate.** |
+| **Foundation path** | dagucloud has not donated anything to a foundation. | **Fails — minor factor.** |
+| **Contributor path** | No published governance/contributor model. | **Fails — minor factor.** |
 
-### T8 — Should Cove host Dagu at all, even as extended? (open, blocked on T3)
+**Verdict:** Dagu clears the Tier 2 bar. The primary factors (cost-to-graduate, feature parity, exit cost) all pass. Fork-safety passes weakly — the GPLv3 is solid, the community is the question mark, but the agentic-coding era lowers the threshold and the community is active if small. The secondary factors (governance, foundation path, contributor path) are weak but not disqualifying per the rubric — the operator explicitly said single-vendor governance is acceptable if other factors compensate.
 
-If the essential use case is per-project (T1 resolved Shape 1), then Cove hosting a Dagu instance — even as an extended service — may not fit. The question is whether a single Dagu instance can serve multiple projects with their own tooling/repositories, or whether per-project Dagu is structurally required.
+The residual risk is sustainability: if dagucloud abandons the project, a fork depends on community capacity that exists but isn't large. Mitigation: the exit cost is low (YAML DAGs, file-backed state, no DB), so even a worst-case rugpull is a migration to a different tool, not a data-extraction crisis.
 
-Dagu's execution model: DAGs run shell commands as subprocesses of the Dagu process, with the DAG's `working_dir`. A single Dagu instance *could* run DAGs for multiple projects if each DAG sets its `working_dir` to the project's path — but only if the Dagu container has access to all those project paths. In a Docker-in-Cove model, that means mounting all project directories into the Dagu container, which is a scope/blast-radius question.
+### T8 — Shape 1 vs Shape 2 for Dagu in Tier 2 (open)
 
-This tension is deferred until T5/T6 resolve (what the rubric says about Dagu) and then re-examines whether hosting fits.
+Dagu clears Tier 2, but the shape question (T1) is still open. The essential use case is per-project ("runs with the project's own tooling"). A single Cove-hosted Dagu instance serving multiple projects would need all project directories mounted into the Dagu container — a scope/blast-radius question.
+
+Two options:
+- **(a) Shape 1 — Cove ships a `cove-dagu` image.** Projects that want the dashboard DX pull it into their own compose stack, with their own repo mounted. No Cove-hosted instance. Lock-in is per-project and opt-in.
+- **(b) Shape 2 — Cove hosts a Dagu instance as an extended service.** DAGs for multiple projects coexist, each with `working_dir` pointing at a mounted project path. The dashboard is shared. But: the Dagu container has access to all project paths, and a misconfigured DAG could touch another project's files.
+
+The parley record flagged this as blocked on T5/T6; those are now resolved (ADR-016). The remaining question is whether the operator wants a shared dashboard (Shape 2, one place to see all scheduled jobs across projects) or per-project dashboards (Shape 1, each project's Dagu is isolated).
 
 ## Record
 
-- T1-T2 resolved in this parley session.
-- T3-T8 open.
-- ADR-015 recorded the IaaS graduation test for the *core* tier.
-- A new ADR (ADR-016) will supersede/refine ADR-015 to capture both tiers once the extended rubric is grillable.
+- T1-T2 resolved early in this parley session.
+- T3-T6 resolved through ADR-016 (the two-tier rubric) and the fork-safety compound-signal calibration.
+- T7 resolved: Dagu clears the Tier 2 bar. Primary factors pass; fork-safety passes weakly (GPLv3 solid, community is the question mark but agentic-coding era lowers the threshold); secondary factors weak but not disqualifying.
+- T8 open: Shape 1 (cove-dagu image, per-project) vs Shape 2 (Cove-hosted instance, shared dashboard). Blocked on operator preference for shared vs per-project dashboard UX.
+- ADR-015 superseded by ADR-016 (`a58b380`).
