@@ -120,4 +120,65 @@ Key finding from the diagrams: MVP and v1 are identical (no phasing needed withi
 
 ---
 
+### T11: Credential bootstrapping — Vault token to snapshot Vault
+
+**Raised:** 2026-07-06
+**Status:** open
+
+The vault-backup DAG needs a Vault token with snapshot capability. The musing says Dagu fetches secrets from Vault via its built-in Vault secret provider. But:
+
+1. Vault tokens aren't stored in Vault by default — you have to put them there.
+2. If Vault is sealed, Dagu can't read the token from Vault to snapshot Vault.
+3. If Vault is down, the backup DAG fails — which is exactly when you'd want a backup.
+
+This is a credential bootstrapping circular dependency. The token that lets Dagu back up Vault can't come from Vault if Vault is the thing being backed up.
+
+Same class of problem as T12 (MinIO credentials stored in Vault, Dagu needs Vault to read them to upload the Vault snapshot).
+
+Options:
+- Store the Vault snapshot token in an env var or file mounted into the Dagu container (not in Vault itself)
+- Use Vault's root token (stored in OS keychain) — but Dagu is in a container, can't read keychain
+- Accept that Dagu can only back up Vault when Vault is healthy (not a disaster recovery tool, just a routine snapshot tool)
+
+The last option is probably the right one: Dagu does *routine* snapshots, not disaster recovery. If Vault is down, the snapshot fails, ntfy alerts, and the operator restores from the last successful snapshot. That's a reasonable failure mode. But it should be explicit, not implicit.
+
+---
+
+### T12: MinIO credentials — same bootstrapping problem
+
+**Raised:** 2026-07-06
+**Status:** open
+
+MinIO root credentials (`MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`) need to live somewhere. If in Vault, Dagu needs Vault to read them to upload the Vault snapshot. Same circular dependency as T11.
+
+Options:
+- Store MinIO creds in an env file or `.env` (already the pattern for other compose secrets)
+- Store MinIO creds in Vault, accept that Dagu can't back up Vault if Vault is down (same resolution as T11)
+- Create a Dagu-specific MinIO service account with limited scope (write-only to a `cove-backups` bucket)
+
+---
+
+### T13: ntfy auth for MVP
+
+**Raised:** 2026-07-06
+**Status:** open
+
+ntfy can run authless behind nginx TLS for a single-operator stack. But if it's platform infra for `*.app.cove`, per-topic tokens need to exist. Is authless acceptable for MVP, or should we set up token auth from day 1 to avoid a security debt accrual?
+
+---
+
+### T14: DAGs — host-mounted or version-controlled?
+
+**Raised:** 2026-07-06
+**Status:** open
+
+`~/Documents/cove-data/dagu/dags/` is host-mounted into the Dagu container. The host can write DAGs that Dagu runs. Is this the intended workflow (operator edits DAGs directly), or should DAGs be version-controlled in a Forgejo repo and synced into the container?
+
+Host-mounted: simple, fast iteration, no sync step. No audit trail, no history, no review.
+Forgejo-synced: versioned, reviewable, CI-validatable. Slower iteration, needs a sync mechanism (git pull on schedule or webhook-triggered pull).
+
+For Cove ops DAGs (health check, backup, cert), version control is probably overkill. For user-app DAGs in the future state, version control matters. Defer?
+
+---
+
 (Parley in progress — tensions appended as they're raised and resolved)
