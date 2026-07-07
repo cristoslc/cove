@@ -1,9 +1,10 @@
 # ADR-015: IaaS Graduation Test for Shared Platform Services
 
-**Status:** Accepted
+**Status:** Superseded by ADR-016
 **Date:** 2026-07-06
 **Authored-by:** glm-5.2:cloud
 **Trove:** `scheduling-orchestration-iaas@6bab1f8`
+**Superseded by:** ADR-016 (Two-Tier Service Adoption Rubric) — this ADR's test is retained as the Tier 1 (core services) test specifically. See ADR-016 for the full two-tier model.
 
 ## Context
 
