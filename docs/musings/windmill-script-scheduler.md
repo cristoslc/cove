@@ -1,27 +1,26 @@
-# Dagu as Cove's Script Scheduler
+# Dagu as Cove Platform Infrastructure
 
-Adding [Dagu](https://github.com/dagucloud/dagu) (GPLv3, Go binary, file-backed, web UI) to the Cove compose stack alongside Forgejo Actions. Dagu is a lightweight workflow engine — single binary, no database, YAML DAGs, web UI, webhook triggers, built-in Vault secret provider, and an MCP server for AI agent integration.
+Adding [Dagu](https://github.com/dagucloud/dagu) (GPLv3, Go binary, file-backed, web UI) to the Cove compose stack as **scheduling infrastructure** — a platform service available to the operator and to user apps, alongside Forgejo (git/CI), Vault (secrets), MinIO (object storage), and ntfy (notifications).
 
-Dagu is **infrastructure that provides scheduling**, not a Cove manager. It calls Cove's HTTP APIs like any other client. It does not restart Cove containers, exec into them, or manage their lifecycle.
+Dagu is not a Cove manager. It does not ship Cove-specific DAGs, does not restart Cove containers, does not monitor Cove health. It provides a scheduling service. The operator writes their own DAGs; user apps write their own DAGs. Cove ships the empty service and gets out of the way.
 
-## The Gap
+## The Threshold Crossing
 
-Cove has no scheduler. No cron, no periodic task runner, no background job system. The health daemon musing (`docs/musings/cove-health-daemon.md`) identifies this for observability, but the gap is broader:
+Cove was a 5-service stack serving itself. Adding Dagu — a service that *runs jobs* — tips several latent needs over threshold simultaneously. These are platform capabilities Cove was too small to justify before, not Dagu dependencies:
 
-| Need | Current State | Dagu Fit |
-|------|---------------|----------|
-| Periodic maintenance (cert renewal, data cleanup, backup) | Manual `cove up` or ad-hoc cron | Cron scheduling in YAML DAGs |
-| Webhook endpoints (GitHub mirror, external hooks) | Nothing | Per-DAG webhook tokens |
-| Multi-step workflows (backup → verify → notify) | Nothing | YAML DAGs with dependencies, retries, approvals |
-| Long-running background jobs | Nothing | Scheduler + executor in one binary |
-| Secret access for scripts | Vault (manual) | Built-in Vault secret provider |
-| AI agent workflow control | Nothing | Built-in MCP server |
+| Capability | Service | Bootstrapped By | Available To |
+|-----------|---------|----------------|-------------|
+| Scheduled jobs | Dagu | Dagu itself | Cove internals, user apps |
+| Object storage | MinIO | Dagu backup workflows | Cove internals, user apps |
+| Push notifications | ntfy | Dagu alert workflows | Cove internals, user apps |
+
+All three land together because they're interdependent: Dagu needs MinIO for storage and ntfy for notifications. MinIO and ntfy are co-equal platform services, not Dagu dependencies. They serve all Cove services and will serve `*.app.cove` user apps in the future.
 
 ## Boundary with Forgejo Actions
 
 Forgejo Actions is CI/CD: build, test, deploy, triggered by `push`, `pull_request`, `schedule`. Ephemeral containers, checked out from git, reports status to PRs.
 
-Dagu is operational scripting: periodic, event-driven, or on-demand execution of scripts that interact with infrastructure, databases, and APIs.
+Dagu is operational scripting: periodic, event-driven, or on-demand execution of scripts that interact with infrastructure, databases, and APIs. The operator writes DAGs; Dagu schedules and runs them.
 
 **Boundary:** "Does this need to report back to a PR or commit status?" → Actions. "Does this need a schedule, webhook, or web UI?" → Dagu.
 
@@ -37,71 +36,7 @@ Dagu is operational scripting: periodic, event-driven, or on-demand execution of
 | License | AGPLv3 + proprietary features | GPLv3 |
 | Auto-generated UIs | Yes (Windmill's killer feature) | No (typed param forms only) |
 
-Windmill's auto-generated UIs are powerful, but Cove's ops scripts (cert renewal, backup, health check) don't need UIs — they need reliable scheduling, logging, and notifications. Dagu covers that without Postgres.
-
-## Docker Socket: The Lethal Trifecta
-
-Mounting the raw Docker socket into a container gives it root on the host. An attacker who compromises Dagu (or a DAG) can mount any host path into a new container, exec into any other container (including Vault), or pivot to the host. This is the documented attack path for any container with socket access — not hypothetical.
-
-**Dagu does not get raw socket access.** Instead, a custom Docker API proxy sits between Dagu and the Docker daemon. The proxy enables Dagu's `container:` step type (spawning ephemeral tool containers) while blocking the dangerous parts.
-
-### Docker API Proxy
-
-~100 lines of Go. An HTTP server that proxies to the Unix socket with path/method filtering and request body sanitization.
-
-**Allowed (ephemeral container lifecycle for `container:` steps):**
-- `POST /containers/create` — **strip `Binds`, `Mounts`, `Volumes` from request body** (no host path mounts)
-- `POST /containers/{id}/start`
-- `POST /containers/{id}/wait`
-- `GET /containers/{id}/logs`
-- `DELETE /containers/{id}`
-- `GET /containers/json` — filtered to containers with a `dagu-` prefix
-- `GET /images/json` — list available images
-- `POST /images/{name}/tag` — tag images
-
-**Blocked (everything else):**
-- `POST /containers/{existing}/restart` or `/stop` — can't touch existing containers
-- `POST /containers/{existing}/exec` — can't exec into running containers
-- `POST /containers/create` with `Binds`/`Mounts` — can't mount host paths (the lethal trifecta vector)
-- `POST /images/create` — can't pull arbitrary images (only pre-pulled or from Cove registry)
-- `GET /containers/json` for non-`dagu-` containers — can't enumerate other containers
-- Everything else: 403
-
-The key defense is stripping mounts from create requests. A compromised Dagu can spawn a container with `alpine:3.21` and `curl`, but it can't mount `/` or `/etc` or `~/.ssh` into it. The host-path-to-root attack chain is broken.
-
-```yaml
-# compose
-dagu:
-  volumes:
-    - ~/Documents/cove-data/dagu:/data
-    # NO raw socket mount
-  environment:
-    DOCKER_HOST: tcp://docker-proxy:2375  # talk to proxy, not socket
-
-docker-proxy:
-  build: ./docker-proxy
-  container_name: cove-docker-proxy
-  volumes:
-    - /var/run/docker.sock:/var/run/docker.sock:ro
-  networks:
-    - cove
-  restart: unless-stopped
-  mem_limit: 16m
-```
-
-## Script Runtime: No Host Access, HTTP-Only
-
-Dagu's `container:` step type spawns ephemeral tool containers via the proxy. These containers have **no host mounts** (stripped by the proxy). They can only reach other services via the Docker network.
-
-| Task | How It Works | Host Access Needed? |
-|------|-------------|:---:|
-| Health check | `curl http://forgejo:3000/api/healthz` | No |
-| Vault backup | `curl -H "X-Vault-Token: ..." http://vault:8200/v1/sys/storage/raft/snapshot -o /tmp/snap` | No |
-| Forgejo backup | Forgejo API `POST /api/v1/dump` | No |
-| Cert expiry check | Cert fetched via Cove API, not filesystem | No |
-| Notifications | Webhook/ntfy/email | No |
-
-**Data flows via HTTP APIs, not filesystem mounts.** The proxy strips mounts, so DAGs can't read host files directly. Any data a DAG needs comes through an API endpoint. This is a deliberate constraint — it makes Dagu safe to run untrusted workflows.
+Windmill's auto-generated UIs are powerful but unnecessary for a scheduling service. Dagu covers the use case without Postgres.
 
 ## Docker Compose
 
@@ -115,212 +50,123 @@ dagu:
     DAGU_PORT: 8080
     DAGU_LOG_FORMAT: json
     DAGU_AUTH_MODE: none  # behind nginx with TLS; switch to builtin if exposed
-    DOCKER_HOST: tcp://docker-proxy:2375
   volumes:
     - ~/Documents/cove-data/dagu:/data
-    # NO raw socket mount — proxy only
   networks:
     - cove
   restart: unless-stopped
   mem_limit: 64m
 
-docker-proxy:
-  build: ./compose/docker-proxy
-  container_name: cove-docker-proxy
+minio:
+  image: minio/minio:latest
+  container_name: cove-minio
+  command: server /data --console-address ":9001"
+  environment:
+    MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+    MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
   volumes:
-    - /var/run/docker.sock:/var/run/docker.sock:ro
+    - ~/Documents/cove-data/minio:/data
   networks:
     - cove
   restart: unless-stopped
-  mem_limit: 16m
+  mem_limit: 256m
+
+ntfy:
+  image: binwiederhier/ntfy:latest
+  container_name: cove-ntfy
+  command: serve
+  volumes:
+    - ~/Documents/cove-data/ntfy:/data
+  networks:
+    - cove
+  restart: unless-stopped
+  mem_limit: 32m
 ```
 
 Key points:
-- **File-backed state** under `~/Documents/cove-data/dagu/` — no database volume needed
-- **No raw Docker socket** — Dagu talks to the proxy, proxy talks to the socket
-- **`DAGU_HOST: 0.0.0.0`** so nginx can reach it from another container
-- **64MB memory limit** — negligible next to Forgejo/Vault
+- **No Docker socket access anywhere.** Dagu has no socket, no proxy, no `container:` step type. It runs DAGs as `run:` commands inside its own container.
+- **cove-tools is the Dagu image** (see below) — a custom image with the tools DAGs need. All DAG steps are `run:` commands in that image.
+- **MinIO writes to disk** at `~/Documents/cove-data/minio/` — objects are real files caught by regular machine backups (Time Machine, restic, etc.). No MinIO-specific backup needed.
+- **ntfy is authless for MVP** — single-operator behind TLS. Per-topic tokens required before `*.app.cove` apps use it.
 
-## nginx Route
+## cove-tools Image
+
+A custom Dagu image with the tools DAGs need: `curl`, `openssl`, `jq`, `python3`, `mc` (MinIO client). Built from the Cove repo and pushed to the Cove registry.
+
+```dockerfile
+FROM ghcr.io/dagucloud/dagu:latest
+RUN apk add --no-cache curl openssl jq python3
+# mc (MinIO client) — static binary
+RUN curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+```
+
+This image replaces the upstream Dagu image. All DAG steps run as `run:` commands inside it. No `container:` step type, no per-step ephemeral containers, no Docker socket.
+
+## nginx Routes
 
 ```
-server {
-    listen 443 ssl;
-    server_name dag.cove;
-    ssl_certificate     /certs/cove.local.pem;
-    ssl_certificate_key /certs/cove.local-key.pem;
-    location / {
-        proxy_pass http://dagu:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
+dag.cove     → dagu:8080
+s3.cove      → minio:9000
+console.s3.cove → minio:9001  (MinIO web console)
+notify.cove  → ntfy:8080
 ```
+
+## Credential Bootstrapping
+
+Bootstrap credentials (Vault snapshot token, MinIO root creds) live in `compose/.env`, not in Vault. Dagu reads them as environment variables. No circular dependency — Dagu doesn't need Vault to be up to read its credentials.
+
+This is the existing `.env` pattern Cove already uses. A separate musing (`docs/musings/cove-secrets-in-keychain.md`) proposes migrating all `.env` secrets to the macOS keychain — that's a general Cove improvement, not a Dagu dependency.
 
 ## Vault Integration
 
-Dagu has a built-in Vault secret provider. DAG steps reference secrets from Vault directly:
-
-```yaml
-steps:
-  - id: backup
-    run: ./backup.sh
-    secrets:
-      VAULT_TOKEN: vault://secret/cove/vault/token
-```
-
-Dagu connects to Vault at the internal Docker network address `http://vault:8200`.
+Dagu has a built-in Vault secret provider. DAG steps can reference secrets from Vault directly for *runtime* secrets (app credentials, API keys). The bootstrap credentials (snapshot token, MinIO creds) are in `.env` because they can't come from Vault (circular dependency when Vault is the thing being backed up).
 
 ## MCP Server
 
 Dagu exposes a built-in MCP server at `http://dagu:8080/mcp`. AI agents (Claude Code, Codex, etc.) can inspect Dagu state, preview changes, edit workflows, and control runs.
 
-## cove-tools Image
+## What Cove Ships vs. What the User Writes
 
-A custom image with the tools Dagu's DAGs need: `curl`, `openssl`, `jq`, `python3`, and potentially the `cove` CLI (if it can call Cove's HTTP API from inside a container). Built from the Cove repo and pushed to the Cove registry.
+| Cove ships | User writes |
+|-----------|-------------|
+| The Dagu service (running, configured) | DAGs (YAML workflows) |
+| The cove-tools image (tools available) | Scripts that DAGs call |
+| The empty `dags/` directory | — |
+| nginx routing to `dag.cove` | — |
+| MinIO service at `s3.cove` | Buckets, objects |
+| ntfy service at `notify.cove` | Topics, subscriptions |
 
-```dockerfile
-FROM alpine:3.21
-RUN apk add --no-cache curl openssl jq python3
-# cove CLI optional — depends on whether it works without host keychain access
-```
+Cove does not ship example DAGs, health-check DAGs, backup DAGs, or cert-renewal DAGs. Those are user workflows. The operator may choose to write DAGs that interact with Cove's APIs (Forgejo REST API, Vault HTTP API, MinIO S3 API) — that's their choice, not Cove's job.
 
-This image is used as the `container:` for steps that need tools beyond what `curlimages/curl` or `alpine` provide. Pre-pulled on `cove up` so the proxy's image-allowlist is satisfied.
+## Relationship to Health Daemon Musing
 
-## First DAGs
+Dagu does **not** replace the health daemon. The health daemon musing (`docs/musings/cove-health-daemon.md`) proposes a process that detects failures and restarts containers. Dagu can't restart containers — it has no Docker socket. If the operator wants health monitoring via Dagu, they write their own health-check DAG that calls Cove HTTP APIs and publishes alerts to ntfy. That's a user workflow, not Cove infrastructure.
 
-```yaml
-# health-check.yaml
-name: health-check
-schedule: "* * * * *"
-steps:
-  - id: check_forgejo
-    container:
-      image: curlimages/curl:8
-    run: curl -sf http://forgejo:3000/api/healthz
-    retry_policy:
-      limit: 2
-      interval_sec: 5
-    continue_on:
-      failure: true
-  - id: check_vault
-    container:
-      image: curlimages/curl:8
-    run: curl -sf http://vault:8200/v1/sys/health
-    retry_policy:
-      limit: 2
-      interval_sec: 5
-    continue_on:
-      failure: true
-  - id: check_nginx
-    container:
-      image: curlimages/curl:8
-    run: curl -sf https://nginx/api/healthz
-    retry_policy:
-      limit: 2
-      interval_sec: 5
-    continue_on:
-      failure: true
-  - id: notify_on_failure
-    depends: [check_forgejo, check_vault, check_nginx]
-    run: |
-      if [ "$DAGU_STEP_STATUS" != "success" ]; then
-        echo "Cove service degraded"
-      fi
-```
+## Future State: `*.app.cove`
 
-```yaml
-# vault-backup.yaml
-name: vault-backup
-schedule: "0 3 * * 0"
-steps:
-  - id: snapshot
-    container:
-      image: cove-tools:latest
-    run: |
-      # Fetch Vault token from Dagu's secret store
-      TOKEN="${VAULT_TOKEN}"
-      # Snapshot via HTTP API — no docker exec, no host access
-      curl -sf \
-        -H "X-Vault-Token: $TOKEN" \
-        http://vault:8200/v1/sys/storage/raft/snapshot \
-        -o /tmp/vault-snapshot.snap
-      # Upload to backup target (S3, local MinIO, or Forgejo releases)
-      echo "Snapshot saved"
-    secrets:
-      VAULT_TOKEN: vault://secret/cove/vault/token
-```
+The C4 diagrams at `docs/musings/parleys/2026-07-06-c4-diagrams.md` show the topology evolution:
 
-```yaml
-# cert-check.yaml
-name: cert-check
-schedule: "0 6 * * *"
-steps:
-  - id: check_expiry
-    container:
-      image: cove-tools:latest
-    run: |
-      # Fetch cert via Cove's API (not filesystem — proxy blocks host mounts)
-      # If Cove exposes a cert status endpoint, use it
-      # Otherwise, openssl s_client against the live endpoint
-      echo | openssl s_client -connect nginx:443 2>/dev/null \
-        | openssl x509 -enddate -noout 2>/dev/null \
-        | cut -d= -f2
-    continue_on:
-      failure: true
-```
+- **Current** (5 services): nginx, Forgejo, Vault, dnsmasq, dnsproxy
+- **Dagu MVP/v1** (8 services): + Dagu, MinIO, ntfy
+- **Future** (`*.app.cove`): nginx routes user app subdomains to app containers; per-app provisioning creates MinIO buckets, ntfy topics+tokens, and Vault credentials
 
-### Key Design Constraints
-
-1. **No host filesystem access.** The proxy strips all mounts from container create requests. DAGs cannot read `~/Documents/cove-data/` directly. All data flows via HTTP APIs.
-2. **No `docker exec` into existing containers.** The proxy blocks exec on non-`dagu-` containers. Dagu can't reach into Vault or Forgejo containers.
-3. **No container restart/stop.** The proxy blocks lifecycle operations on existing containers. Dagu can't restart Cove services.
-4. **Image allowlist.** The proxy blocks `POST /images/create`. Only pre-pulled images (cove-tools, curlimages/curl, alpine) are available. `cove up` pre-pulls them.
-5. **DAGs interact with Cove via HTTP APIs** — Forgejo REST API, Vault HTTP API, nginx health endpoints. Not via Docker.
-
-## What This Means for the Health Daemon Musing
-
-Dagu does **not** replace the health daemon. The health daemon musing proposed a process that restarts failed containers. Dagu can't do that — it can only detect and notify. Container recovery stays with `restart: unless-stopped` in Compose and a host-side launchd watchdog for hung states. Dagu's role is observability and alerting, not self-healing.
-
-## Reusability: cove-tools in Other Contexts
-
-The `cove-tools` image and the Docker API proxy are general-purpose infrastructure. They could serve:
-
-- **swain-box**: opencode instances in a sandbox could use `cove-tools` as a `container:` step image for running ops scripts against Cove APIs. The proxy pattern applies if swain-box runs Docker inside the VM.
-- **Any Dagu-like scheduler**: the proxy is not Dagu-specific. Any tool that needs ephemeral container spawning without host access can use it.
-
-The constraint that makes this portable: **no host access, HTTP-only**. The image and proxy work anywhere there's a Docker daemon and a network.
+The MVP topology is forward-compatible — the future state extends it without rearchitecting the core. MinIO and ntfy serve Cove internals now, user apps later. No phasing needed within the Dagu scope.
 
 ## Ansible Provisioning
 
-- Add `dagu` and `docker-proxy` services to docker-compose.yml template
-- Add `dag.cove` to nginx config template
-- Create `~/Documents/cove-data/dagu/` directory
-- Seed initial DAG YAML files to `~/Documents/cove-data/dagu/dags/`
-- Pre-pull tool images: `curlimages/curl:8`, `alpine:3.21`, `cove-tools:latest`
-- Build `cove-tools` image and push to Cove registry
-- Build `docker-proxy` image
-- Add `dag.cove` to `cove status` health checks
+- Add `dagu`, `minio`, `ntfy` services to docker-compose.yml template
+- Build `cove-tools` image (Dockerfile above) and push to Cove registry
+- Add `dag.cove`, `s3.cove`, `console.s3.cove`, `notify.cove` to nginx config template
+- Create `~/Documents/cove-data/{dagu,minio,ntfy}/` directories
+- Generate `MINIO_ROOT_USER` and `MINIO_ROOT_PASSWORD`, add to `.env`
+- Add `dag.cove`, `s3.cove`, `notify.cove` to `cove status` health checks
 
 ## Open Questions
 
-1. **DAG storage path?** Mount `~/Documents/cove-data/dagu/dags/` into the container. Cove seeds the initial DAGs, operator edits freely.
-2. **Auth for dag.cove?** `DAGU_AUTH_MODE: none` behind nginx (which terminates TLS) is fine for single-operator. Switch to `builtin` (JWT/RBAC) if exposed beyond localhost.
-3. **Dagu version pinning?** Pin to a specific tag in docker-compose.yml rather than `latest` for stability.
-4. **Proxy implementation?** Go HTTP server with path/method allowlist + request body sanitization (strip mounts). ~100 lines. Could be a separate repo or a directory in the Cove compose tree.
-5. **Cert renewal without filesystem access?** If Dagu can't write to `~/Documents/cove-data/certs/`, cert renewal needs to happen via a Cove API endpoint (`POST /api/certs/renew`) or a host-side process triggered by webhook from Dagu.
-6. **Backup storage without filesystem access?** Vault snapshots can't be written to `~/Documents/cove-data/backups/` from Dagu. Options: upload to Forgejo releases, S3-compatible storage, or a Cove backup API endpoint.
-
-## Next Steps
-
-1. Build the Docker API proxy (~100 lines of Go)
-2. Build `cove-tools` image (Alpine + curl + openssl + jq + python3)
-3. Add `dagu` + `docker-proxy` to the compose stack and `cove up`
-4. Write the 3 DAGs above (health check, vault backup, cert check)
-5. Add `dag.cove` to nginx config and `cove status`
-6. Write the Ansible provisioning playbook
-7. If Dagu passes evaluation, write a plan for integration
+1. **Dagu version pinning?** Pin to a specific tag in docker-compose.yml rather than `latest` for stability.
+2. **ntfy auth for future state?** Authless for MVP. Per-topic tokens required before `*.app.cove` apps use ntfy. Not building this now.
+3. **MinIO console exposure?** `console.s3.cove` exposes the MinIO web UI. Behind nginx TLS, authless is fine for MVP. Add auth when user apps need it.
+4. **cove-tools image hosting?** Build in Cove's CI, push to Forgejo's OCI registry. Same pattern as other Cove images.
 
 ---
 
@@ -329,8 +175,8 @@ The constraint that makes this portable: **no host access, HTTP-only**. The imag
 Windmill was the first candidate. It's powerful — auto-generated UIs, visual flow editor, multi-language sandboxed execution, webhook-to-script. But it requires Postgres, which is a heavy dependency for a single-developer stack. The cost-benefit analysis:
 
 - **Postgres:** +1 service, ~200MB image, ~300MB memory, backup burden, schema migrations on every upgrade
-- **Auto-generated UIs:** Nice, but Cove's ops scripts don't need UIs. They need reliable scheduling and logging.
-- **Visual flow editor:** Overkill for 3-step DAGs (backup → verify → notify).
-- **Multi-language sandboxing:** All Cove ops scripts are shell commands. No need for Python/TS/Go sandboxes.
+- **Auto-generated UIs:** Nice, but Cove's scheduling service doesn't need UIs. It needs reliable scheduling, logging, and notifications.
+- **Visual flow editor:** Overkill for the YAML DAGs users will write.
+- **Multi-language sandboxing:** Dagu runs shell commands (any language) without sandboxing overhead.
 
-Dagu covers the 90% use case with zero infrastructure overhead. The 10% Windmill offers (UIs, flow editor, sandboxing) isn't worth Postgres for a single-dev stack.
+Dagu covers the 90% use case with zero infrastructure overhead. The 10% Windmill offers (UIs, flow editor, sandboxing) isn't worth Postgres for this stack.
