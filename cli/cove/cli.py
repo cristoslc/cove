@@ -105,6 +105,11 @@ def up(no_provision, no_upgrade, log):
         log_dir = Path.home() / ".local" / "share" / "cove" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
 
+    ansible_env = os.environ.copy()
+    ansible_cfg = compose_dir / "ansible.cfg"
+    if ansible_cfg.exists():
+        ansible_env["ANSIBLE_CONFIG"] = str(ansible_cfg)
+
     def _run_ansible(playbook, label):
         click.echo(label)
         cmd = base_cmd + [str(playbook)]
@@ -113,7 +118,7 @@ def up(no_provision, no_upgrade, log):
             ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
             logfile = log_dir / f"{ts}-{playbook.name}.log"
             with open(logfile, "w") as f:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ansible_env)
                 for line in proc.stdout or []:
                     click.echo(line, nl=False)
                     f.write(line)
@@ -121,7 +126,7 @@ def up(no_provision, no_upgrade, log):
                 result = proc
             click.echo(f"  log: {logfile}")
         else:
-            result = subprocess.run(cmd)
+            result = subprocess.run(cmd, env=ansible_env)
         if result.returncode != 0:
             raise SystemExit(result.returncode)
 

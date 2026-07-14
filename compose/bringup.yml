@@ -23,20 +23,41 @@
     - name: Ensure Colima is running (macOS)
       when: ansible_system == "Darwin"
       block:
-        - name: Check if Colima is running
-          ansible.builtin.command: colima status
-          register: colima_check
-          changed_when: false
-          failed_when: false
-
-        - name: Start Colima
+        - name: Start Colima (idempotent — no-op if already running)
           ansible.builtin.command: colima start
-          when: colima_check.rc != 0
-          changed_when: true
+          changed_when: false
 
         - name: Switch Docker context to Colima
           ansible.builtin.command: docker context use colima
           changed_when: true
+
+        - name: Wait for Docker daemon to be ready
+          ansible.builtin.command: docker info
+          register: docker_info
+          retries: 15
+          delay: 2
+          until: docker_info.rc == 0
+          changed_when: false
+          ignore_errors: true
+
+        - name: Restart Colima if daemon is unresponsive
+          when: docker_info is failed
+          block:
+            - name: Stop Colima
+              ansible.builtin.command: colima stop
+              changed_when: true
+
+            - name: Start Colima
+              ansible.builtin.command: colima start
+              changed_when: true
+
+            - name: Wait for Docker daemon to be ready (after restart)
+              ansible.builtin.command: docker info
+              register: docker_info_retry
+              retries: 15
+              delay: 2
+              until: docker_info_retry.rc == 0
+              changed_when: false
 
     - name: Check if tailscale is up
       ansible.builtin.command: tailscale status --json
