@@ -4,7 +4,6 @@
   vars:
     computer_name: "{{ ansible_hostname | regex_replace('\\..*$', '') }}"
     ssh_key_path: "{{ ansible_env.HOME }}/.ssh/forgejo_{{ computer_name | lower }}_ed25519"
-    cli_dir: "{{ playbook_dir }}/../cli"
 
   tasks:
     - name: Check Vault seal status
@@ -38,10 +37,6 @@
     - name: Check 1P forgejo admin item cached
       ansible.builtin.command:
         argv:
-          - uv
-          - run
-          - --directory
-          - "{{ cli_dir }}"
           - cove
           - creds
           - vault-get
@@ -53,10 +48,6 @@
     - name: Seed 1P with Forgejo creds (renders + executes bulk-write)
       ansible.builtin.command:
         argv:
-          - uv
-          - run
-          - --directory
-          - "{{ cli_dir }}"
           - cove
           - creds
           - 1p-bulk-write
@@ -67,10 +58,6 @@
     - name: Cache admin password in Vault (no-op if already cached)
       ansible.builtin.command:
         argv:
-          - uv
-          - run
-          - --directory
-          - "{{ cli_dir }}"
           - cove
           - creds
           - vault-put
@@ -318,6 +305,10 @@
         printf '%s\n' "$KEY" >> {{ ansible_env.HOME }}/.ssh/known_hosts
         printf '%s\n' "$KEY" | sed 's/^\[127\.0\.0\.1\]:/[localhost]:/' >> {{ ansible_env.HOME }}/.ssh/known_hosts
       changed_when: true
+      register: host_key_result
+      retries: 20
+      delay: 3
+      until: host_key_result.rc == 0
 
     - name: Add tailscale SSH host key
       ansible.builtin.shell: |
