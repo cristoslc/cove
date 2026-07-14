@@ -2,7 +2,6 @@
   hosts: localhost
   gather_facts: true
   vars:
-    cli_dir: "{{ playbook_dir }}/../cli"
     keystore_account: "{{ ansible_user_id }}"
 
   tasks:
@@ -73,10 +72,6 @@
     - name: Seed 1P with vault user item (renders + executes under op run)
       ansible.builtin.command:
         argv:
-          - uv
-          - run
-          - --directory
-          - "{{ cli_dir }}"
           - cove
           - creds
           - 1p-bulk-write
@@ -87,10 +82,6 @@
     - name: Cache user password in Vault (no-op if already cached)
       ansible.builtin.command:
         argv:
-          - uv
-          - run
-          - --directory
-          - "{{ cli_dir }}"
           - cove
           - creds
           - vault-put
