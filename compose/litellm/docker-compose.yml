@@ -29,7 +29,7 @@ services:
           memory: 512M
 
   headroom:
-    image: ghcr.io/headroom-ai/headroom:latest
+    image: ghcr.io/headroom-ai/headroom:0.1.0
     container_name: cove-headroom
     restart: unless-stopped
     read_only: true
