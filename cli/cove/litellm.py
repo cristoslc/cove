@@ -4,13 +4,14 @@ import subprocess
 
 import click
 
-COMPOSE_FILE = "compose/litellm/docker-compose.yml"
+from cove.stateless import resolve_compose_dir
 
 
 def _compose_cmd(*args: str) -> list[str]:
+    compose_dir = resolve_compose_dir()
     return [
         "docker", "compose",
-        "-f", COMPOSE_FILE,
+        "--project-directory", str(compose_dir),
         *args,
     ]
 
@@ -20,7 +21,7 @@ def litellm():
     """Manage the LiteLLM proxy (optional harbor service).
 
     LiteLLM is a hardened LLM proxy with Headroom compression.
-    It runs on 127.0.0.1:4000 and proxies to upstream providers.
+    It runs on https://litellm.cove/ and proxies to upstream providers.
     """
 
 
@@ -28,15 +29,15 @@ def litellm():
 def up():
     """Start the LiteLLM proxy and Headroom sidecar."""
     click.echo("Starting LiteLLM proxy...")
-    subprocess.run(_compose_cmd("up", "-d"), check=True)
-    click.echo("LiteLLM proxy is running at http://127.0.0.1:4000")
+    subprocess.run(_compose_cmd("up", "-d", "--profile", "litellm"), check=True)
+    click.echo("LiteLLM proxy is running at https://litellm.cove/")
 
 
 @litellm.command()
 def down():
     """Stop the LiteLLM proxy and Headroom sidecar."""
     click.echo("Stopping LiteLLM proxy...")
-    subprocess.run(_compose_cmd("down"), check=True)
+    subprocess.run(_compose_cmd("stop", "litellm", "headroom"), check=True)
     click.echo("LiteLLM proxy stopped.")
 
 
@@ -44,7 +45,8 @@ def down():
 def status():
     """Check LiteLLM proxy health."""
     result = subprocess.run(
-        _compose_cmd("ps", "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}"),
+        _compose_cmd("ps", "--filter", "name=cove-litellm", "--filter", "name=cove-headroom",
+                     "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}"),
         capture_output=True, text=True,
     )
     click.echo(result.stdout)
@@ -53,7 +55,7 @@ def status():
 
     click.echo("Checking /health endpoint...")
     health = subprocess.run(
-        ["curl", "-sf", "http://127.0.0.1:4000/health"],
+        ["curl", "-sf", "-H", "Host: litellm.cove", "https://127.0.0.1:8443/health"],
         capture_output=True, text=True, timeout=10,
     )
     if health.returncode == 0:
