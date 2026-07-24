@@ -1,5 +1,7 @@
 # LiteLLM Hardening Guide
 
+> **Resolved by:** [Plan: LiteLLM Hardening](../plans/litellm-hardening.md) → [Compose profile](../../compose/litellm/docker-compose.yml) | [CLI module](../../cli/cove/litellm.py) | [User docs](../litellm-proxy.md)
+
 ## Context
 
 LiteLLM has accumulated 16+ CVEs and a supply chain compromise in 2025-2026. The worst chain scores CVSS 10.0 (unauthenticated RCE). This musing captures hardening strategies for running LiteLLM safely, especially in Cove's local-first deployment.
