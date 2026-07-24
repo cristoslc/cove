@@ -23,17 +23,18 @@ LiteLLM has accumulated 16+ CVEs and a supply chain compromise in 2025-2026. The
 
 ## Tasks
 
-### 1. Compose profile: `harbor/litellm/docker-compose.yml`
+### 1. Compose integration: `compose/docker-compose.yml` + `compose/litellm/`
 
-A compose file that runs LiteLLM proxy + Headroom sidecar with hardening:
+LiteLLM and Headroom are added to the main compose file with `profiles: ["litellm"]` so they don't start with `cove up`. The `compose/litellm/` directory holds the Dockerfile and config.
 
-- **Network:** `127.0.0.1:4000` only, no external exposure
+- **Network:** `127.0.0.1:4000` only, no external exposure. Accessible via `litellm.cove` through nginx ingress.
 - **Version:** `litellm>=1.84.0` pinned by hash
 - **Routes:** whitelist only `/chat/completions`, `/models`, `/health`
-- **Filesystem:** `--read-only` container, tmpfs for logs/DB
-- **Headroom:** sidecar container, local compression model, pinned model hash
+- **Filesystem:** `read_only: true` container, tmpfs for logs/DB
+- **Headroom:** sidecar container, local compression model, pinned image tag
 - **Credentials:** env vars only (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
 - **Health check:** `/health` endpoint with restart policy
+- **Profiles:** `litellm` profile so `cove up` doesn't start it automatically
 
 ### 2. Cove integration: `scripts/cove-litellm.sh`
 
@@ -69,10 +70,14 @@ Add a section under "Cove-specific notes" documenting the LiteLLM service:
 ## Files Changed
 
 ```
-CREATE harbor/litellm/docker-compose.yml
-CREATE harbor/litellm/Dockerfile
-CREATE harbor/litellm/config.yaml
-CREATE scripts/cove-litellm.sh
+CREATE compose/litellm/Dockerfile
+CREATE compose/litellm/config.yaml
+CREATE cli/cove/litellm.py                 (Click group: cove litellm up|down|status|logs)
+EDIT cli/cove/cli.py                       (register litellm group)
+EDIT cli/cove/status.py                    (add LiteLLM/Headroom as optional services)
+EDIT compose/docker-compose.yml            (add litellm + headroom services with profiles)
+EDIT compose/nginx/default.conf.j2         (add litellm.cove upstream + server block)
+EDIT compose/bringup.yml                   (add litellm.cove to cert SANs, hosts, .env)
 CREATE docs/litellm-proxy.md
 EDIT docs/musings/litellm-hardening.md     (add "Resolved by" section)
 EDIT AGENTS.md                             (add LiteLLM service notes)
@@ -80,10 +85,10 @@ EDIT AGENTS.md                             (add LiteLLM service notes)
 
 ## Verification
 
-1. `docker compose -f harbor/litellm/docker-compose.yml up` starts without errors
-2. `curl -H "Host: example.com" http://127.0.0.1:4000/chat/completions` returns 404 (route whitelist working)
-3. `curl http://127.0.0.1:4000/health` returns 200
-4. `curl http://127.0.0.1:4000/key/generate` returns 404 (admin routes disabled)
-5. OpenCode configured with `OPENCODE_CONFIG_CONTENT` pointing at the proxy can complete a chat round-trip
-6. Container is `--read-only` (verify with `docker inspect`)
+1. `docker compose --project-directory compose up --profile litellm -d` starts without errors
+2. `curl -H "Host: example.com" -H "Host: litellm.cove" https://127.0.0.1:8443/chat/completions` returns 404 (route whitelist working)
+3. `curl -H "Host: litellm.cove" https://127.0.0.1:8443/health` returns 200
+4. `curl -H "Host: litellm.cove" https://127.0.0.1:8443/key/generate` returns 404 (admin routes disabled)
+5. OpenCode configured with `OPENAI_BASE_URL=https://litellm.cove/v1` can complete a chat round-trip
+6. Container is `read_only: true` (verify with `docker inspect`)
 7. `docs/litellm-proxy.md` renders without broken links
