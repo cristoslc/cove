@@ -5,15 +5,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: cove-litellm:1.84.0
-    container_name: cove-litellm
+    image: ${LITELLM_IMAGE:-cove-litellm:1.84.0}
+    container_name: ${LITELLM_CONTAINER_NAME:-cove-litellm}
     restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp
       - /var/log/litellm
     ports:
-      - "127.0.0.1:4000:4000"
+      - "127.0.0.1:${LITELLM_PORT:-4000}:4000"
     environment:
       LITELLM_CONFIG: /app/config.yaml
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -26,21 +26,21 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: ${LITELLM_MEM_LIMIT:-512M}
 
   headroom:
-    image: ghcr.io/headroom-ai/headroom:0.1.0
-    container_name: cove-headroom
+    image: ${HEADROOM_IMAGE:-ghcr.io/headroom-ai/headroom:0.1.0}
+    container_name: ${HEADROOM_CONTAINER_NAME:-cove-headroom}
     restart: unless-stopped
     read_only: true
     tmpfs:
       - /tmp
     ports:
-      - "127.0.0.1:4001:4001"
+      - "127.0.0.1:${HEADROOM_PORT:-4001}:4001"
     environment:
       HEADROOM_MODEL: local
       HEADROOM_PORT: "4001"
     deploy:
       resources:
         limits:
-          memory: 256M
+          memory: ${HEADROOM_MEM_LIMIT:-256M}

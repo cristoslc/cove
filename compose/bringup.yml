@@ -179,6 +179,8 @@
           - --sans
           - vault.cove
           - --sans
+          - litellm.cove
+          - --sans
           - hc.cove
           - --sans
           - ca.cove
@@ -201,7 +203,7 @@
       ansible.builtin.shell: |
         set -eo pipefail
         CERT="{{ cove_data_root }}/certs/cove.local.pem"
-        for host in "git.cove" "vault.cove" "hc.cove" "ca.cove" "*.cove" "*.cove.{{ ansible_hostname }}"; do
+        for host in "git.cove" "vault.cove" "litellm.cove" "hc.cove" "ca.cove" "*.cove" "*.cove.{{ ansible_hostname }}"; do
           if ! openssl x509 -in "$CERT" -text -noout | grep -qF "DNS:$host"; then
             echo "MISSING: $host"
             exit 1
@@ -216,7 +218,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove git.cove vault.cove hc.cove ca.cove"
+        line: "127.0.0.1 cove git.cove vault.cove litellm.cove hc.cove ca.cove"
         state: present
       failed_when: false
 
@@ -314,6 +316,12 @@
           DNSMASQ_PORT={{ dnsmasq_port }}
           NGINX_HTTPS_PORT={{ nginx_https_port }}
           NGINX_HTTP_PORT={{ nginx_http_port }}
+          LITELLM_IMAGE={{ litellm_image | default('cove-litellm:1.84.0') }}
+          LITELLM_CONTAINER_NAME={{ litellm_container_name | default('cove-litellm') }}
+          LITELLM_PORT={{ litellm_port | default('4000') }}
+          HEADROOM_IMAGE={{ headroom_image | default('ghcr.io/headroom-ai/headroom:0.1.0') }}
+          HEADROOM_CONTAINER_NAME={{ headroom_container_name | default('cove-headroom') }}
+          HEADROOM_PORT={{ headroom_port | default('4001') }}
 
     # CONTAINERS -------------------------------------------------------------
     - name: Detect active docker context endpoint
