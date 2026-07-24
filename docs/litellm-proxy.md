@@ -114,12 +114,18 @@ curl http://127.0.0.1:4000/health
 curl http://127.0.0.1:4000/models
 ```
 
-If both work, configure OpenCode to use the proxy:
+If both work, configure OpenCode to use the proxy by setting the environment variable:
+
+```shell
+export OPENAI_BASE_URL=http://127.0.0.1:4000/v1
+```
+
+Or in `opencode.json`:
 
 ```json
 {
   "provider": "openai",
-  "api_base": "http://127.0.0.1:4000"
+  "apiBase": "http://127.0.0.1:4000/v1"
 }
 ```
 
