@@ -15,10 +15,10 @@ cove litellm up
 # Check it's running
 cove litellm status
 
-# Point your tools at http://127.0.0.1:4000
+# Point your tools at https://litellm.cove/
 ```
 
-The proxy listens on `127.0.0.1:4000` only — no external network exposure.
+The proxy is accessible at `https://litellm.cove/` through Cove's nginx ingress (port 8443 → 443 via pf). The container itself binds to `127.0.0.1:4000` only — no external network exposure.
 
 ## What's Hardened
 
@@ -41,7 +41,7 @@ The proxy listens on `127.0.0.1:4000` only — no external network exposure.
 | **Supply chain (full)** | We pin but don't vendor. A PyPI compromise could still inject malware. Mitigation: staged adoption (wait 48-72h after release). |
 | **JWT auth** | Disabled by design. Cove is single-user, localhost-only. JWT auth adds attack surface (CVE-2026-35030) with no benefit. |
 | **Multi-tenancy** | Not supported. Cove is single-user. |
-| **TLS termination** | Not needed for localhost-only. If you expose externally, put a reverse proxy (Caddy, nginx) in front. |
+| **TLS termination** | Handled by Cove's nginx ingress at `https://litellm.cove/`. The container itself listens on plain HTTP at `127.0.0.1:4000`. |
 
 ## Credentials Setup
 
@@ -75,12 +75,14 @@ cove litellm logs -n 100  # Show last 100 lines
 ```mermaid
 flowchart LR
     Agent["AI Agent\n(OpenCode, etc.)"]
+    Nginx["Cove nginx\nlitellm.cove:443"]
     Proxy["LiteLLM Proxy\n127.0.0.1:4000"]
     Headroom["Headroom Sidecar\n127.0.0.1:4001"]
     Anthropic["Anthropic API"]
     OpenAI["OpenAI API"]
 
-    Agent -->|POST /chat/completions| Proxy
+    Agent -->|https://litellm.cove| Nginx
+    Nginx -->|proxy_pass| Proxy
     Proxy -->|compress context| Headroom
     Proxy -->|proxy request| Anthropic
     Proxy -->|proxy request| OpenAI
@@ -110,14 +112,14 @@ Headroom downloads a compression model on first start. If it fails:
 ### OpenCode can't connect
 
 ```shell
-curl http://127.0.0.1:4000/health
-curl http://127.0.0.1:4000/models
+curl -H "Host: litellm.cove" https://127.0.0.1:8443/health
+curl -H "Host: litellm.cove" https://127.0.0.1:8443/v1/models
 ```
 
 If both work, configure OpenCode to use the proxy by setting the environment variable:
 
 ```shell
-export OPENAI_BASE_URL=http://127.0.0.1:4000/v1
+export OPENAI_BASE_URL=https://litellm.cove/v1
 ```
 
 Or in `opencode.json`:
@@ -125,7 +127,7 @@ Or in `opencode.json`:
 ```json
 {
   "provider": "openai",
-  "apiBase": "http://127.0.0.1:4000/v1"
+  "apiBase": "https://litellm.cove/v1"
 }
 ```
 
