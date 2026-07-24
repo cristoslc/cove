@@ -115,6 +115,47 @@ For Cove's use case (local, single-user, trusted operator), the novel security r
 
 The transparency benefit of proxy-based compression still outweighs the security overhead for Cove. The key discipline: **pin everything, vendor what you can, expose nothing to the network.**
 
+## Headroom vs DCP: What the Community Says
+
+There's no direct "Headroom vs DCP shootout" in the wild, but the contours are clear from scattered commentary.
+
+### DCP (Dynamic Context Pruning)
+
+- **Model-aware compression** — exposes a `compress` tool the model calls when it decides context is stale. The model sees placeholders, sees the tool, knows compression happened.
+- **50-70% token reduction** on long sessions (per Upsun's deployment guide).
+- **Plugin-based** — runs inside OpenCode's process. No proxy to manage.
+- **Successor: Sleev** — DCP's README now recommends Sleev for new users: "Sleev is a local proxy for Claude Code, Codex, and OpenCode that builds on DCP's core ideas with newer context-management features." The project itself is migrating from plugin to proxy architecture.
+- **Configurable thresholds** — `minContextLimit`, `maxContextLimit` for smaller local model windows.
+- **Protected zones** — most recent 40K tokens are a "safety cushion" that cannot be touched.
+
+### Headroom
+
+- **Transparent proxy** — `headroom wrap opencode` routes all API calls through compression. The model has zero awareness.
+- **20% fewer tokens for coding agents**, 60-95% for JSON payloads (per Headroom's own benchmarks).
+- **Reversible compression (CCR)** — the model gets a `retrieve_headroom` tool to fetch originals when needed. This is the key differentiator from DCP's lossy placeholders.
+- **AST-aware for code** — preserves function signatures, collapses bodies. Better than generic summarization for coding workloads.
+- **LiteLLM native** — runs as a guardrail in LiteLLM's pre_call step. One config switch per virtual key.
+- **Cross-agent memory** — Claude Code, Codex, and OpenCode can share the same compressed context store.
+
+### Community Sentiment
+
+- **Reddit (r/LLMDevs):** "Context compression is the real MVP" — but some users report not seeing the claimed savings. Headroom's own docs acknowledge this: "A/B test before assuming the 85% claim applies to your bill."
+- **VibecodingHub review:** Headroom covers OpenCode as a supported target. The proxy path is recommended for minimal application changes.
+- **Headroom GitHub Issue #76:** An OpenCode npm plugin (headroom-opencode) is proposed for deeper integration — auto-start proxy, expose compress/retrieve/stats as OpenCode tools, register as a compaction provider. Not built yet.
+- **andrew.ooo review:** "Anthropic prompt caching is still better for fixed prefixes. Headroom shines when context is dynamic — tool outputs, RAG, logs." This maps directly to OpenCode's workload: heavy tool outputs, file reads, git diffs.
+- **DCP's own trajectory toward proxy (Sleev)** validates the thesis. The plugin model has inherent limitations (model awareness, process coupling) that a proxy architecture solves.
+
+### The Unanswered Question
+
+No one has published a head-to-head: same OpenCode session, same task, same model — DCP vs Headroom proxy. The metrics that matter:
+
+1. **Token savings** — DCP claims 50-70%, Headroom claims 20% for code. But DCP's savings include the compress tool's own overhead. Headroom's 20% is pure input reduction.
+2. **Thinking-block cleanliness** — DCP leaks compression metadata into model reasoning. Headroom should eliminate this entirely. No one has measured this.
+3. **Cache hit rate** — DCP invalidates provider caches when it prunes. Headroom's CacheAligner stabilizes dynamic content. LiteLLM claims ~85% cache hit rate with Headroom vs ~90% without.
+4. **Latency** — DCP adds near-zero latency (it's a local string operation). Headroom adds ~100-200ms per call for the compression model.
+
+The honest take: DCP is better for short sessions where latency matters. Headroom is better for long sessions where thinking-block leakage and cache invalidation dominate. The proxy approach also scales across agents (Claude Code, Codex, OpenCode all benefit from one proxy), which DCP cannot do.
+
 ## Next Steps
 
 1. Set up LiteLLM proxy locally with Headroom enabled
