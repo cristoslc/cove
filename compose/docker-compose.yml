@@ -124,6 +124,27 @@ services:
       start_period: 15s
       retries: 5
 
+  litellm-db:
+    profiles: ["litellm"]
+    image: postgres:16-alpine
+    container_name: ${LITELLM_DB_CONTAINER_NAME:-cove-litellm-db}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: litellm
+      POSTGRES_USER: litellm
+      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm}
+    volumes:
+      - ${COVE_DATA_ROOT}/litellm/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 10s
+      start_period: 10s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${LITELLM_DB_MEM_LIMIT:-256M}
+
   litellm:
     profiles: ["litellm"]
     build:
@@ -143,6 +164,10 @@ services:
       LITELLM_CONFIG: /app/config.yaml
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
+      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD:-litellm}@litellm-db:5432/litellm
+    depends_on:
+      litellm-db:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:4000/health"]
       interval: 15s
@@ -151,7 +176,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${LITELLM_MEM_LIMIT:-512M}
+          memory: ${LITELLM_MEM_LIMIT:-2G}
 
   headroom:
     profiles: ["litellm"]
