@@ -167,6 +167,7 @@ services:
       DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD:-litellm}@litellm-db:5432/litellm
       UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
       UI_PASSWORD: ${LITELLM_UI_PASSWORD:-}
+      PROXY_BASE_URL: https://litellm.cove
     depends_on:
       litellm-db:
         condition: service_healthy
