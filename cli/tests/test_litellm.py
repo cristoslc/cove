@@ -68,7 +68,8 @@ def _load_compose() -> dict:
 
 
 def _load_litellm_config() -> dict:
-    with open(LITELLM_DIR / "config.yaml") as f:
+    """Load the config template (config.yaml.j2 is the source of truth)."""
+    with open(LITELLM_DIR / "config.yaml.j2") as f:
         return yaml.safe_load(f)
 
 
@@ -165,6 +166,25 @@ class TestComposeServiceDefinitions:
         build = data["services"]["litellm"].get("build", {})
         assert "context" in build, "litellm must have a build context"
         assert "Dockerfile" in build.get("dockerfile", ""), "litellm must reference Dockerfile"
+
+    def test_litellm_mounts_config_from_data_root(self):
+        """Config must be mounted from COVE_DATA_ROOT, not baked into the image."""
+        data = _load_compose()
+        volumes = data["services"]["litellm"].get("volumes", [])
+        volume_strs = [str(v) for v in volumes]
+        assert any("litellm/config.yaml" in v and "/app/config.yaml" in v for v in volume_strs), (
+            "litellm must mount config.yaml from COVE_DATA_ROOT"
+        )
+
+    def test_litellm_config_mount_is_read_write(self):
+        """Config mount must NOT be :ro — user edits must persist."""
+        data = _load_compose()
+        volumes = data["services"]["litellm"].get("volumes", [])
+        for v in volumes:
+            if "config.yaml" in str(v):
+                assert ":ro" not in str(v), (
+                    f"config mount must be read-write, not :ro — got: {v}"
+                )
 
 
 class TestLitellmConfig:
@@ -328,7 +348,8 @@ class TestNginxRouteWhitelist:
 
 
 class TestBringupIntegration:
-    """Validate bringup.yml includes litellm.cove in cert SANs, hosts, .env."""
+    """Validate bringup.yml includes litellm.cove in cert SANs, hosts, .env,
+    and renders the config template on first boot only."""
 
     def test_cert_sans_include_litellm_cove(self):
         with open(COMPOSE_DIR / "bringup.yml") as f:
@@ -357,6 +378,88 @@ class TestBringupIntegration:
         with open(COMPOSE_DIR / "bringup.yml") as f:
             content = f.read()
         assert "litellm.cove" in content, "bringup.yml cert validation must include litellm.cove"
+
+    def test_creates_litellm_data_directory(self):
+        """bringup.yml must create ${COVE_DATA_ROOT}/litellm/ for the config mount."""
+        with open(COMPOSE_DIR / "bringup.yml") as f:
+            content = f.read()
+        assert "litellm" in content, "bringup.yml must create litellm data directory"
+
+    def test_renders_config_template_on_first_boot(self):
+        """bringup.yml must render config.yaml from template, but only on first boot."""
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        render_task = [
+            t for t in tasks
+            if isinstance(t, dict)
+            and "litellm" in (t.get("name", "") or "").lower()
+            and "template" in (t.get("name", "") or "").lower()
+        ]
+        assert render_task, "No litellm config template task found in bringup.yml"
+        # Must have a when condition that checks if the file exists
+        when = str(render_task[0].get("when", ""))
+        assert "exists" in when or "is not exists" in when, (
+            f"litellm config render must be conditional on first boot, got when: {when}"
+        )
+
+
+class TestConfigTemplate:
+    """Validate config.yaml.j2 has provider configs and security settings."""
+
+    def _load_template(self) -> str:
+        return (LITELLM_DIR / "config.yaml.j2").read_text()
+
+    def test_template_has_model_list(self):
+        content = self._load_template()
+        assert "model_list:" in content, "config template must have model_list"
+
+    def test_template_has_anthropic_provider(self):
+        content = self._load_template()
+        assert "anthropic" in content, "config template must include Anthropic provider"
+
+    def test_template_has_openai_provider(self):
+        content = self._load_template()
+        assert "openai" in content, "config template must include OpenAI provider"
+
+    def test_template_uses_env_var_for_api_keys(self):
+        content = self._load_template()
+        assert "os.environ/ANTHROPIC_API_KEY" in content, (
+            "config template must read Anthropic key from env, not hardcode"
+        )
+        assert "os.environ/OPENAI_API_KEY" in content, (
+            "config template must read OpenAI key from env, not hardcode"
+        )
+
+    def test_template_has_headroom_enabled(self):
+        content = self._load_template()
+        assert "headroom_settings:" in content
+        assert "enabled: true" in content
+
+    def test_template_headroom_endpoint_uses_docker_service_name(self):
+        """Headroom endpoint must use the Docker service name, not 127.0.0.1."""
+        content = self._load_template()
+        assert "http://headroom:4001" in content, (
+            "config template must use headroom:4001 (Docker service name), not 127.0.0.1:4001"
+        )
+
+    def test_template_disables_mcp(self):
+        content = self._load_template()
+        assert "disable_mcp: true" in content
+
+    def test_template_disables_admin_ui(self):
+        content = self._load_template()
+        assert "disable_admin_ui: true" in content
+
+    def test_template_disables_jwt_auth(self):
+        content = self._load_template()
+        assert "disable_jwt_auth: true" in content
+
+    def test_template_has_no_allowed_routes(self):
+        """allowed_routes is Enterprise-only — must not be in the template."""
+        content = self._load_template()
+        assert "allowed_routes" not in content, (
+            "config template must not have allowed_routes (Enterprise-only)"
+        )
 
 
 class TestCLI:
@@ -482,6 +585,14 @@ class TestDockerfile:
         with open(LITELLM_DIR / "Dockerfile") as f:
             content = f.read()
         assert "AS builder" in content, "Dockerfile must use multi-stage build"
+
+    def test_dockerfile_does_not_copy_config(self):
+        """Config must NOT be baked into the image — it's mounted from data root."""
+        with open(LITELLM_DIR / "Dockerfile") as f:
+            content = f.read()
+        assert "COPY config.yaml" not in content, (
+            "Dockerfile must not COPY config.yaml — it's mounted from COVE_DATA_ROOT"
+        )
 
 
 class TestInverseAssertions:
