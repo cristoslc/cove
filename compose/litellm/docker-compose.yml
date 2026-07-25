@@ -19,6 +19,7 @@ services:
     environment:
       LITELLM_CONFIG: /app/config.yaml
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:4000/health"]
       interval: 15s
