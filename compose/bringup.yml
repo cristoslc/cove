@@ -256,6 +256,7 @@
         - "{{ cove_data_root }}/nginx/user.d"
         - "{{ cove_data_root }}/nginx/config/dns"
         - "{{ cove_data_root }}/dnsmasq"
+        - "{{ cove_data_root }}/litellm"
 
     # TEMPLATES ----------------------------------------------------------------
     - name: Render nginx config from template
@@ -263,6 +264,13 @@
         src: "{{ nginx_conf_dir }}/default.conf.j2"
         dest: "{{ nginx_conf_dir }}/default.conf"
         mode: "0644"
+
+    - name: Render litellm config from template (first boot only)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/litellm/config.yaml.j2"
+        dest: "{{ cove_data_root }}/litellm/config.yaml"
+        mode: "0644"
+      when: not (cove_data_root ~ "/litellm/config.yaml") is exists
 
     - name: Render dnsmasq config from template
       ansible.builtin.template:
