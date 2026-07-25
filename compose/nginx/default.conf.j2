@@ -111,10 +111,12 @@ server {
     }
 }
 
-# litellm.cove — LiteLLM proxy (route-whitelisted at nginx layer)
+# litellm.cove — LiteLLM proxy
 # litellm is an optional profiled service. Using a variable for the
 # upstream host defers DNS resolution to request time, so nginx starts
 # even when the litellm container is not running.
+# All paths are proxied — isolation is from the 127.0.0.1 port binding,
+# not route whitelisting. Admin UI is enabled with a master key.
 server {
     listen 443 ssl;
     server_name litellm.cove;
@@ -125,32 +127,12 @@ server {
     resolver 127.0.0.11 valid=10s;
     set $litellm_upstream http://litellm:4000;
 
-    location = /health {
-        proxy_pass $litellm_upstream;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-
-    location = /v1/models {
-        proxy_pass $litellm_upstream;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-
-    location /v1/ {
-        proxy_pass $litellm_upstream;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-
     location / {
-        return 403;
+        proxy_pass $litellm_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
     }
 }
 
