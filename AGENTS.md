@@ -17,6 +17,19 @@ Read **[PURPOSE.md](PURPOSE.md)** for this project's identity, worldview, and fo
 uv run --directory cli pytest -x -q
 ```
 
+## Test command (staging)
+
+```
+uv run --directory cli pytest -x -q -m e2e
+```
+
+Invoked via `scripts/staging/e2e.sh` against the deployed staging stack.
+
 ## Test coverage matrix
 
 Master coverage matrix: `docs/test-coverage-matrix.yaml`
+
+## Staging E2E
+
+Staging deploys the branch to the local Docker stack and runs E2E tests against `https://127.0.0.1:8443` before merge. Scripts at `scripts/staging/` (`setup.sh`, `deploy.sh`, `e2e.sh`, `teardown.sh`).
+Full reference: `.agents/agents-md-detail/staging-e2e.md`.
