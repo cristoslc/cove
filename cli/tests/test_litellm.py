@@ -221,8 +221,9 @@ class TestNginxConfig:
 
     def test_litellm_upstream_exists(self):
         rendered = _render_nginx()
-        assert "upstream litellm_backend" in rendered
-        assert "server litellm:4000" in rendered
+        # litellm is optional — uses a variable + resolver, not an upstream block
+        assert "litellm:4000" in rendered
+        assert "resolver 127.0.0.11" in rendered
 
     def test_litellm_server_block_exists(self):
         rendered = _render_nginx()
@@ -231,7 +232,7 @@ class TestNginxConfig:
     def test_health_route_allowed(self):
         rendered = _render_nginx()
         assert "location = /health" in rendered
-        assert "proxy_pass http://litellm_backend" in rendered
+        assert "$litellm_upstream" in rendered
 
     def test_v1_models_route_allowed(self):
         rendered = _render_nginx()
