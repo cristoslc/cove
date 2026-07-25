@@ -18,8 +18,7 @@ services:
       - ${COVE_DATA_ROOT:-./data}/litellm/config.yaml:/app/config.yaml
     environment:
       LITELLM_CONFIG: /app/config.yaml
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:4000/health"]
       interval: 15s

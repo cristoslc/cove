@@ -147,8 +147,7 @@ class TestComposeServiceDefinitions:
     def test_litellm_uses_env_vars_for_credentials(self):
         data = _load_compose()
         env = data["services"]["litellm"].get("environment", {})
-        assert "ANTHROPIC_API_KEY" in env, "litellm must accept ANTHROPIC_API_KEY env var"
-        assert "OPENAI_API_KEY" in env, "litellm must accept OPENAI_API_KEY env var"
+        assert "OLLAMA_API_KEY" in env, "litellm must accept OLLAMA_API_KEY env var"
 
     def test_litellm_container_name_has_cove_prefix(self):
         data = _load_compose()
@@ -413,21 +412,14 @@ class TestConfigTemplate:
         content = self._load_template()
         assert "model_list:" in content, "config template must have model_list"
 
-    def test_template_has_anthropic_provider(self):
+    def test_template_has_ollama_provider(self):
         content = self._load_template()
-        assert "anthropic" in content, "config template must include Anthropic provider"
-
-    def test_template_has_openai_provider(self):
-        content = self._load_template()
-        assert "openai" in content, "config template must include OpenAI provider"
+        assert "ollama.com/v1" in content, "config template must include Ollama Cloud API base"
 
     def test_template_uses_env_var_for_api_keys(self):
         content = self._load_template()
-        assert "os.environ/ANTHROPIC_API_KEY" in content, (
-            "config template must read Anthropic key from env, not hardcode"
-        )
-        assert "os.environ/OPENAI_API_KEY" in content, (
-            "config template must read OpenAI key from env, not hardcode"
+        assert "os.environ/OLLAMA_API_KEY" in content, (
+            "config template must read Ollama key from env, not hardcode"
         )
 
     def test_template_has_headroom_enabled(self):
