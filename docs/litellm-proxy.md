@@ -45,18 +45,16 @@ The proxy is accessible at `https://litellm.cove/` through Cove's nginx ingress 
 
 ## Credentials Setup
 
-Set these environment variables before running `cove litellm up`:
+Set your Ollama Cloud API key before running `cove litellm up`:
 
 ```shell
-export ANTHROPIC_API_KEY="sk-ant-..."
-export OPENAI_API_KEY="sk-proj-..."
+export OLLAMA_API_KEY="ollama"
 ```
 
-You can also put them in a `.env` file in the project root:
+You can also put it in a `.env` file in the project root:
 
 ```shell
-ANTHROPIC_API_KEY=sk-ant-...
-OPENAI_API_KEY=sk-proj-...
+OLLAMA_API_KEY=ollama
 ```
 
 ## Configuration
@@ -69,8 +67,9 @@ To add a model:
 model_list:
   - model_name: my-custom-model
     litellm_params:
-      model: anthropic/claude-sonnet-4-5
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: openai/deepseek-v4-flash:cloud
+      api_base: https://ollama.com/v1
+      api_key: os.environ/OLLAMA_API_KEY
 ```
 
 After editing, restart the proxy:

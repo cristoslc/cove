@@ -158,3 +158,36 @@ The version-control question (host-mounted vs Forgejo-synced) is a user workflow
 ---
 
 (Parley complete — all tensions resolved)
+
+---
+
+## Post-Cleanup Tensions
+
+### T15: "Dagu needs MinIO and ntfy" — stale interdependency framing
+
+**Raised:** 2026-07-06 (post-cleanup)
+**Status:** open
+
+The Threshold Crossing section says "Dagu needs MinIO for storage and ntfy for notifications" and "they're interdependent." But Dagu is platform infra — it doesn't *need* MinIO or ntfy. The *operator's DAGs* might use them, but Dagu runs fine without them. The "interdependent" framing is from when we thought Dagu would ship Cove management DAGs that required storage and notifications. That framing is dead.
+
+MinIO and ntfy are co-equal platform services that land in the same release as Dagu. They're not Dagu's dependencies. They're Cove platform capabilities that the operator and user apps can choose to use.
+
+---
+
+### T16: cove-tools naming — Dagu image or platform tools image?
+
+**Raised:** 2026-07-06 (post-cleanup)
+**Status:** open
+
+The musing describes cove-tools as "the Dagu image" — a custom image that replaces the upstream Dagu image. But it's actually a general tools image (`curl`, `openssl`, `jq`, `python3`, `mc`) built on top of Dagu. If a user app container needs the same tools, cove-tools could serve there too. Framing it as "the Dagu image" limits how users think about it.
+
+---
+
+### T17: Compose snippet references wrong image
+
+**Raised:** 2026-07-06 (post-cleanup)
+**Status:** open
+
+The `dagu` service in the compose snippet uses `image: ghcr.io/dagucloud/dagu:latest` (upstream). But the cove-tools section says "This image replaces the upstream Dagu image." The compose snippet should reference `cove-tools:latest` (built from the Cove registry), not the upstream image. As written, the compose snippet doesn't use cove-tools at all — it runs vanilla Dagu without curl/openssl/jq/mc.
+
+---
