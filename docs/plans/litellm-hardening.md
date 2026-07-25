@@ -29,7 +29,7 @@ LiteLLM and Headroom are added to the main compose file with `profiles: ["litell
 
 - **Network:** `127.0.0.1:4000` only, no external exposure. Accessible via `litellm.cove` through nginx ingress.
 - **Version:** `litellm>=1.84.0` pinned by hash
-- **Routes:** whitelist only `/chat/completions`, `/models`, `/health`
+- **Routes:** whitelist at nginx layer: `/health`, `/v1/models`, `/v1/*` only. LiteLLM's built-in `allowed_routes` is Enterprise-only, so route lockdown is enforced by the reverse proxy. All other paths return 403.
 - **Filesystem:** `read_only: true` container, tmpfs for logs/DB
 - **Headroom:** sidecar container, local compression model, pinned image tag
 - **Credentials:** env vars only (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`)
