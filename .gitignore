@@ -68,5 +68,5 @@ plan.yaml
 # Bundled compose resources (build artifact — sync from compose/ via cli/scripts/sync_compose_resources.py)
 cli/cove/resources/compose/
 
-# Staging pipeline (Cove's own CI, not user-facing)
-scripts/staging/
+# Staging venv (created by scripts/staging/deploy.sh)
+.staging-venv/
