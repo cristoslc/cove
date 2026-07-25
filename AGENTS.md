@@ -14,13 +14,19 @@ Read **[PURPOSE.md](PURPOSE.md)** for this project's identity, worldview, and fo
 ## Test command
 
 ```
-uv run --directory cli pytest -x -q
+uv run --directory cli pytest -x -q -m "not e2e and not staging"
+```
+
+## Test command (integration)
+
+```
+uv run --directory cli pytest -x -q -m "e2e and not staging"
 ```
 
 ## Test command (staging)
 
 ```
-uv run --directory cli pytest -x -q -m e2e
+uv run --directory cli pytest -x -q -m staging
 ```
 
 Invoked via `scripts/staging/e2e.sh` against the deployed staging stack.

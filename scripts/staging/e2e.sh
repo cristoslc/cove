@@ -15,10 +15,10 @@ CLI_DIR="$REPO_ROOT/cli"
 
 echo "Running E2E tests against: $STAGING_URL" >&2
 
-# Run the tier 2 test command (E2E tests marked with @pytest.mark.e2e)
+# Run the tier 2 test command (staging E2E tests marked with @pytest.mark.staging)
 # These tests hit the live nginx ingress at 127.0.0.1:8443
 cd "$CLI_DIR"
-if uv run --directory "$CLI_DIR" pytest -x -q -m e2e 2>&1; then
+if uv run --directory "$CLI_DIR" pytest -x -q -m staging 2>&1; then
     echo "E2E tests passed" >&2
     exit 0
 else
