@@ -394,6 +394,7 @@ class TestInverseAssertions:
 
 
 @pytest.mark.e2e
+@pytest.mark.staging
 class TestE2EDNSEndpoints:
     """Integration tests requiring a live Cove stack.
 
