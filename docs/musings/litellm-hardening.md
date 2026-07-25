@@ -1,6 +1,8 @@
 # LiteLLM Hardening Guide
 
 > **Resolved by:** [Plan: LiteLLM Hardening](../plans/litellm-hardening.md) → [Compose profile](../../compose/litellm/docker-compose.yml) | [CLI module](../../cli/cove/litellm.py) | [User docs](../litellm-proxy.md)
+> 
+> **Note:** Route lockdown is enforced at the nginx layer (reverse proxy), not via LiteLLM's `allowed_routes` (which is Enterprise-only). The nginx `litellm.cove` server block whitelists `/health`, `/v1/models`, and `/v1/*`; everything else returns 403.
 
 ## Context
 
