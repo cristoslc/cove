@@ -26,7 +26,7 @@ The proxy is accessible at `https://litellm.cove/` through Cove's nginx ingress 
 |-------|-----------|
 | **Network** | Binds to `127.0.0.1` only. No external exposure. |
 | **Version** | Pinned to `litellm==1.84.0` with multi-stage build. |
-| **Routes** | Whitelist-only: `/chat/completions`, `/models`, `/health`. All other routes return 404. |
+| **Routes** | Whitelist-only at nginx layer: `/health`, `/v1/models`, `/v1/*`. All other paths return 403. LiteLLM's built-in `allowed_routes` is Enterprise-only, so route lockdown is enforced by the reverse proxy. |
 | **Filesystem** | Container runs `read_only: true`. Writable tmpfs for logs and DB. |
 | **Supply chain** | Multi-stage build isolates pip install; hash-pinned in requirements. |
 | **Base image** | `python:3.13-slim` — minimal package surface. |
@@ -75,14 +75,14 @@ cove litellm logs -n 100  # Show last 100 lines
 ```mermaid
 flowchart LR
     Agent["AI Agent\n(OpenCode, etc.)"]
-    Nginx["Cove nginx\nlitellm.cove:443"]
+    Nginx["Cove nginx\nlitellm.cove:443\nroute whitelist"]
     Proxy["LiteLLM Proxy\n127.0.0.1:4000"]
     Headroom["Headroom Sidecar\n127.0.0.1:4001"]
     Anthropic["Anthropic API"]
     OpenAI["OpenAI API"]
 
-    Agent -->|https://litellm.cove| Nginx
-    Nginx -->|proxy_pass| Proxy
+    Agent -->|https://litellm.cove/v1/...| Nginx
+    Nginx -->|"allow: /health, /v1/*\nblock: everything else"| Proxy
     Proxy -->|compress context| Headroom
     Proxy -->|proxy request| Anthropic
     Proxy -->|proxy request| OpenAI
@@ -130,6 +130,10 @@ Or in `opencode.json`:
   "apiBase": "https://litellm.cove/v1"
 }
 ```
+
+### Admin routes accessible
+
+If you can reach `/key/generate` or other admin routes, the nginx route whitelist is not working. Check that the `litellm.cove` server block in `compose/nginx/default.conf` has the whitelist locations and the catch-all `return 403`.
 
 ## Upgrade Procedure
 
