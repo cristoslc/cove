@@ -12,7 +12,7 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 RUN addgroup --system --gid 1000 litellm && \
     adduser --system --uid 1000 --ingroup litellm litellm && \
-    mkdir -p /var/log/litellm && \
+    mkdir -p /app /var/log/litellm && \
     chown -R litellm:litellm /app /var/log/litellm
 
 USER litellm
