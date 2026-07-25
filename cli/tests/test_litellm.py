@@ -582,6 +582,7 @@ class TestAdversarial:
 
 
 @pytest.mark.e2e
+@pytest.mark.staging
 class TestE2ELitellmStack:
     """Integration tests requiring a live Cove stack with litellm profile.
 
