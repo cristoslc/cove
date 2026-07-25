@@ -179,6 +179,8 @@
           - --sans
           - vault.cove
           - --sans
+          - litellm.cove
+          - --sans
           - hc.cove
           - --sans
           - ca.cove
@@ -201,7 +203,7 @@
       ansible.builtin.shell: |
         set -eo pipefail
         CERT="{{ cove_data_root }}/certs/cove.local.pem"
-        for host in "git.cove" "vault.cove" "hc.cove" "ca.cove" "*.cove" "*.cove.{{ ansible_hostname }}"; do
+        for host in "git.cove" "vault.cove" "litellm.cove" "hc.cove" "ca.cove" "*.cove" "*.cove.{{ ansible_hostname }}"; do
           if ! openssl x509 -in "$CERT" -text -noout | grep -qF "DNS:$host"; then
             echo "MISSING: $host"
             exit 1
@@ -216,7 +218,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove git.cove vault.cove hc.cove ca.cove"
+        line: "127.0.0.1 cove git.cove vault.cove litellm.cove hc.cove ca.cove"
         state: present
       failed_when: false
 
@@ -254,6 +256,7 @@
         - "{{ cove_data_root }}/nginx/user.d"
         - "{{ cove_data_root }}/nginx/config/dns"
         - "{{ cove_data_root }}/dnsmasq"
+        - "{{ cove_data_root }}/litellm"
 
     # TEMPLATES ----------------------------------------------------------------
     - name: Render nginx config from template
@@ -261,6 +264,13 @@
         src: "{{ nginx_conf_dir }}/default.conf.j2"
         dest: "{{ nginx_conf_dir }}/default.conf"
         mode: "0644"
+
+    - name: Render litellm config from template (first boot only)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/litellm/config.yaml.j2"
+        dest: "{{ cove_data_root }}/litellm/config.yaml"
+        mode: "0644"
+      when: not (cove_data_root ~ "/litellm/config.yaml") is exists
 
     - name: Render dnsmasq config from template
       ansible.builtin.template:
@@ -314,6 +324,12 @@
           DNSMASQ_PORT={{ dnsmasq_port }}
           NGINX_HTTPS_PORT={{ nginx_https_port }}
           NGINX_HTTP_PORT={{ nginx_http_port }}
+          LITELLM_IMAGE={{ litellm_image | default('cove-litellm:1.84.0') }}
+          LITELLM_CONTAINER_NAME={{ litellm_container_name | default('cove-litellm') }}
+          LITELLM_PORT={{ litellm_port | default('4000') }}
+          HEADROOM_IMAGE={{ headroom_image | default('ghcr.io/chopratejas/headroom:latest@sha256:50b85d8e320cfcdf1b38919bb7ae067b93ff7a8de0a93f05b2c1246370200d1c') }}
+          HEADROOM_CONTAINER_NAME={{ headroom_container_name | default('cove-headroom') }}
+          HEADROOM_PORT={{ headroom_port | default('4001') }}
 
     # CONTAINERS -------------------------------------------------------------
     - name: Detect active docker context endpoint

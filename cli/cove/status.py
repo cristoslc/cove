@@ -29,6 +29,11 @@ SERVICES = [
     ("cove-dnsproxy", "dnsproxy"),
 ]
 
+OPTIONAL_SERVICES = [
+    ("cove-litellm", "LiteLLM"),
+    ("cove-headroom", "Headroom"),
+]
+
 NGINX_HTTPS_PORT = 8443
 NGINX_HTTP_PORT = 8080
 
@@ -63,6 +68,21 @@ def _check_containers() -> list[CheckResult]:
                 ok=False,
                 detail=f"Container {container_name} is not running",
                 hints=[f"Run `docker compose --project-directory ... up -d {container_name.split('-', 1)[1] or container_name}`"],
+            ))
+        else:
+            status = info.get("Status", "unknown")
+            results.append(CheckResult(
+                name=label,
+                ok=True,
+                detail=status,
+            ))
+    for container_name, label in OPTIONAL_SERVICES:
+        info = containers.get(container_name)
+        if info is None:
+            results.append(CheckResult(
+                name=label,
+                ok=True,
+                detail=f"Container {container_name} is not running (optional)",
             ))
         else:
             status = info.get("Status", "unknown")

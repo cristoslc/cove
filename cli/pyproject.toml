@@ -27,12 +27,13 @@ cove = "cove.cli:app"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# E2E tests run by default alongside unit tests (single-command suite).
-# They use the session-scoped `_cove_artifact` fixture which builds+installs
-# the wheel once; tests self-skip if the build fails.
-# To skip e2e: pytest -m "not e2e"
+# Tier 0 (unit/config): pytest -m "not e2e and not staging"
+# Tier 1 (integration): pytest -m "e2e and not staging"
+# Tier 2 (staging E2E): pytest -m staging
+# All tiers:           pytest
 markers = [
-    "e2e: end-to-end tests that build+install the wheel and invoke the cove binary",
+    "e2e: integration tests that build+install the wheel and invoke the cove binary (tier 1)",
+    "staging: E2E tests that require a live Cove stack deployed to staging (tier 2)",
 ]
 
 
