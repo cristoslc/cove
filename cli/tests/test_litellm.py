@@ -674,17 +674,13 @@ class TestE2ELitellmStack:
 
     def test_wrong_host_header_returns_444(self):
         """A request with a wrong Host header should hit the default server
-        and get 444, not proxy to litellm."""
+        and get 444, not proxy to litellm. nginx's 444 closes the connection
+        without a response, so requests raises ConnectionError."""
         import requests
-        resp = requests.get(
-            "https://127.0.0.1:8443/health",
-            headers={"Host": "evil.example.com"},
-            verify=False,
-            timeout=10,
-        )
-        # 444 is nginx-specific: connection closed without response
-        # requests will raise ConnectionError for this
-        # So we check that it does NOT return 200
-        assert resp.status_code != 200, (
-            "Wrong Host header should not reach litellm — expected 444 or connection close"
-        )
+        with pytest.raises(requests.exceptions.ConnectionError):
+            requests.get(
+                "https://127.0.0.1:8443/health",
+                headers={"Host": "evil.example.com"},
+                verify=False,
+                timeout=10,
+            )

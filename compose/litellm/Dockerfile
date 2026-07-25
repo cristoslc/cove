@@ -23,4 +23,4 @@ WORKDIR /app
 EXPOSE 4000
 
 ENTRYPOINT ["litellm"]
-CMD ["--config", "/app/config.yaml", "--port", "4000", "--host", "127.0.0.1"]
+CMD ["--config", "/app/config.yaml", "--port", "4000", "--host", "0.0.0.0"]
