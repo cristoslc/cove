@@ -14,6 +14,8 @@ services:
       - /var/log/litellm
     ports:
       - "127.0.0.1:${LITELLM_PORT:-4000}:4000"
+    volumes:
+      - ${COVE_DATA_ROOT:-./data}/litellm/config.yaml:/app/config.yaml
     environment:
       LITELLM_CONFIG: /app/config.yaml
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
