@@ -59,6 +59,33 @@ ANTHROPIC_API_KEY=sk-ant-...
 OPENAI_API_KEY=sk-proj-...
 ```
 
+## Configuration
+
+The LiteLLM config lives at `~/Documents/cove-data/litellm/config.yaml`. It's rendered from a template on first `cove up`, then it's yours to edit. Subsequent `cove up` runs won't overwrite it — your changes persist.
+
+To add a model:
+
+```yaml
+model_list:
+  - model_name: my-custom-model
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5
+      api_key: os.environ/ANTHROPIC_API_KEY
+```
+
+After editing, restart the proxy:
+
+```shell
+cove litellm down && cove litellm up
+```
+
+To reset to defaults, delete the file and re-run `cove up`:
+
+```shell
+rm ~/Documents/cove-data/litellm/config.yaml
+cove up --no-provision
+```
+
 ## Commands
 
 ```shell

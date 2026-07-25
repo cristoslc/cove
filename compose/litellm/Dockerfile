@@ -10,8 +10,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-COPY config.yaml /app/config.yaml
-
 RUN addgroup --system --gid 1000 litellm && \
     adduser --system --uid 1000 --ingroup litellm litellm && \
     mkdir -p /var/log/litellm && \
