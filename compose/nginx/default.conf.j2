@@ -20,9 +20,10 @@ upstream vault_backend {
     server vault:8200;
 }
 
-upstream litellm_backend {
-    server litellm:4000;
-}
+# litellm is an optional profiled service — it may not be running.
+# Using a variable in proxy_pass with a resolver defers DNS resolution
+# to request time, so nginx starts even when litellm is absent.
+# The resolver uses Docker's embedded DNS (127.0.0.11).
 
 include /etc/nginx/user.d/*.conf;
 
@@ -111,6 +112,9 @@ server {
 }
 
 # litellm.cove — LiteLLM proxy (route-whitelisted at nginx layer)
+# litellm is an optional profiled service. Using a variable for the
+# upstream host defers DNS resolution to request time, so nginx starts
+# even when the litellm container is not running.
 server {
     listen 443 ssl;
     server_name litellm.cove;
@@ -118,8 +122,11 @@ server {
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
 
+    resolver 127.0.0.11 valid=10s;
+    set $litellm_upstream http://litellm:4000;
+
     location = /health {
-        proxy_pass http://litellm_backend;
+        proxy_pass $litellm_upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -127,7 +134,7 @@ server {
     }
 
     location = /v1/models {
-        proxy_pass http://litellm_backend;
+        proxy_pass $litellm_upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -135,7 +142,7 @@ server {
     }
 
     location /v1/ {
-        proxy_pass http://litellm_backend;
+        proxy_pass $litellm_upstream;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
