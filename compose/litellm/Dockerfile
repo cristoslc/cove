@@ -1,6 +1,6 @@
 FROM python:3.13-slim AS builder
 
-RUN pip install --no-cache-dir litellm==1.84.0
+RUN pip install --no-cache-dir "litellm[proxy]==1.84.0"
 
 FROM python:3.13-slim
 
