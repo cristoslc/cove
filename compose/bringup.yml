@@ -319,7 +319,7 @@
           LITELLM_IMAGE={{ litellm_image | default('cove-litellm:1.84.0') }}
           LITELLM_CONTAINER_NAME={{ litellm_container_name | default('cove-litellm') }}
           LITELLM_PORT={{ litellm_port | default('4000') }}
-          HEADROOM_IMAGE={{ headroom_image | default('ghcr.io/headroom-ai/headroom:0.1.0') }}
+          HEADROOM_IMAGE={{ headroom_image | default('ghcr.io/chopratejas/headroom:latest@sha256:50b85d8e320cfcdf1b38919bb7ae067b93ff7a8de0a93f05b2c1246370200d1c') }}
           HEADROOM_CONTAINER_NAME={{ headroom_container_name | default('cove-headroom') }}
           HEADROOM_PORT={{ headroom_port | default('4001') }}
 

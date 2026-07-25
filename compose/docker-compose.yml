@@ -154,7 +154,7 @@ services:
 
   headroom:
     profiles: ["litellm"]
-    image: ${HEADROOM_IMAGE:-ghcr.io/headroom-ai/headroom:0.1.0}
+    image: ${HEADROOM_IMAGE:-ghcr.io/chopratejas/headroom:latest@sha256:50b85d8e320cfcdf1b38919bb7ae067b93ff7a8de0a93f05b2c1246370200d1c}
     container_name: ${HEADROOM_CONTAINER_NAME:-cove-headroom}
     restart: unless-stopped
     read_only: true
