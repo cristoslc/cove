@@ -132,7 +132,6 @@ services:
     image: ${LITELLM_IMAGE:-cove-litellm:1.84.0}
     container_name: ${LITELLM_CONTAINER_NAME:-cove-litellm}
     restart: unless-stopped
-    read_only: true
     tmpfs:
       - /tmp
       - /var/log/litellm
