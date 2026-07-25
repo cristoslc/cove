@@ -13,7 +13,8 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 RUN addgroup --system --gid 1000 litellm && \
     adduser --system --uid 1000 --ingroup litellm litellm && \
     mkdir -p /app /var/log/litellm && \
-    chown -R litellm:litellm /app /var/log/litellm
+    chown -R litellm:litellm /app /var/log/litellm && \
+    chown -R litellm:litellm /usr/local/lib/python3.13/site-packages/litellm/proxy/_experimental
 
 USER litellm
 WORKDIR /app
