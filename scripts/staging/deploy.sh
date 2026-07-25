@@ -57,8 +57,13 @@ echo "Running cove up to re-render nginx config and restart containers..." >&2
 
 # Run cove up with --no-provision (skip Forgejo/Vault provisioning)
 # and --skip-trust-store (staging doesn't need system trust store)
-if ! cove up --no-provision 2>&1 >&2; then
-    echo "deploy.sh: cove up failed" >&2
+# cove up may return non-zero if Vault is sealed or optional services
+# aren't running — that's OK for staging, we just need the containers up.
+cove up --no-provision 2>&1 >&2 || true
+
+# Verify nginx is actually running
+if ! docker ps --filter "name=cove-nginx" --format "{{.Status}}" | grep -q "Up"; then
+    echo "deploy.sh: nginx container is not running after cove up" >&2
     exit 1
 fi
 
