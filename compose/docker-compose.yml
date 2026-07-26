@@ -168,6 +168,7 @@ services:
       UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
       UI_PASSWORD: ${LITELLM_UI_PASSWORD:-}
       PROXY_BASE_URL: https://litellm.cove
+      STORE_MODEL_IN_DB: "True"
     depends_on:
       litellm-db:
         condition: service_healthy
