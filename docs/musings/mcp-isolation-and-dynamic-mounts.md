@@ -192,6 +192,26 @@ The central MetaMCP model is better for always-on servers (weather, web search, 
 
 This gives us the best of both: always-on utility servers + project-scoped isolation for code-accessing servers.
 
+### DNS Naming
+
+```
+mcp.cove.local              ──> global MetaMCP (always-on utility servers)
+{project}.mcp.cove.local    ──> per-project MetaMCP (project-scoped servers)
+mcp.cove.{hostname}         ──> global MetaMCP from tailnet
+{project}.mcp.cove.{hostname} ──> per-project MetaMCP from tailnet
+```
+
+The MCP Colima VM exposes ports via `--network-address` or port forwarding. Nginx on the host routes `*.mcp.cove` to the MCP VM's MetaMCP endpoints. Each per-project MetaMCP gets a dynamic port on the VM; nginx routes by subdomain.
+
+```
+Host nginx
+  mcp.cove.local              ──> MCP VM :12000 ──> global MetaMCP
+  project-a.mcp.cove.local    ──> MCP VM :12001 ──> project-a MetaMCP
+  project-b.mcp.cove.local    ──> MCP VM :12002 ──> project-b MetaMCP
+```
+
+Port allocation is dynamic — `cove project up` assigns the next available port and registers the route with nginx (or the MCP VM's internal reverse proxy). This integrates with the existing Cove DNS pattern (dnsmasq wildcard `*.cove` + nginx regex server blocks).
+
 ## Open Questions
 
 1. **What's the actual threat model?** If I'm the only user and I control which MCP servers I install, is parent-dir mounting acceptable? The risk is supply-chain attacks on MCP server dependencies, not malicious intent.
