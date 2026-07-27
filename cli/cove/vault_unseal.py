@@ -3,12 +3,14 @@
 import json
 import os
 import platform
+import ssl
 import subprocess
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Optional
 
-VAULT_ADDR_DEFAULT = "http://127.0.0.1:8200"
+VAULT_ADDR_DEFAULT = "https://vault.cove/"
 KEYSTORE_PREFIX = "cove/vault"
 KEYSTORE_ACCOUNT = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
 KEYSTORE_THRESHOLD = 3
@@ -16,6 +18,20 @@ KEYSTORE_THRESHOLD = 3
 
 def _vault_addr() -> str:
     return os.environ.get("VAULT_ADDR", VAULT_ADDR_DEFAULT)
+
+
+def _cove_ca_path() -> Path:
+    from cove.certs import ca_path
+
+    return ca_path() / "rootCA.pem"
+
+
+def _vault_ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    ca = _cove_ca_path()
+    if ca.is_file():
+        ctx.load_verify_locations(cafile=str(ca))
+    return ctx
 
 
 def _read_keystore(service: str) -> str:
@@ -52,7 +68,7 @@ def _vault_post(path: str, body: Optional[dict] = None) -> tuple[int, dict]:
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, context=_vault_ssl_context()) as resp:
             content = resp.read().decode()
             return resp.status, (json.loads(content) if content else {})
     except urllib.error.HTTPError as e:
@@ -67,7 +83,7 @@ def vault_health() -> dict:
     url = f"{_vault_addr()}/v1/sys/health"
     req = urllib.request.Request(url)
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, context=_vault_ssl_context()) as resp:
             content = resp.read().decode()
             return json.loads(content) if content else {}
     except urllib.error.HTTPError as e:

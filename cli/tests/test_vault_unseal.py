@@ -10,6 +10,9 @@ from cove import vault_unseal
 
 
 class TestVaultHealth:
+    def test_default_addr_is_vault_cove_https(self):
+        assert vault_unseal.VAULT_ADDR_DEFAULT == "https://vault.cove/"
+
     def test_healthy_parsed_correctly(self):
         with patch("urllib.request.urlopen") as mock_urlopen:
             mock_response = mock_urlopen.return_value.__enter__.return_value
@@ -58,6 +61,23 @@ class TestVaultPost:
 
             with pytest.raises(RuntimeError, match="unreachable"):
                 vault_unseal._vault_post("v1/sys/unseal", {"key": "test"})
+
+    def test_vault_post_passes_ssl_context_to_urlopen(self, monkeypatch):
+        import ssl
+
+        monkeypatch.setenv("VAULT_ADDR", "https://vault.cove")
+        monkeypatch.setattr(
+            "cove.vault_unseal._vault_ssl_context",
+            lambda: ssl.create_default_context(),
+        )
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = mock_urlopen.return_value.__enter__.return_value
+            mock_resp.status = 200
+            mock_resp.read.return_value = b"{}"
+            vault_unseal._vault_post("v1/sys/unseal", {"key": "k"})
+            args, kwargs = mock_urlopen.call_args
+            assert "context" in kwargs
+            assert isinstance(kwargs["context"], ssl.SSLContext)
 
 
 class TestEnsureUnsealed:
