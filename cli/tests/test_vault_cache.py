@@ -1,10 +1,27 @@
 """Tests for vault_cache module."""
 
+import ssl
 from unittest.mock import patch, MagicMock, call
 
 import pytest
 
 from cove import vault_cache
+
+
+class TestVaultAddrDefault:
+    """RED: the CLI default must point at the reachable ingress, not an
+    unpublished port on the host loopback."""
+
+    def test_default_addr_is_vault_cove_https(self):
+        assert vault_cache.VAULT_ADDR_DEFAULT == "https://vault.cove/"
+
+    def test_vault_addr_respects_env_override(self, monkeypatch):
+        monkeypatch.setenv("VAULT_ADDR", "http://override.example:8200")
+        assert vault_cache._vault_addr() == "http://override.example:8200"
+
+    def test_vault_addr_falls_back_to_default_when_env_unset(self, monkeypatch):
+        monkeypatch.delenv("VAULT_ADDR", raising=False)
+        assert vault_cache._vault_addr() == "https://vault.cove/"
 
 
 class TestVaultPutOpRef:
@@ -95,3 +112,60 @@ class TestVaultPutOpRef:
 
             with pytest.raises(RuntimeError, match="op failed"):
                 vault_cache.vault_put_op_ref(op_ref, force_refresh=False)
+
+
+class TestVaultTLSContext:
+    """RED: requests to https://vault.cove/ must verify against the cove root CA,
+    not the system trust store (which on a fresh box may not have it installed)."""
+
+    def test_ssl_context_loads_cove_root_ca(self, monkeypatch):
+        import tempfile
+        from pathlib import Path
+
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+        from datetime import datetime, timedelta, timezone
+
+        key = ec.generate_private_key(ec.SECP256R1())
+        subject = issuer = x509.Name(
+            [x509.NameAttribute(NameOID.COMMON_NAME, "test-cove-root-ca")]
+        )
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.now(timezone.utc) - timedelta(days=1))
+            .not_valid_after(datetime.now(timezone.utc) + timedelta(days=1))
+            .sign(key, hashes.SHA256())
+        )
+        ca_bytes = cert.public_bytes(serialization.Encoding.PEM)
+
+        with tempfile.TemporaryDirectory() as d:
+            cafile = Path(d) / "rootCA.pem"
+            cafile.write_bytes(ca_bytes)
+            monkeypatch.setattr(
+                "cove.vault_cache._cove_ca_path", lambda: cafile
+            )
+            ctx = vault_cache._vault_ssl_context()
+            assert isinstance(ctx, ssl.SSLContext)
+            assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+    def test_vault_request_passes_ssl_context_to_urlopen(self, monkeypatch):
+        monkeypatch.setenv("VAULT_ADDR", "https://vault.cove")
+        monkeypatch.setattr("cove.vault_cache._vault_token", lambda: "tok")
+        monkeypatch.setattr(
+            "cove.vault_cache._vault_ssl_context",
+            lambda: ssl.create_default_context(),
+        )
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = mock_urlopen.return_value.__enter__.return_value
+            mock_resp.status = 200
+            mock_resp.read.return_value = b'{"data": {"data": {"value": "v"}}}'
+            vault_cache.vault_get_cached("op://Private/Item/field")
+            args, kwargs = mock_urlopen.call_args
+            assert "context" in kwargs, "urlopen must be called with an SSL context"
+            assert isinstance(kwargs["context"], ssl.SSLContext)

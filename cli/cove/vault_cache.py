@@ -4,15 +4,17 @@ import json
 import os
 import platform
 import re
+import ssl
 import subprocess
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Optional
 
 from cove import local_cache
 
 
-VAULT_ADDR_DEFAULT = "http://127.0.0.1:8200"
+VAULT_ADDR_DEFAULT = "https://vault.cove/"
 VAULT_KV_MOUNT = "secret"
 VAULT_OP_CACHE_PREFIX = "op-cache"
 KEYSTORE_TOKEN_SERVICE = "cove/vault/root-token"
@@ -44,6 +46,26 @@ def op_ref_to_vault_path(ref: str) -> str:
 
 def _vault_addr() -> str:
     return os.environ.get("VAULT_ADDR", VAULT_ADDR_DEFAULT)
+
+
+def _cove_ca_path() -> Path:
+    """Return the path to the cove root CA certificate used for TLS verification."""
+    from cove.certs import ca_path
+
+    return ca_path() / "rootCA.pem"
+
+
+def _vault_ssl_context() -> ssl.SSLContext:
+    """Build an SSL context that verifies against the cove root CA.
+
+    Falls back to the system trust store if the cove CA file is missing
+    (e.g. before ``cove certs ensure-ca`` has run).
+    """
+    ctx = ssl.create_default_context()
+    ca = _cove_ca_path()
+    if ca.is_file():
+        ctx.load_verify_locations(cafile=str(ca))
+    return ctx
 
 
 def _vault_token() -> str:
@@ -89,7 +111,7 @@ def _vault_request(
     req.add_header("X-Vault-Token", _vault_token())
     req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, context=_vault_ssl_context()) as resp:
             content = resp.read().decode()
             return resp.status, (json.loads(content) if content else {})
     except urllib.error.HTTPError as e:
