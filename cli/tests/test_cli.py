@@ -319,7 +319,7 @@ class TestCoveStatusCommand:
             mock_nginx.return_value = CheckResult(name="nginx ingress", ok=True, detail="cove ingress ok")
             mock_forgejo.return_value = CheckResult(name="Forgejo API", ok=True, detail="ok")
             mock_vault.return_value = CheckResult(name="Vault API", ok=True, detail="initialized, unsealed")
-            mock_dns.return_value = CheckResult(name="DNS resolution", ok=True, detail="git.cove → 127.0.0.1")
+            mock_dns.return_value = CheckResult(name="DNS resolution", ok=True, detail="git.cove.local → 127.0.0.1")
 
             runner = CliRunner()
             result = runner.invoke(cove.cli.app, ["status"])
@@ -344,7 +344,7 @@ class TestCoveStatusCommand:
             mock_nginx.return_value = CheckResult(name="nginx ingress", ok=True, detail="cove ingress ok")
             mock_forgejo.return_value = CheckResult(name="Forgejo API", ok=True, detail="ok")
             mock_vault.return_value = CheckResult(name="Vault API", ok=True, detail="initialized, unsealed")
-            mock_dns.return_value = CheckResult(name="DNS resolution", ok=True, detail="git.cove → 127.0.0.1")
+            mock_dns.return_value = CheckResult(name="DNS resolution", ok=True, detail="git.cove.local → 127.0.0.1")
 
             runner = CliRunner()
             result = runner.invoke(cove.cli.app, ["status"])

@@ -383,9 +383,13 @@ class TestE2EPipeline:
         key_file = pki_dir / "cove.local-key.pem"
         cert_file = pki_dir / "cove.local.pem"
         sans = [
-            "*.cove", "*.cove.testhost", "cove",
-            "git.cove", "vault.cove", "hc.cove", "ca.cove",
-            "*.pages.cove", "localhost", "127.0.0.1", "::1",
+            "*.cove", "*.cove.local", "*.cove.testhost", "*.cove.local.testhost",
+            "cove", "cove.local",
+            "git.cove", "git.cove.local",
+            "vault.cove", "vault.cove.local",
+            "hc.cove", "hc.cove.local", "ca.cove", "ca.cove.local",
+            "*.pages.cove", "*.pages.cove.local",
+            "localhost", "127.0.0.1", "::1",
         ]
         sign_cert(sans, key_file, cert_file)
         ca_cert = pki_dir / "rootCA.pem"
