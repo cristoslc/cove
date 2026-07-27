@@ -136,6 +136,62 @@ servers:
 
 A `cove mcp mount <project> --server <server>` command updates the config and runs `docker compose up -d <server>` — no VM restart, no swarm disruption.
 
+## Colima VM Lifecycle
+
+Colima auto-checks for updates on `colima start` but doesn't auto-update. The MCP VM would need periodic `colima stop mcp && colima upgrade mcp`. This could be automated in `cove up` (check version, prompt to upgrade) or a background health daemon. Not a burden — Colima releases are infrequent and upgrades are fast (~30s).
+
+## Central vs. Per-Project MetaMCP
+
+Two competing architectures:
+
+### Central MetaMCP (one aggregator, always running)
+
+```
+MCP VM
+  └── MetaMCP (always up, no mounts)
+        ├── filesystem-server (mounts: project-a, project-b)
+        ├── github-server    (mounts: project-a)
+        └── weather-server   (no mounts)
+```
+
+- Simple — one MetaMCP instance, all servers registered
+- Servers are always consuming resources even when no project is active
+- Mount list grows over time as projects accumulate
+- Server restarts affect all projects simultaneously
+
+### Per-Project MetaMCP (project-scoped, starts/stops with project)
+
+```
+MCP VM
+  ├── MetaMCP-project-a (started by `cove project up .` in project-a/)
+  │     ├── filesystem-server (mounts: project-a/)
+  │     └── github-server    (mounts: project-a/)
+  │
+  └── MetaMCP-project-b (started by `cove project up .` in project-b/)
+        ├── filesystem-server (mounts: project-b/)
+        └── db-server        (mounts: project-b/data/)
+```
+
+- Each project gets its own MetaMCP + server containers
+- Starts on `cove project up .`, stops on teardown
+- Zero resource consumption when project is inactive
+- Perfect isolation — project-a's servers can't see project-b's files
+- Mounts are trivially scoped to the project directory
+- Maps naturally to Cove's existing project model
+
+### The Case for Per-Project
+
+Cove already has `cove project up` / `cove project down`. Adding MCP servers as project-scoped containers is a natural extension — the project's `cove.yaml` (or equivalent) declares which MCP servers it needs, and `cove project up` starts them alongside the project's other services.
+
+The central MetaMCP model is better for always-on servers (weather, web search, etc.) that aren't project-specific. These could live in a separate "global" MetaMCP instance that's always running.
+
+**Hybrid approach:**
+- One global MetaMCP for always-on, non-project servers (weather, web search, etc.)
+- Per-project MetaMCP instances for project-scoped servers (filesystem, github, db, etc.)
+- The global MetaMCP can also serve as a fallback — if a project doesn't declare its own servers, it gets the global set
+
+This gives us the best of both: always-on utility servers + project-scoped isolation for code-accessing servers.
+
 ## Open Questions
 
 1. **What's the actual threat model?** If I'm the only user and I control which MCP servers I install, is parent-dir mounting acceptable? The risk is supply-chain attacks on MCP server dependencies, not malicious intent.
