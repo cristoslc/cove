@@ -54,15 +54,16 @@ def status():
         raise SystemExit(result.returncode)
 
     click.echo("Checking /health endpoint...")
-    health = subprocess.run(
-        ["curl", "-sf", "-H", "Host: litellm.cove", "https://127.0.0.1:8443/health"],
-        capture_output=True, text=True, timeout=10,
-    )
-    if health.returncode == 0:
-        click.echo("  Health: OK")
-    else:
-        click.echo("  Health: UNREACHABLE")
-        raise SystemExit(1)
+    for host in ("litellm.cove.local", "litellm.cove"):
+        health = subprocess.run(
+            ["curl", "-sf", "-H", f"Host: {host}", "https://127.0.0.1:8443/health"],
+            capture_output=True, text=True, timeout=10,
+        )
+        if health.returncode == 0:
+            click.echo("  Health: OK")
+            return
+    click.echo("  Health: UNREACHABLE")
+    raise SystemExit(1)
 
 
 @litellm.command()

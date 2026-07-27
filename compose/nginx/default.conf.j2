@@ -53,7 +53,7 @@ server {
 # hc.cove — health check endpoint
 server {
     listen 443 ssl;
-    server_name hc.cove;
+    server_name hc.cove hc.cove.local;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
@@ -67,7 +67,7 @@ server {
 # ca.cove — redirect to the config page where the root CA can be downloaded
 server {
     listen 443 ssl;
-    server_name ca.cove;
+    server_name ca.cove ca.cove.local;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
@@ -78,7 +78,7 @@ server {
 # git.cove — forgejo
 server {
     listen 443 ssl;
-    server_name git.cove cove;
+    server_name git.cove git.cove.local cove cove.local;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
@@ -97,7 +97,7 @@ server {
 # vault.cove — vault UI
 server {
     listen 443 ssl;
-    server_name vault.cove;
+    server_name vault.cove vault.cove.local;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
@@ -119,7 +119,7 @@ server {
 # not route whitelisting. Admin UI is enabled with a master key.
 server {
     listen 443 ssl;
-    server_name litellm.cove;
+    server_name litellm.cove litellm.cove.local;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
@@ -139,7 +139,7 @@ server {
 # Per-machine forge — git.cove.<slug> and cove.<slug>
 server {
     listen 443 ssl;
-    server_name ~^git\.cove\.[a-zA-Z0-9-]+$ ~^cove\.[a-zA-Z0-9-]+$;
+    server_name ~^git\.cove\.[a-zA-Z0-9-]+$ ~^git\.cove\.local\.[a-zA-Z0-9-]+$ ~^cove\.[a-zA-Z0-9-]+$ ~^cove\.local\.[a-zA-Z0-9-]+$;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
@@ -158,7 +158,7 @@ server {
 # Per-machine vault — vault.cove.<slug>
 server {
     listen 443 ssl;
-    server_name ~^vault\.cove\.[a-zA-Z0-9-]+$;
+    server_name ~^vault\.cove\.[a-zA-Z0-9-]+$ ~^vault\.cove\.local\.[a-zA-Z0-9-]+$;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
@@ -178,6 +178,27 @@ server {
 server {
     listen 443 ssl;
     server_name ~^(?<owner>[a-zA-Z0-9-]+)\.pages\.cove$;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    root /data/pages/sites/$owner;
+
+    location / {
+        try_files /.index$uri /.index$uri/index.html $uri $uri/index.html =404;
+    }
+
+    location = /_health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+}
+
+# pages subdomain — *.pages.cove.local
+server {
+    listen 443 ssl;
+    server_name ~^(?<owner>[a-zA-Z0-9-]+)\.pages\.cove\.local$;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;

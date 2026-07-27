@@ -162,7 +162,7 @@
         dns_uuid: "{{ uuids.stdout_lines[1] }}"
         profile_uuid: "{{ uuids.stdout_lines[2] }}"
 
-    - name: Generate cert for *.cove + per-machine wildcard
+    - name: Generate cert for *.cove + *.cove.local + per-machine wildcard
       ansible.builtin.command:
         argv:
           - cove
@@ -171,21 +171,39 @@
           - --sans
           - "*.cove"
           - --sans
+          - "*.cove.local"
+          - --sans
           - "*.cove.{{ ansible_hostname }}"
+          - --sans
+          - "*.cove.local.{{ ansible_hostname }}"
           - --sans
           - cove
           - --sans
+          - cove.local
+          - --sans
           - git.cove
+          - --sans
+          - git.cove.local
           - --sans
           - vault.cove
           - --sans
+          - vault.cove.local
+          - --sans
           - litellm.cove
+          - --sans
+          - litellm.cove.local
           - --sans
           - hc.cove
           - --sans
+          - hc.cove.local
+          - --sans
           - ca.cove
           - --sans
+          - ca.cove.local
+          - --sans
           - "*.pages.cove"
+          - --sans
+          - "*.pages.cove.local"
           - --sans
           - localhost
           - --sans
@@ -203,7 +221,16 @@
       ansible.builtin.shell: |
         set -eo pipefail
         CERT="{{ cove_data_root }}/certs/cove.local.pem"
-        for host in "git.cove" "vault.cove" "litellm.cove" "hc.cove" "ca.cove" "*.cove" "*.cove.{{ ansible_hostname }}"; do
+        for host in \
+          "git.cove" "git.cove.local" \
+          "vault.cove" "vault.cove.local" \
+          "litellm.cove" "litellm.cove.local" \
+          "hc.cove" "hc.cove.local" \
+          "ca.cove" "ca.cove.local" \
+          "*.cove" "*.cove.local" \
+          "*.cove.{{ ansible_hostname }}" "*.cove.local.{{ ansible_hostname }}" \
+          "cove" "cove.local" \
+          "*.pages.cove" "*.pages.cove.local"; do
           if ! openssl x509 -in "$CERT" -text -noout | grep -qF "DNS:$host"; then
             echo "MISSING: $host"
             exit 1
@@ -218,7 +245,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove git.cove vault.cove litellm.cove hc.cove ca.cove"
+        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local litellm.cove litellm.cove.local hc.cove hc.cove.local ca.cove ca.cove.local"
         state: present
       failed_when: false
 
