@@ -1,11 +1,18 @@
 #!/bin/bash
 set -e
 FILE="/etc/resolver/cove.{{ ansible_hostname }}"
+FILE2="/etc/resolver/cove.local.{{ ansible_hostname }}"
 if [ "$EUID" -ne 0 ]; then exec sudo bash "$0"; fi
 mkdir -p /etc/resolver
 cat > "$FILE" <<'EOF'
 nameserver {{ ts_ip }}
 port 5353
 EOF
+cat > "$FILE2" <<'EOF'
+nameserver {{ ts_ip }}
+port 5353
+EOF
 echo "DNS resolver configured: $FILE"
+echo "DNS resolver configured: $FILE2"
 echo "Test: dscacheutil -q host -a name git.cove.{{ ansible_hostname }}"
+echo "Test: dscacheutil -q host -a name git.cove.local.{{ ansible_hostname }}"
