@@ -64,24 +64,97 @@ Homelab solves this differently: MCP servers run on a **separate host** with no 
 
 Cove is different — it's a local development platform. The whole point is that MCP servers *should* be able to interact with local projects. So we can't just say "no local access."
 
+## The Hot-Reload Requirement
+
+Multiple swarms may be running simultaneously. A Colima VM restart kills all running swarms — unacceptable. So VM-level mounts must be set once at boot and never change. Mount changes must happen at the container level, which is hot-reloadable (just `docker compose up -d`).
+
+## The Two-Layer Mount Architecture
+
+This reframes the problem entirely:
+
+```
+Host (~/Documents/code/)
+  └── Colima VM "mcp" (broad VM-level mount of ~/Documents/code/)
+        ├── Container: filesystem-server (bind mount: project-a/, project-b/)
+        ├── Container: github-server    (bind mount: project-a/.git/)
+        ├── Container: playwright-server (no code mount)
+        └── Container: db-server        (bind mount: project-b/data/)
+```
+
+**Layer 1 — VM level (set at boot, never changes):**
+- Mount `~/Documents/code/` into the Colima VM
+- This is the "parent-dir" mount — broad, set once
+- The VM sees everything, but no process inside the VM sees it by default
+
+**Layer 2 — Container level (hot-reloadable, per-server):**
+- Each MCP server runs in its own Docker container within the VM
+- Each container gets explicit bind mounts to only the projects it needs
+- Adding a project to a server is `docker compose up -d <server>` — no VM restart
+- Multiple swarms coexist; each has its own set of containers with their own mounts
+
+### Why This Works
+
+- **Hot-reloadable**: Container-level mounts are instantaneous — no VM restart
+- **Per-server granularity**: A `filesystem` server gets project mounts; a `weather` server gets none
+- **Per-swarm isolation**: Each swarm's servers are independent containers; restarting one doesn't affect others
+- **VM restart is rare**: Only when the Colima VM itself needs updating (kernel, Docker engine, resource reallocation)
+
+### The Threat Model Shifts
+
+The VM-level mount is still broad, but the blast radius is now **per-container**:
+- A compromised `weather` server has no code access — it's network-only
+- A compromised `filesystem` server can only read the projects explicitly mounted to it
+- The VM itself is the isolation boundary — if the VM is compromised, everything is exposed, but that's the same as any VM-based isolation
+
+This is acceptable for a single-user homelab: the VM is trusted infrastructure; the containers are the untrusted surface.
+
+## Implementation Sketch
+
+```yaml
+# ~/.config/cove/mcp-servers.yaml
+servers:
+  filesystem:
+    image: ghcr.io/.../mcp-filesystem
+    mounts:
+      - project-a
+      - project-b
+    resources:
+      cpus: 0.5
+      memory: 256m
+
+  github:
+    image: ghcr.io/.../mcp-github
+    mounts:
+      - project-a
+    env:
+      GITHUB_TOKEN: "@cove:secrets/github-token"
+
+  weather:
+    image: ghcr.io/.../mcp-weather
+    mounts: []  # no code access
+```
+
+A `cove mcp mount <project> --server <server>` command updates the config and runs `docker compose up -d <server>` — no VM restart, no swarm disruption.
+
 ## Open Questions
 
 1. **What's the actual threat model?** If I'm the only user and I control which MCP servers I install, is parent-dir mounting acceptable? The risk is supply-chain attacks on MCP server dependencies, not malicious intent.
 
 2. **Should we separate MCP servers by trust level?** A `filesystem` MCP server from a verified publisher is different from a random `npx` package. Maybe the MCP VM has multiple mount profiles: `trusted` (full code access), `sandboxed` (no code access, network only), `custom` (explicit mounts).
 
-3. **Does the Colima VM restart cost matter?** Adding a mount requires `colima stop mcp && colima start mcp` — ~10-15 seconds. Is that acceptable per project? Or do we need hot-reloadable mounts?
+3. **Does the Colima VM restart cost matter?** With the two-layer architecture, VM restarts are rare (only for VM updates). Container-level mount changes are hot-reloadable. The restart cost is no longer a concern.
 
-4. **What about Docker-in-Docker?** If the MCP VM runs Docker, and each MCP server is in its own container within the VM, we could mount selectively per-container. But that adds complexity.
+4. **What about Docker-in-Docker?** Not needed — the Colima VM *is* the Docker host. Containers within it bind-mount from the VM's persistent host mount. This is standard Docker, not DinD.
 
-5. **Is there a middle ground?** Mount `~/Documents/code/` read-only, and only specific project dirs read-write? Most MCP tools need read access to understand project structure, but write access is rarer.
+5. **Is there a middle ground?** Mount `~/Documents/code/` read-only at the VM level, and only specific project dirs read-write at the container level. Most MCP tools need read access to understand project structure, but write access is rarer.
+
+6. **How does MetaMCP fit?** MetaMCP would run as a container in the MCP VM, acting as the aggregator. It doesn't need code mounts itself — it just proxies to the per-server containers that have the mounts. This keeps MetaMCP's own attack surface minimal.
 
 ## Next Thoughts
 
-The cleanest path might be:
-1. Start with parent-dir mount (`~/Documents/code/`) — it's what we'd do manually anyway
-2. Add a `cove mcp trust` / `cove mcp sandbox` command to classify MCP servers
-3. Trusted servers get the full mount; sandboxed servers get network-only
-4. If a specific project needs isolation, add a `cove mcp isolate <project>` that excludes it from the mount
-
-This gives us the zero-config experience by default with an escape hatch for sensitive projects.
+The two-layer architecture solves the hot-reload problem cleanly. The path forward:
+1. Create the `mcp` Colima profile with a broad VM-level mount of `~/Documents/code/`
+2. Run MetaMCP as a container in the MCP VM (no code mounts)
+3. Each MCP server is a separate container with explicit project bind mounts
+4. `cove mcp` CLI commands manage the server config and hot-reload individual containers
+5. Trust levels can be layered on top: `trusted` servers get their requested mounts; `sandboxed` servers get network-only; `custom` servers get explicit mounts from the user
