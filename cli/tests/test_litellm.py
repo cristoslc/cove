@@ -655,12 +655,16 @@ class TestAdversarial:
 
     def test_host_header_injection_blocked(self):
         """A request with a different Host header should not reach litellm.
-        The default server (server_name _) returns 444, so a wrong Host
-        won't proxy to litellm_backend."""
+        The default server (server_name _) serves a static landing page
+        instead of proxying to any backend, so a wrong Host won't
+        reach litellm_backend."""
         rendered = _render_nginx()
-        # The default server must exist and return 444
         assert "server_name _" in rendered
-        assert "return 444" in rendered
+        assert "landing.html" in rendered
+        # The default server block must not contain proxy_pass
+        default_block = rendered[rendered.index("server_name _;"):]
+        default_block = default_block[:default_block.index("}") + 1]
+        assert "proxy_pass" not in default_block
 
     def test_no_direct_port_access_in_cli(self):
         """The CLI status check must go through nginx, not direct port 4000.
