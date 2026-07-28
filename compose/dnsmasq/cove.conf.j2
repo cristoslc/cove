@@ -1,5 +1,7 @@
 address=/cove/127.0.0.1
+address=/cove.local/127.0.0.1
 address=/cove.{{ ansible_hostname }}/{{ ts_ip }}
+address=/cove.local.{{ ansible_hostname }}/{{ ts_ip }}
 bind-interfaces
 listen-address=0.0.0.0
 port=5353

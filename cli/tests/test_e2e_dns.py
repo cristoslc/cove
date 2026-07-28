@@ -96,8 +96,11 @@ class TestNginxConfigRendering:
     def test_default_conf_contains_per_machine_regex_blocks(self):
         rendered = self._render("default.conf.j2", MINIMAL_TEMPLATE_VARS)
         assert "~^git\\.cove\\.[a-zA-Z0-9-]+$" in rendered
+        assert "~^git\\.cove\\.local\\.[a-zA-Z0-9-]+$" in rendered
         assert "~^cove\\.[a-zA-Z0-9-]+$" in rendered
+        assert "~^cove\\.local\\.[a-zA-Z0-9-]+$" in rendered
         assert "~^vault\\.cove\\.[a-zA-Z0-9-]+$" in rendered
+        assert "~^vault\\.cove\\.local\\.[a-zA-Z0-9-]+$" in rendered
 
     def test_default_conf_has_upstreams(self):
         rendered = self._render("default.conf.j2", MINIMAL_TEMPLATE_VARS)
@@ -109,16 +112,19 @@ class TestNginxConfigRendering:
     def test_default_conf_has_ca_redirect(self):
         rendered = self._render("default.conf.j2", MINIMAL_TEMPLATE_VARS)
         assert "server_name ca.cove" in rendered
+        assert "ca.cove.local" in rendered
         assert "return 301 https://git.cove/config/ca" in rendered
 
     def test_default_conf_has_health_check(self):
         rendered = self._render("default.conf.j2", MINIMAL_TEMPLATE_VARS)
         assert "server_name hc.cove" in rendered
+        assert "hc.cove.local" in rendered
         assert 'return 200 "cove ingress ok\\n"' in rendered
 
     def test_default_conf_has_pages_server(self):
         rendered = self._render("default.conf.j2", MINIMAL_TEMPLATE_VARS)
         assert "~^(?<owner>[a-zA-Z0-9-]+)\\.pages\\.cove$" in rendered
+        assert "~^(?<owner>[a-zA-Z0-9-]+)\\.pages\\.cove\\.local$" in rendered
 
     def test_tailscale_block_conditional(self):
         rendered_minimal = self._render("default.conf.j2", MINIMAL_TEMPLATE_VARS)
@@ -222,7 +228,9 @@ class TestDnsmasqConfigRendering:
         env = Environment(loader=FileSystemLoader(str(DNSMASQ_DIR)))
         rendered = env.get_template("cove.conf.j2").render(**MINIMAL_TEMPLATE_VARS)
         assert "address=/cove/127.0.0.1" in rendered
+        assert "address=/cove.local/127.0.0.1" in rendered
         assert "address=/cove.testhost/100.64.0.1" in rendered
+        assert "address=/cove.local.testhost/100.64.0.1" in rendered
         assert "port=5353" in rendered
 
     def test_cove_conf_no_jinja2_artifacts(self):

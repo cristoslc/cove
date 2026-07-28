@@ -247,6 +247,7 @@ class TestNginxConfig:
     def test_litellm_server_block_exists(self):
         rendered = _render_nginx()
         assert "server_name litellm.cove" in rendered
+        assert "litellm.cove.local" in rendered
 
     def test_health_route_allowed(self):
         rendered = _render_nginx()
