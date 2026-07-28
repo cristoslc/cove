@@ -179,7 +179,7 @@ def _check_dns() -> CheckResult:
     return CheckResult(
         name="DNS resolution",
         ok=False,
-        detail="git.cove / git.cove.local does not resolve to 127.0.0.1",
+        detail="git.cove.local / git.cove does not resolve to 127.0.0.1",
         hints=[
             "Check /etc/hosts: `grep cove /etc/hosts`",
             "Check /etc/resolver/cove",

@@ -14,7 +14,7 @@ from typing import Optional
 from cove import local_cache
 
 
-VAULT_ADDR_DEFAULT = "https://vault.cove/"
+VAULT_ADDR_DEFAULT = "https://vault.cove.local/"
 VAULT_KV_MOUNT = "secret"
 VAULT_OP_CACHE_PREFIX = "op-cache"
 KEYSTORE_TOKEN_SERVICE = "cove/vault/root-token"
