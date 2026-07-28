@@ -10,7 +10,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-VAULT_ADDR_DEFAULT = "https://vault.cove/"
+VAULT_ADDR_DEFAULT = "https://vault.cove.local/"
 KEYSTORE_PREFIX = "cove/vault"
 KEYSTORE_ACCOUNT = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
 KEYSTORE_THRESHOLD = 3

@@ -13,7 +13,7 @@ class TestVaultAddrDefault:
     unpublished port on the host loopback."""
 
     def test_default_addr_is_vault_cove_https(self):
-        assert vault_cache.VAULT_ADDR_DEFAULT == "https://vault.cove/"
+        assert vault_cache.VAULT_ADDR_DEFAULT == "https://vault.cove.local/"
 
     def test_vault_addr_respects_env_override(self, monkeypatch):
         monkeypatch.setenv("VAULT_ADDR", "http://override.example:8200")
@@ -21,7 +21,7 @@ class TestVaultAddrDefault:
 
     def test_vault_addr_falls_back_to_default_when_env_unset(self, monkeypatch):
         monkeypatch.delenv("VAULT_ADDR", raising=False)
-        assert vault_cache._vault_addr() == "https://vault.cove/"
+        assert vault_cache._vault_addr() == "https://vault.cove.local/"
 
 
 class TestVaultPutOpRef:

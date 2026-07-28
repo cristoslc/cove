@@ -15,10 +15,10 @@ cove litellm up
 # Check it's running
 cove litellm status
 
-# Point your tools at https://litellm.cove/
+# Point your tools at https://litellm.cove.local/
 ```
 
-The proxy is accessible at `https://litellm.cove/` through Cove's nginx ingress (port 8443 → 443 via pf). The container itself binds to `127.0.0.1:4000` only — no external network exposure.
+The proxy is accessible at `https://litellm.cove.local/` through Cove's nginx ingress (port 8443 → 443 via pf). The container itself binds to `127.0.0.1:4000` only — no external network exposure.
 
 ## What's Hardened
 
@@ -41,7 +41,7 @@ The proxy is accessible at `https://litellm.cove/` through Cove's nginx ingress 
 | **Supply chain (full)** | We pin but don't vendor. A PyPI compromise could still inject malware. Mitigation: staged adoption (wait 48-72h after release). |
 | **JWT auth** | Disabled by design. Cove is single-user, localhost-only. JWT auth adds attack surface (CVE-2026-35030) with no benefit. |
 | **Multi-tenancy** | Not supported. Cove is single-user. |
-| **TLS termination** | Handled by Cove's nginx ingress at `https://litellm.cove/`. The container itself listens on plain HTTP at `127.0.0.1:4000`. |
+| **TLS termination** | Handled by Cove's nginx ingress at `https://litellm.cove.local/`. The container itself listens on plain HTTP at `127.0.0.1:4000`. |
 
 ## Credentials Setup
 
@@ -101,13 +101,13 @@ cove litellm logs -n 100  # Show last 100 lines
 ```mermaid
 flowchart LR
     Agent["AI Agent\n(OpenCode, etc.)"]
-    Nginx["Cove nginx\nlitellm.cove:443\nroute whitelist"]
+    Nginx["Cove nginx\nlitellm.cove.local:443\nroute whitelist"]
     Proxy["LiteLLM Proxy\n127.0.0.1:4000"]
     Headroom["Headroom Sidecar\n127.0.0.1:4001"]
     Anthropic["Anthropic API"]
     OpenAI["OpenAI API"]
 
-    Agent -->|https://litellm.cove/v1/...| Nginx
+    Agent -->|https://litellm.cove.local/v1/...| Nginx
     Nginx -->|"allow: /health, /v1/*\nblock: everything else"| Proxy
     Proxy -->|compress context| Headroom
     Proxy -->|proxy request| Anthropic
@@ -138,14 +138,14 @@ Headroom downloads a compression model on first start. If it fails:
 ### OpenCode can't connect
 
 ```shell
-curl -H "Host: litellm.cove" https://127.0.0.1:8443/health
-curl -H "Host: litellm.cove" https://127.0.0.1:8443/v1/models
+curl -H "Host: litellm.cove.local" https://127.0.0.1:8443/health
+curl -H "Host: litellm.cove.local" https://127.0.0.1:8443/v1/models
 ```
 
 If both work, configure OpenCode to use the proxy by setting the environment variable:
 
 ```shell
-export OPENAI_BASE_URL=https://litellm.cove/v1
+export OPENAI_BASE_URL=https://litellm.cove.local/v1
 ```
 
 Or in `opencode.json`:
@@ -153,13 +153,13 @@ Or in `opencode.json`:
 ```json
 {
   "provider": "openai",
-  "apiBase": "https://litellm.cove/v1"
+  "apiBase": "https://litellm.cove.local/v1"
 }
 ```
 
 ### Admin routes accessible
 
-If you can reach `/key/generate` or other admin routes, the nginx route whitelist is not working. Check that the `litellm.cove` server block in `compose/nginx/default.conf` has the whitelist locations and the catch-all `return 403`.
+If you can reach `/key/generate` or other admin routes, the nginx route whitelist is not working. Check that the `litellm.cove.local` server block in `compose/nginx/default.conf` has the whitelist locations and the catch-all `return 403`.
 
 ## Upgrade Procedure
 
