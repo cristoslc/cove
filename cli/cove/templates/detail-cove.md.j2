@@ -5,7 +5,7 @@ All services are offline-first.
 
 ## Forgejo
 
-- Web: `https://git.cove/` (TLS via cove certs)
+- Web: `https://git.cove.local/` (TLS via cove certs)
 - CLI: `fj` — see `~/.agents/agents-md-detail/fj.md` for full reference
 - GitHub CLI: `gh` — see `~/.agents/agents-md-detail/gh.md` for full reference
 
@@ -41,7 +41,7 @@ Never hardcode secrets. Use:
 - `cove creds batch-pull` — refresh all cached refs in one batch (single biometric prompt)
 - `cove creds 1p-bulk-write <seeds.yaml> --execute` — write seed items to 1Password
 
-Vault address: `https://vault.cove/` (TLS via cove certs)
+Vault address: `https://vault.cove.local/` (TLS via cove certs)
 
 ## CLI reference
 
@@ -60,13 +60,13 @@ Vault address: `https://vault.cove/` (TLS via cove certs)
 
 | Service | Internal | External | Notes |
 |---------|----------|----------|-------|
-| Forgejo | forgejo:3000 | https://git.cove/ | via nginx proxy |
-| Vault | vault:8200 | https://vault.cove/ | via nginx proxy |
+| Forgejo | forgejo:3000 | https://git.cove.local/ | via nginx proxy |
+| Vault | vault:8200 | https://vault.cove.local/ | via nginx proxy |
 | Nginx | — | 0.0.0.0:443 | cove certs TLS termination |
 | Forgejo SSH | 0.0.0.0:2222 | — | optional, direct |
 | dnsmasq | 0.0.0.0:5353 | — | offline wildcard DNS |
 
-All HTTP traffic routes through nginx at `*.cove` subdomains. Ports bind on `0.0.0.0` for Colima VM port forwarding. Tailscale serve forwards tailnet traffic to nginx.
+All HTTP traffic routes through nginx at `*.cove.local` subdomains. Ports bind on `0.0.0.0` for Colima VM port forwarding. Tailscale serve forwards tailnet traffic to nginx.
 
 ## Prerequisites (macOS)
 
@@ -74,26 +74,26 @@ All HTTP traffic routes through nginx at `*.cove` subdomains. Ports bind on `0.0
 
 ## TLS
 
-- **Local:** Cove generates `cove` + `*.cove` cert in `{{ cove_data_root }}/certs/`. nginx terminates TLS. macOS resolver (`/etc/resolver/cove`) delegates `*.cove` DNS to dnsmasq on `127.0.0.1:5353`.
+- **Local:** Cove generates `cove` + `*.cove.local` cert in `{{ cove_data_root }}/certs/`. nginx terminates TLS. macOS resolver (`/etc/resolver/cove`) delegates `*.cove.local` DNS to dnsmasq on `127.0.0.1:5353`.
 - **Tailscale:** Tailscale cert (public FQDN) for remote access. Tailscale serve forwards `:443` → `127.0.0.1:443`.
 
 ## Git remotes
 
 - Use `origin` for your **primary** remote (GitHub, GitLab, or Cove itself).
 - Add a **secondary** remote named after the forge:
-  - `fj` — Cove/Forgejo at `git.cove`
+  - `fj` — Cove/Forgejo at `git.cove.local`
   - `gh` — GitHub
   - `gl` — GitLab
-- Example: `git remote add fj git@git.cove:owner/repo.git`
+- Example: `git remote add fj git@git.cove.local:owner/repo.git`
 - This convention lets agents push/pull to the right forge without guessing.
 
 ## New projects
 
 When creating a new project to push to Cove:
 
-1. Create the repo on Forgejo at `https://git.cove/` first.
+1. Create the repo on Forgejo at `https://git.cove.local/` first.
 2. `git init` locally, then `git remote add origin <your-primary-remote>` (e.g., GitHub).
-3. `git remote add fj git@git.cove:owner/repo.git`
+3. `git remote add fj git@git.cove.local:owner/repo.git`
 4. Push to both: `git push -u origin main && git push -u fj main`
 
 This keeps Cove as a mirror/backup while `origin` stays your primary collaboration forge.
