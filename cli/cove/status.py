@@ -95,133 +95,97 @@ def _check_containers() -> list[CheckResult]:
 
 
 def _check_nginx_ingress() -> CheckResult:
-    try:
-        resp = requests.get(
-            f"https://127.0.0.1:{NGINX_HTTPS_PORT}/",
-            headers={"Host": "hc.cove"},
-            verify=False,
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return CheckResult(name="nginx ingress", ok=True, detail=resp.text.strip())
-        return CheckResult(
-            name="nginx ingress",
-            ok=False,
-            detail=f"HTTP {resp.status_code}",
-            hints=["Check nginx logs: `docker logs cove-nginx`"],
-        )
-    except requests.exceptions.ConnectionError:
-        return CheckResult(
-            name="nginx ingress",
-            ok=False,
-            detail="Connection refused on 127.0.0.1:8443",
-            hints=[
-                "Is port 8443 free? Run `lsof -i :8443`",
-                "Check nginx: `docker logs cove-nginx`",
-                "Run `cove up` with sudo to configure pf 443→8443",
-            ],
-        )
-    except requests.exceptions.Timeout:
-        return CheckResult(
-            name="nginx ingress",
-            ok=False,
-            detail="Connection timed out on 127.0.0.1:8443",
-            hints=["Check nginx: `docker logs cove-nginx`"],
-        )
+    for host in ("hc.cove.local", "hc.cove"):
+        try:
+            resp = requests.get(
+                f"https://127.0.0.1:{NGINX_HTTPS_PORT}/",
+                headers={"Host": host},
+                verify=False,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return CheckResult(name="nginx ingress", ok=True, detail=resp.text.strip())
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            continue
+    return CheckResult(
+        name="nginx ingress",
+        ok=False,
+        detail="Connection refused on 127.0.0.1:8443",
+        hints=[
+            "Is port 8443 free? Run `lsof -i :8443`",
+            "Check nginx: `docker logs cove-nginx`",
+            "Run `cove up` with sudo to configure pf 443→8443",
+        ],
+    )
 
 
 def _check_forgejo() -> CheckResult:
-    try:
-        resp = requests.get(
-            f"https://127.0.0.1:{NGINX_HTTPS_PORT}/api/healthz",
-            headers={"Host": "git.cove"},
-            verify=False,
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return CheckResult(name="Forgejo API", ok=True, detail=resp.text.strip())
-        return CheckResult(
-            name="Forgejo API",
-            ok=False,
-            detail=f"HTTP {resp.status_code}",
-            hints=["Check Forgejo logs: `docker logs cove-forgejo`"],
-        )
-    except requests.exceptions.ConnectionError:
-        return CheckResult(
-            name="Forgejo API",
-            ok=False,
-            detail="Connection refused",
-            hints=["Is Forgejo running? `docker ps | grep cove-forgejo`"],
-        )
-    except requests.exceptions.Timeout:
-        return CheckResult(
-            name="Forgejo API",
-            ok=False,
-            detail="Connection timed out",
-            hints=["Check Forgejo logs: `docker logs cove-forgejo`"],
-        )
+    for host in ("git.cove.local", "git.cove"):
+        try:
+            resp = requests.get(
+                f"https://127.0.0.1:{NGINX_HTTPS_PORT}/api/healthz",
+                headers={"Host": host},
+                verify=False,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return CheckResult(name="Forgejo API", ok=True, detail=resp.text.strip())
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            continue
+    return CheckResult(
+        name="Forgejo API",
+        ok=False,
+        detail="Connection refused",
+        hints=["Is Forgejo running? `docker ps | grep cove-forgejo`"],
+    )
 
 
 def _check_vault() -> CheckResult:
-    try:
-        resp = requests.get(
-            f"https://127.0.0.1:{NGINX_HTTPS_PORT}/v1/sys/health",
-            headers={"Host": "vault.cove"},
-            verify=False,
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            return CheckResult(name="Vault API", ok=True, detail="initialized, unsealed")
-        if resp.status_code == 501:
-            return CheckResult(name="Vault API", ok=False, detail="not initialized")
-        if resp.status_code == 503:
-            return CheckResult(name="Vault API", ok=False, detail="sealed")
-        return CheckResult(
-            name="Vault API",
-            ok=False,
-            detail=f"HTTP {resp.status_code}",
-            hints=["Check Vault logs: `docker logs cove-vault`"],
-        )
-    except requests.exceptions.ConnectionError:
-        return CheckResult(
-            name="Vault API",
-            ok=False,
-            detail="Connection refused",
-            hints=["Is Vault running? `docker ps | grep cove-vault`"],
-        )
-    except requests.exceptions.Timeout:
-        return CheckResult(
-            name="Vault API",
-            ok=False,
-            detail="Connection timed out",
-            hints=["Check Vault logs: `docker logs cove-vault`"],
-        )
+    for host in ("vault.cove.local", "vault.cove"):
+        try:
+            resp = requests.get(
+                f"https://127.0.0.1:{NGINX_HTTPS_PORT}/v1/sys/health",
+                headers={"Host": host},
+                verify=False,
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return CheckResult(name="Vault API", ok=True, detail="initialized, unsealed")
+            if resp.status_code == 501:
+                return CheckResult(name="Vault API", ok=False, detail="not initialized")
+            if resp.status_code == 503:
+                return CheckResult(name="Vault API", ok=False, detail="sealed")
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            continue
+    return CheckResult(
+        name="Vault API",
+        ok=False,
+        detail="Connection refused",
+        hints=["Is Vault running? `docker ps | grep cove-vault`"],
+    )
 
 
 def _check_dns() -> CheckResult:
-    try:
-        result = subprocess.run(
-            ["dscacheutil", "-q", "host", "-a", "name", "git.cove"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if result.returncode == 0 and "127.0.0.1" in result.stdout:
-            return CheckResult(name="DNS resolution", ok=True, detail="git.cove → 127.0.0.1")
-        return CheckResult(
-            name="DNS resolution",
-            ok=False,
-            detail="git.cove does not resolve to 127.0.0.1",
-            hints=[
-                "Check /etc/hosts: `grep cove /etc/hosts`",
-                "Check /etc/resolver/cove",
-                "Run `cove up` with sudo to configure DNS",
-            ],
-        )
-    except subprocess.TimeoutExpired:
-        return CheckResult(
-            name="DNS resolution",
-            ok=False,
-            detail="dscacheutil timed out",
-        )
+    for name in ("git.cove.local", "git.cove"):
+        try:
+            result = subprocess.run(
+                ["dscacheutil", "-q", "host", "-a", "name", name],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and "127.0.0.1" in result.stdout:
+                return CheckResult(name="DNS resolution", ok=True, detail=f"{name} → 127.0.0.1")
+        except subprocess.TimeoutExpired:
+            continue
+    return CheckResult(
+        name="DNS resolution",
+        ok=False,
+        detail="git.cove / git.cove.local does not resolve to 127.0.0.1",
+        hints=[
+            "Check /etc/hosts: `grep cove /etc/hosts`",
+            "Check /etc/resolver/cove",
+            "Run `cove up` with sudo to configure DNS",
+        ],
+    )
 
 
 def check_all() -> list[CheckResult]:

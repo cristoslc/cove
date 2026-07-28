@@ -36,7 +36,8 @@ if [[ "$(uname)" == "Darwin" ]]; then
 fi
 
 # Check Cove nginx ingress is reachable
-if ! curl -sf -k -H "Host: hc.cove" https://127.0.0.1:8443/ >/dev/null 2>&1; then
+if ! curl -sf -k -H "Host: hc.cove.local" https://127.0.0.1:8443/ >/dev/null 2>&1 && \
+   ! curl -sf -k -H "Host: hc.cove" https://127.0.0.1:8443/ >/dev/null 2>&1; then
     echo "[✗] Cove nginx ingress (run 'cove up' first)"
     exit 1
 fi

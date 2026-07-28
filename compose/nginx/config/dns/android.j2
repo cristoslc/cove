@@ -11,16 +11,18 @@ Cove on {{ ansible_hostname }}
    Android cannot auto-configure DNS for *.cove.{{ ansible_hostname }}.
    The simplest path: install Tailscale on your phone, connect to
    your tailnet, and enable MagicDNS. *.cove.{{ ansible_hostname }}
-   names will resolve automatically.
+    names will resolve automatically.
 
-   Alternative (DoH app): install Intra, Nebulo, or DNSChanger.
-   Point at: https://{{ ts_ip }}:443/dns-query
+    Alternative (DoH app): install Intra, Nebulo, or DNSChanger.
+    Point at: https://{{ ts_ip }}:443/dns-query
 
-   Manual alternative (per Wi-Fi network only):
-   Settings → Wi-Fi → [your network] → gear icon →
-   Advanced → Private DNS → Off
-   Then: IP settings → Static → DNS 1: {{ ts_ip }}
+    Manual alternative (per Wi-Fi network only):
+    Settings → Wi-Fi → [your network] → gear icon →
+    Advanced → Private DNS → Off
+    Then: IP settings → Static → DNS 1: {{ ts_ip }}
 
 3. Access Cove:
    https://<tailscale-fqdn>/ — Forgejo
    https://<tailscale-fqdn>/config/ — this page
+
+Note: *.cove.local.{{ ansible_hostname }} names also resolve via the same DNS.

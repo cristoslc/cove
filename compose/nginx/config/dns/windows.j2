@@ -1,10 +1,18 @@
 #Requires -RunAsAdministrator
 $hosts = "$env:SystemRoot\System32\drivers\etc\hosts"
 $entry = "{{ ts_ip }} git.cove.{{ ansible_hostname }} vault.cove.{{ ansible_hostname }}"
+$entry2 = "{{ ts_ip }} git.cove.local.{{ ansible_hostname }} vault.cove.local.{{ ansible_hostname }}"
 if (-not (Select-String -Path $hosts -Pattern "cove.{{ ansible_hostname }}" -SimpleMatch -ErrorAction SilentlyContinue)) {
     Add-Content -Path $hosts -Value $entry
     Write-Host "Added: $entry"
 } else {
     Write-Host "Entry already exists"
 }
+if (-not (Select-String -Path $hosts -Pattern "cove.local.{{ ansible_hostname }}" -SimpleMatch -ErrorAction SilentlyContinue)) {
+    Add-Content -Path $hosts -Value $entry2
+    Write-Host "Added: $entry2"
+} else {
+    Write-Host "Entry already exists"
+}
 Write-Host "Test: nslookup git.cove.{{ ansible_hostname }}"
+Write-Host "Test: nslookup git.cove.local.{{ ansible_hostname }}"
