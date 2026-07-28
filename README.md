@@ -6,10 +6,10 @@ A local development platform running on Docker Compose — a sheltered harbor wh
 
 | Service | Purpose | Access |
 |---------|---------|--------|
-| **Forgejo** | Self-hosted Git forge with built-in OCI registry and commit signing | `https://git.cove/` |
-| **HashiCorp Vault** | Secrets store with Shamir auto-unseal | `https://vault.cove/` |
-| **nginx** | TLS termination and reverse proxy for all `*.cove` subdomains | `127.0.0.1:8443` (HTTPS), `:8080` (HTTP) |
-| **dnsmasq** | Wildcard DNS resolver for offline `.cove` resolution | `127.0.0.1:5353` |
+| **Forgejo** | Self-hosted Git forge with built-in OCI registry and commit signing | `https://git.cove.local/` |
+| **HashiCorp Vault** | Secrets store with Shamir auto-unseal | `https://vault.cove.local/` |
+| **nginx** | TLS termination and reverse proxy for all `*.cove.local` subdomains | `127.0.0.1:8443` (HTTPS), `:8080` (HTTP) |
+| **dnsmasq** | Wildcard DNS resolver for offline `.cove.local` resolution | `127.0.0.1:5353` |
 
 All services run in Docker Compose with `restart: unless-stopped`. Configuration changes take effect on every `cove up`.
 
@@ -58,7 +58,7 @@ cove up
   └─ provision_forgejo    # Admin user, SSH key, repo, push token
 ```
 
-All data lives in `~/Documents/cove-data/`. TLS via cove certs with wildcard `*.cove` certificates. Tailscale Serve provides HTTPS access from any device on your tailnet via pf NAT forwarding (`127.0.0.1:443` → `8443`).
+All data lives in `~/Documents/cove-data/`. TLS via cove certs with wildcard `*.cove.local` certificates. Tailscale Serve provides HTTPS access from any device on your tailnet via pf NAT forwarding (`127.0.0.1:443` → `8443`).
 
 ## Forgejo CLI
 
