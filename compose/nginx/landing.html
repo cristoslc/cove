@@ -64,22 +64,29 @@
   </div>
 
   <div class="footer">
-    Cove &mdash; <span id="version"></span>
+    Cove &mdash; <span id="version"></span><br>
+    <span id="restart-note" style="display:none; color: var(--muted); font-size: 0.75rem;">
+      Some services unreachable. Run <code>cove up</code> in a terminal to restart.
+    </span>
   </div>
 </div>
 
 <script>
 const services = ['forgejo', 'vault', 'litellm'];
 async function checkHealth() {
+  let anyDown = false;
   for (const svc of services) {
     const dot = document.getElementById('dot-' + svc);
     try {
       const resp = await fetch('https://hc.cove.local/', { method: 'HEAD', cache: 'no-store' });
-      if (resp.ok || resp.type === 'opaque') dot.className = 'status-dot up';
+      dot.className = 'status-dot ' + (resp.ok ? 'up' : 'down');
+      if (!resp.ok) anyDown = true;
     } catch {
-      // fetch failed — leave dot gray (unknown)
+      dot.className = 'status-dot down';
+      anyDown = true;
     }
   }
+  if (anyDown) document.getElementById('restart-note').style.display = 'inline';
 }
 checkHealth();
 </script>
