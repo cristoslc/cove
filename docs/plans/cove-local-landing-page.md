@@ -9,7 +9,8 @@ Currently `cove.local` and `cove` are nginx aliases for Forgejo. Typing `cove.lo
 - `cove.local` and `cove` get their own nginx server block serving a static landing page
 - Remove them from the Forgejo server block's `server_name`
 - Landing page is a simple HTML file served by nginx (no backend dependency)
-- Page includes: service links (Forgejo, Vault, LiteLLM), status indicators, config page link, CA download
+- Page is the **default entry point** — typing `cove.local` in the browser shows the portal, not Forgejo
+- Page includes: service cards for all HTTPS web UIs (Forgejo, Vault, LiteLLM), status indicators (JS fetch to hc.cove.local), config page link, CA download, documentation links
 
 ## Implementation
 
@@ -25,3 +26,4 @@ Currently `cove.local` and `cove` are nginx aliases for Forgejo. Typing `cove.lo
 - Page is minimal but functional: service name, URL, status (up/down via JS fetch to hc.cove.local)
 - Dark theme to match Cove's aesthetic
 - Responsive for mobile config page access
+- **Default server block** (`server_name _;`) also serves the landing page instead of returning 444 — direct IP access (LAN, Tailscale) shows the portal too
