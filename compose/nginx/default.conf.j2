@@ -68,8 +68,9 @@ server {
     ssl_certificate_key /certs/cove.local-key.pem;
 
     location / {
-        return 200 "cove ingress ok\n";
         add_header Content-Type text/plain;
+        add_header Access-Control-Allow-Origin "*";
+        return 200 "cove ingress ok\n";
     }
 }
 
