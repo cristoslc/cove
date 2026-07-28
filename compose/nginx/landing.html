@@ -75,9 +75,9 @@ async function checkHealth() {
     const dot = document.getElementById('dot-' + svc);
     try {
       const resp = await fetch('https://hc.cove.local/', { method: 'HEAD', cache: 'no-store' });
-      dot.className = 'status-dot ' + (resp.ok ? 'up' : 'down');
+      if (resp.ok || resp.type === 'opaque') dot.className = 'status-dot up';
     } catch {
-      dot.className = 'status-dot down';
+      // fetch failed — leave dot gray (unknown)
     }
   }
 }
