@@ -16,9 +16,9 @@
     - name: Set Forgejo URLs
       ansible.builtin.set_fact:
         cove_domain: cove
-        forgejo_domain: git.cove
-        forgejo_root_url: "https://git.cove/"
-        forgejo_ssh_domain: git.cove
+        forgejo_domain: git.cove.local
+        forgejo_root_url: "https://git.cove.local/"
+        forgejo_ssh_domain: git.cove.local
 
     - name: Ensure Colima is running (macOS)
       when: ansible_system == "Darwin"
@@ -336,9 +336,9 @@
           FORGEJO_DATA_ROOT={{ cove_data_root }}
           FORGEJO_UID={{ ansible_user_uid }}
           FORGEJO_GID={{ ansible_user_gid }}
-          FORGEJO_DOMAIN=git.cove
-          FORGEJO_ROOT_URL=https://git.cove/
-          FORGEJO_SSH_DOMAIN=git.cove
+          FORGEJO_DOMAIN=git.cove.local
+          FORGEJO_ROOT_URL=https://git.cove.local/
+          FORGEJO_SSH_DOMAIN=git.cove.local
           FORGEJO_SSH_PORT={{ forgejo_ssh_port }}
           VAULT_IMAGE={{ vault_image }}
           VAULT_CONTAINER_NAME={{ vault_container_name }}
@@ -422,8 +422,8 @@
       ansible.builtin.debug:
         msg: |
           Containers are up.
-            Forgejo: https://git.cove/ (TLS via cove certs)
-            Vault  : https://vault.cove/ (TLS via cove certs)
+            Forgejo: https://git.cove.local/ (TLS via cove certs)
+            Vault  : https://vault.cove.local/ (TLS via cove certs)
             SSH    : 0.0.0.0:{{ forgejo_ssh_port }}
 
           Bootstrap new devices: http://{{ ansible_default_ipv4.address }}:{{ nginx_http_port }}/config/

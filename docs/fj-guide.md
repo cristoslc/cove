@@ -121,7 +121,7 @@ If you know `gh`, use this translation table:
 ## Cove-Specific Conventions
 
 - `fj` is aliased in the interactive shell — use `zsh -i -c 'fj ...'` when running from non-interactive contexts (e.g., agent sessions, scripts).
-- All Cove git remotes point to `https://git.cove/` (Forgejo). Use `fj` for PR management, not `gh`.
+- All Cove git remotes point to `https://git.cove.local/` (Forgejo). Use `fj` for PR management, not `gh`.
 - Draft PRs from plans **MUST** have a `WIP: ` title prefix and be created in draft status (per AGENTS.md).
 - Every commit on a sashay PR **MUST** be immediately followed by a PR chronicle comment via `fj pr comment`.
 
@@ -144,7 +144,7 @@ upstream fix lands, create repos via the Forgejo API directly.
 Use the Forgejo REST API to create a repo, bypassing the broken `fj` subcommand:
 
 ```shell
-curl -X POST https://git.cove/api/v1/user/repos \
+curl -X POST https://git.cove.local/api/v1/user/repos \
   -H "Authorization: token <token>" \
   -H "Content-Type: application/json" \
   -d '{"name":"repo-name"}'
@@ -155,7 +155,7 @@ curl -X POST https://git.cove/api/v1/user/repos \
 of the active host entry). Read it with `jq`:
 
 ```shell
-jq -r '.hosts["git.cove"].token' \
+jq -r '.hosts["git.cove.local"].token' \
   ~/Library/Application\ Support/Cyborus.forgejo-cli/keys.json
 ```
 

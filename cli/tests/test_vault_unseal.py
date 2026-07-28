@@ -11,7 +11,7 @@ from cove import vault_unseal
 
 class TestVaultHealth:
     def test_default_addr_is_vault_cove_https(self):
-        assert vault_unseal.VAULT_ADDR_DEFAULT == "https://vault.cove/"
+        assert vault_unseal.VAULT_ADDR_DEFAULT == "https://vault.cove.local/"
 
     def test_healthy_parsed_correctly(self):
         with patch("urllib.request.urlopen") as mock_urlopen:
