@@ -478,18 +478,15 @@ class TestE2EDNSEndpoints:
         assert r.status_code == 301
         assert "/config/ca" in r.headers.get("Location", "")
 
-    def test_default_server_returns_444_for_unknown_path(self):
-        import requests
-
-        url = f"https://127.0.0.1:{self.COVE_HTTPS_PORT}/nonexistent-path-xyz"
-        with pytest.raises(requests.exceptions.ConnectionError):
-            requests.get(
-                url,
-                headers={"Host": "unknown-host.cove"},
-                verify=self.VERIFY_SSL,
-                allow_redirects=False,
-                timeout=5,
-            )
+    def test_default_server_returns_landing_page(self):
+        """The default server serves the Cove landing page for unknown hosts.
+        This is safe because it's static HTML served by nginx — no backend
+        proxying occurs."""
+        r = self._get("/", host="unknown-host.cove")
+        assert r.status_code == 200
+        assert "Cove" in r.text
+        assert "Forgejo" in r.text
+        assert "Vault" in r.text
 
     def test_health_check(self):
         r = self._get("/", host="hc.cove")
