@@ -78,7 +78,7 @@ async function checkHealth() {
   for (const svc of services) {
     const dot = document.getElementById('dot-' + svc);
     try {
-      const resp = await fetch('https://hc.cove.local/', { method: 'HEAD', cache: 'no-store' });
+      const resp = await fetch('/_health', { method: 'GET', cache: 'no-store' });
       dot.className = 'status-dot ' + (resp.ok ? 'up' : 'down');
       if (!resp.ok) anyDown = true;
     } catch {
