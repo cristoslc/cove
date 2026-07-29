@@ -28,9 +28,7 @@ upstream vault_backend {
 include /etc/nginx/user.d/*.conf;
 
 # Default server — catches direct IP access (LAN, Tailscale).
-# Returns 444 (nginx-specific: close connection without response)
-# to silently drop requests to unrecognized paths, avoiding
-# information leakage about internal services.
+# Serves the Cove landing page so direct IP access shows the portal.
 server {
     listen 443 ssl default_server;
     listen 80 default_server;
@@ -45,8 +43,25 @@ server {
 
     include /etc/nginx/cove-config-locations.conf;
 
-    location / {
-        return 444;
+    root /usr/share/nginx/html;
+    try_files /landing.html =404;
+}
+
+# cove.local — landing page / service portal
+server {
+    listen 443 ssl;
+    server_name cove cove.local;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    root /usr/share/nginx/html;
+    try_files /landing.html =404;
+
+    location = /_health {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
     }
 }
 
@@ -59,8 +74,9 @@ server {
     ssl_certificate_key /certs/cove.local-key.pem;
 
     location / {
-        return 200 "cove ingress ok\n";
         add_header Content-Type text/plain;
+        add_header Access-Control-Allow-Origin "*";
+        return 200 "cove ingress ok\n";
     }
 }
 
@@ -78,7 +94,7 @@ server {
 # git.cove — forgejo
 server {
     listen 443 ssl;
-    server_name git.cove git.cove.local cove cove.local;
+    server_name git.cove git.cove.local;
 
     ssl_certificate     /certs/cove.local.pem;
     ssl_certificate_key /certs/cove.local-key.pem;
