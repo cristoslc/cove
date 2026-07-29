@@ -4,7 +4,10 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] — 2026-07-27
+## [0.3.0] — 2026-07-29
+
+### Added
+- **Landing page** at `cove.local` — service portal with status indicators, links to all Cove services, config, and CA download. `cove`/`cove.local` are no longer Forgejo aliases.
 
 ### Changed
 - **Primary domain migration to `*.cove.local`** — all default service URLs, CLI constants, templates, and documentation now prefer `*.cove.local` over `*.cove`. The `*.cove` domains remain as nginx aliases, cert SANs, and DNS entries for backward compatibility (Phase 4 will remove them).
