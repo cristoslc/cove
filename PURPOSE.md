@@ -7,11 +7,11 @@ status: Active
 
 # Cove
 
-Cove is a local developer platform for one person. One command gives you a working forge, vault, CI runner, container registry, and static pages server — all running locally, all working offline, nothing on the cloud.
+Cove is a local developer platform for one person. One command gives you a working forge, vault, CI runner, container registry, static pages server, and observability backend (Prometheus + Grafana with OTLP ingestion) — all running locally, all working offline, nothing on the cloud.
 
 ## Identity
 
-Cove is a **harbor**. It is the line between your machine and everything you need to build software. Nothing runs on the host. Everything runs inside the harbor — a forge, a vault, runners, a registry, pages. They arrive together, wired to each other, with no manual assembly. When the outside world disappears — no WiFi, no cell signal — everything inside keeps working.
+Cove is a **harbor**. It is the line between your machine and everything you need to build software. Nothing runs on the host. Everything runs inside the harbor — a forge, a vault, runners, a registry, pages, observability. They arrive together, wired to each other, with no manual assembly. When the outside world disappears — no WiFi, no cell signal — everything inside keeps working.
 
 ## Core Concepts
 
@@ -55,7 +55,7 @@ Cove is not for teams, not for production, not for multi-node clusters.
 
 ## What Cove Is
 
-- **A platform, not a toolkit.** One install, one command, working forge + vault + CI + registry + pages.
+- **A platform, not a toolkit.** One install, one command, working forge + vault + CI + registry + pages + observability.
 - **Offline by default.** Every operation works without internet. Network access is a bonus, not a requirement.
 - **Self-contained.** Three host prerequisites. Cove brings everything else and leaves no trace when removed.
 - **Opinionated.** Cove makes the choices so you don't have to — SQLite, not Postgres; Shamir, not cloud auto-unseal; nginx, not Traefik (until k3s).
@@ -67,7 +67,7 @@ Cove is not for teams, not for production, not for multi-node clusters.
 - A Kubernetes distribution (k3s is the runtime, not the product).
 - A replacement for cloud CI (it's the local complement to it).
 - A managed service (you run it, you own the data).
-- **A development environment.** Cove does not ship coding harnesses, editors, LSPs, language runtimes, or any tool that reads/writes your source code. Cove is infrastructure — it provides the services development tools connect to (forge, vault, CI, registry, pages). The tools themselves are the operator's responsibility (or a companion project's).
+- **A development environment.** Cove does not ship coding harnesses, editors, LSPs, language runtimes, or any tool that reads/writes your source code. Cove is infrastructure — it provides the services development tools connect to (forge, vault, CI, registry, pages, observability). The tools themselves are the operator's responsibility (or a companion project's).
 
 ## Guiding Principle
 

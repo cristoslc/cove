@@ -30,6 +30,8 @@ Each open question from the musing is dispatched to a subagent for an adversaria
 
 **Cross-tension:** T2/T3/T4 all assume the backend exists. If T1's NO holds, T2-T4 are moot. The scope decision must be settled before stack shape.
 
+**2026-08-06 (revisit) — REVERSED.** The operator corrected the framing: the subagent's "empty city" objection was **an adoption objection, not a tooling objection**, and Cove's identity is to provide **industry-standard tooling** (ansible, Vault, git, forge+CI) so a single dev gets real-platform leverage without hand-assembling it. A custom "step short of OTel" (log sink + correlation IDs + pull-based per-app profilers) is bespoke glue — exactly the custom stack Cove exists to avoid. **Observability belongs in the standard-tooling family; Cove should provide the actual standard (Prometheus + Grafana, OTLP when traces matter), not a smaller substitute.** The "cheaper than OTel" line of thinking is contrary to Cove's purpose and is dropped. The surviving live tension is a **timing/sequencing question** (see T5).
+
 ---
 
 ### T2: Stack shape — OTLP-first vs scrape-endpoint-per-app
@@ -71,6 +73,37 @@ Each open question from the musing is dispatched to a subagent for an adversaria
 
 ---
 
+### T5: Traces — when do correlation/log-only logs stop being enough?
+
+**Raised:** 2026-08-06
+**Status:** resolved
+
+**Resolution:** Correlation IDs in logs reconstruct *what happened in what order* but not *where latency went* — no per-span timing, no parent/child attribution. Traces are a genuine need when debugging a **cross-service latency problem** (nginx → app → vault). But on a single localhost box the hops are microseconds apart; a slow path is almost always slow *inside one service*, which is profiling territory, not tracing. So distributed tracing is the **narrowest** need — the rarest on a single-operator localhost platform — and the standard answer when it does arise is OTel, not a custom approximation.
+
+---
+
+### T6: Profiling — the underweighted, and cheapest, need
+
+**Raised:** 2026-08-06
+**Status:** resolved
+
+**Resolution:** Profiling (CPU flame graphs, heap/memory) is what you reach for when an app is slow or leaking, and **no log sink, correlation ID, or Prometheus counter answers that**. But it is **per-process and pull-based** — pprof (Go), async-profiler/JFR (JVM), py-spy (Python) — needing no shared platform at all: each app exposes a profile endpoint you curl when needed. Profiling is therefore the *cheapest* observability need (less surface than even a log sink), and it is a **per-app concern, not a platform one** — it does not justify a Cove observability backend by itself. It complements, not competes with, the platform's metrics/traces role.
+
+---
+
 ## Synthesis
 
-T1 is the load-bearing tension and it is **unresolved** — a firm NO that challenges the premise of the musing. T2/T3/T4 are the shape, but only matter if T1 resolves to "build it." The parley's actionable output: before any stack work, decide scope. The default position from this parley is **do not build the full backend now**; the cheapest testable increment that preserves optionality is the **log sink + nginx access-log endpoint** from T1. If that proves insufficient for debugging Cove itself or a real app, escalate to OTLP-first (T2), mTLS `otel.cove` (T3), `cove observability init` (T4).
+**Status:** resolved — **scope decision made: build the standard stack now.**
+
+T1's NO was reversed (tooling objection reframed as adoption/timing, contrary to Cove's identity of providing industry-standard tooling). The operator closed the remaining adoption/timing tension: **ship Prometheus + Grafana with OTLP ingestion now**, as a first-class Cove service alongside forge/vault/registry/pages. The custom "step short of OTel" idea is dropped as contrary to Cove's purpose.
+
+**Adopted shape (from T2/T3/T4):**
+- **Stack:** OTLP-first — Prometheus store/query + Grafana dashboards (T2).
+- **Endpoint/auth:** `otel.cove` through nginx ingress, mTLS from local CA (T3).
+- **Integration:** `cove observability init` CLI helper + auto-instrumentation (T4).
+
+**Boundaries (from T5/T6):**
+- Distributed tracing (OTLP) is the narrowest, rarest need — added when a real cross-service latency hunt requires it.
+- Profiling (pprof/JFR/py-spy) is per-process and pull-based — a per-app concern, **not** a platform service. The platform's role is metrics/traces; profiling stays app-side.
+
+**Downstream docs decision:** PURPOSE.md's identity already frames Cove as infrastructure providing services dev tools connect to (line 70), which observability fits — no mission rewrite needed. Only the service enumerations in PURPOSE.md and README's Services table get updated to add observability. This is the output of closing the scope tension.
