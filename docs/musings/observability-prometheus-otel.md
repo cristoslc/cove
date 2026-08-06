@@ -4,50 +4,49 @@
 
 ## The question, reframed
 
-"Should we add Prometheus and/or OpenTelemetry to Cove?" is a binary yes/no that closes the idea down. The open question is: **what observability does a local-first, single-operator platform actually need, and what's the cheapest way to get it?**
+"Should we add Prometheus and/or OpenTelemetry to Cove?" is a binary yes/no that closes the idea down. The open question is: **should Cove ship an instrumentation/observability platform that apps can use — and, as a secondary benefit, use it to observe its own services?**
 
-## Current state of Cove observability
+## The primary purpose: an observability platform for apps, not self-monitoring
 
-Cove is 8 containers (forgejo, nginx, dnsmasq, dnsproxy, vault, litellm-db, litellm, headroom) behind an nginx ingress on `127.0.0.1:8443`. Observability today is:
+My first pass got this backwards, framing it as "how does Cove monitor itself?" That's a secondary benefit. The primary is: **Cove is a place where apps run. Those apps need somewhere to send metrics, traces, and logs.** Today Cove offers them nothing — an app on Cove that wants observability has to bolt on its own Prometheus/Grafana/OTel, which for a single app is heavy and duplicated.
 
-- **`cove status`** — a CLI health check (`cli/cove/status.py`) that shells out to `docker ps` and probes each service. It's pull-based, on-demand, operator-invoked. No history, no trend, no alerting.
-- **3 docker healthchecks** in `compose/docker-compose.yml` — container-level liveness only.
-- **Logs** — `docker logs` / `cove litellm logs`, ad hoc.
-- A prior musing, `cove-health-daemon.md`, already floats a background health daemon.
+So the real question is about **Cove's surface area as a platform**: does a local developer platform provide an observability backend as a first-class capability (the way it provides forge, vault, registry, pages)? Or is observability left to each app to self-host?
 
-There is **no metrics collection, no time-series store, no tracing, no dashboards, no alerting.**
+This is a **platform-vs-tool** decision, same shape as "does Cove provide a vault, or does each app roll its own secrets?"
 
-## The tension: local-first vs. observability stack weight
+## What a Cove observability platform would look like
 
-Cove's whole identity is offline-first, localhost-only, single trusted operator. Prometheus + Grafana + OTel collector is a *distributed-systems* observability stack. It brings:
+As a platform capability, it needs to be **easy to consume** — not a stack you have to administer. Sketch:
 
-- **Cost:** 2-3 more containers, memory footprint, config surface, version pinning, CVE surface (same supply-chain concern as the LiteLLM hardening musing).
-- **Value:** dashboards nobody stares at, alerts that page nobody, trends for a single-user box.
+- **OTel as the ingestion lingua franca.** Apps emit OTLP (metrics + traces + logs) to a single collector endpoint. One protocol, one integration path. The collector is the workhorse.
+- **Prometheus as the backend/store.** The collector scrapes and/or receives, Prometheus stores time-series, PromQL for query. Prometheus is the de-facto standard query surface.
+- **Grafana for visualization** — dashboards per app. Optional but the payoff.
+- **An app-facing integration** — a documented endpoint (`https://otel.cove` or similar) plus a template/snippet so an app on Cove can emit telemetry in ~1 line. Maybe a compose snippet for the OTel agent.
 
-For a single operator, the marginal value of a full Prometheus/Grafana deployment is low. The failure modes that matter are: "is a service up?" (already answered by `cove status`) and "is it healthy over time?" (not answered).
+This reframes the cost math: 2-3 containers for the platform (collector, prometheus, grafana) is justified **not** by Cove's own self-monitoring but by being a shared capability **all** apps can use. That's the same argument that justifies vault/registry as platform services.
 
-## What's actually worth it
+## Secondary benefit: Cove observes itself
 
-The gap is **history and trend**, not collection. Options, cheapest first:
+Once the platform exists, Cove's own services become consumers, closing the observability gap (`cove status` is pull-based, no history, no trend). This is a nice follow-on, but it is **not** the justification for building the platform. If we only wanted to monitor Cove itself, a persisted status history would be cheaper.
 
-1. **Extend `cove status` to persist snapshots** — a small append-only JSON/SQLite log of check results with timestamps. Gives trend + "when did it last break" for near-zero cost. Fits the existing CLI, no new containers.
-2. **Prometheus as a scrape target only** — expose a `/metrics` endpoint on the nginx ingress (and maybe vault/forgejo, which already emit Prometheus metrics natively) and scrape with a tiny Prometheus, but skip Grafana. Query via `promtool`/CLI. Middle ground.
-3. **OpenTelemetry for tracing** — only worth it if we're chasing latency across the proxy chain (nginx → litellm → headroom → upstream). That's a real cross-service path, but single-operator latency debugging is rare. Lowest priority.
-4. **Full Prometheus + Grafana + OTel** — the "real" stack. Overkill for now; revisit only if Cove grows multi-tenant or multi-node.
+## The tension: local-first, single-operator
 
-## Native metric sources worth noting
+Cove is offline-first, localhost-only. A metrics stack adds memory, config surface, and CVE/supply-chain surface (same concern as the LiteLLM hardening musing). But that cost is only worth debating **once we've decided the platform question** — whether observability is a Cove capability or a per-app responsibility.
 
-- **Forgejo** and **Vault** both expose Prometheus `/metrics` natively — so a scrape-only Prometheus would get real signal with zero instrumentation.
-- **nginx** needs `stub_status` or the nginx-prometheus-exporter.
+## Native metric sources (for the self-observation slice)
+
+- **Forgejo** and **Vault** expose Prometheus `/metrics` natively.
+- **nginx** needs `stub_status` or an exporter.
 - **litellm/headroom** — unknown; would need checking.
 
 ## Lean
 
-- Don't add a metrics stack to satisfy a generic "every platform should have observability" instinct. Add it when a concrete question can't be answered by `cove status` + logs.
-- The health daemon musing and this one overlap: a persisted status history is the natural first step for both.
+- Don't scope this to "monitor Cove" — that's the tail wagging the dog. The platform-for-apps framing is what makes 2-3 containers worth it.
+- If observability stays a per-app responsibility, then a full stack is overkill and the cheap `cove status` persistence path wins. The platform framing is what tips the balance.
 
 ## Open questions
 
-- Does the health daemon musing already propose persistence? If so, this musing is a subset.
-- Is there a concrete "I couldn't tell when X broke" pain, or is this speculative?
-- Would a single scrape-only Prometheus (no Grafana) be worth 1 container for native forgejo/vault metrics?
+- Does Cove's value proposition extend to providing an observability backend, or is that scope creep beyond forge/vault/registry/pages?
+- Is OTLP-first + Prometheus-store + Grafana the right shape, or does a lighter "prometheus scrape endpoint per app + shared grafana" suffice?
+- Where would the ingestion endpoint live and how would an app on Cove authenticate to it?
+- What's the minimal app-facing integration (compose snippet? template repo? CLI helper)?
