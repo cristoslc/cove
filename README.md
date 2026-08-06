@@ -10,6 +10,7 @@ A local development platform running on Docker Compose — a sheltered harbor wh
 | **HashiCorp Vault** | Secrets store with Shamir auto-unseal | `https://vault.cove.local/` |
 | **nginx** | TLS termination and reverse proxy for all `*.cove.local` subdomains | `127.0.0.1:8443` (HTTPS), `:8080` (HTTP) |
 | **dnsmasq** | Wildcard DNS resolver for offline `.cove.local` resolution | `127.0.0.1:5353` |
+| **Observability** | Prometheus + Grafana metrics backend with OTLP ingestion for apps | `https://otel.cove.local/` |
 
 All services run in Docker Compose with `restart: unless-stopped`. Configuration changes take effect on every `cove up`.
 
