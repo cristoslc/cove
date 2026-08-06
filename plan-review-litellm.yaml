@@ -1,0 +1,7 @@
+tasks:
+  - id: review-litellm-profile
+    kind: headless-spike
+    model: ollama-cloud/deepseek-v4-flash:cloud
+    agent: explore
+    prompt: prompts/review-litellm-profile.md
+    target: .subagents/fix-litellm-profile/REVIEW.md

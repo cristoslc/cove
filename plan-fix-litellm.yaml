@@ -1,0 +1,7 @@
+tasks:
+  - id: fix-litellm-profile
+    kind: multi-file-fix
+    model: ollama-cloud/deepseek-v4-flash:cloud
+    agent: build
+    prompt: prompts/fix-litellm-profile.md
+    worktree: fix-litellm-compose-profile
