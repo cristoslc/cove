@@ -1,6 +1,6 @@
 # Observability: Prometheus and/or OpenTelemetry?
 
-> **Status:** Musing — half-formed, not a plan. Binary question reframed below. A parley (record: `docs/musings/parleys/2026-08-06-observability-platform.md`) has adversarially probed the premise; see the **Parley outcome** section.
+> **Status:** Musing — **resolved into a build decision.** Binary question reframed below. A parley (record: `docs/musings/parleys/2026-08-06-observability-platform.md`) probed the premise adversarially; see the **Parley outcome** section.
 
 ## The question, reframed
 
@@ -46,20 +46,30 @@ Cove is offline-first, localhost-only. A metrics stack adds memory, config surfa
 
 ## Parley outcome
 
-A parley with adversarial subagents probed the premise. **The dominant finding cuts against the platform framing itself** (T1): the vault/registry analogy may not hold. Vault and the registry are consumed *by apps themselves*; an observability backend is only useful if apps emit telemetry, and most won't — Cove is not a dev environment, so instrumenting apps is the developer's job. Shipping a backend no app emits into is "a cathedral in an empty city," plus four config surfaces a zero-configuration platform must own forever.
+A parley with adversarial subagents probed the premise. **The initial finding (T1) cut against the platform framing** — that the vault/registry analogy may not hold because an observability backend is only useful if apps emit telemetry. That objection was **reversed on reframe**: it was an adoption objection, not a tooling one, and Cove's identity is to provide **industry-standard tooling** so a single dev gets real-platform leverage without hand-assembling it. A custom "step short of OTel" would be exactly the bespoke glue Cove exists to avoid.
 
-**Net recommendation from the parley: do NOT build the full OTel/Prometheus/Grafana backend now.** The cheapest testable increment that preserves optionality is a **log sink + nginx access-log endpoint** (one container, one FQDN, no agent on apps). Escalate to full observability only the day Cove itself (or a real app) hits a debugging wall logs can't answer.
+**Decision (operator): build the standard stack now.** Prometheus + Grafana with OTLP ingestion, shipped as a first-class Cove service alongside forge/vault/registry/pages — the industry standard, not a smaller substitute.
 
-Conditional shape (if scope does resolve to build it, from T2-T4):
-- **OTLP-first** (collector as the single trust boundary, one protocol for metrics+traces+logs) over scrape-endpoint-per-app.
-- **`otel.cove` through the nginx ingress with mTLS** from the local CA (sole-ingress invariant + no secret/Vault bootstrap).
+Adopted shape:
+- **OTLP-first** — Prometheus store/query + Grafana dashboards (collector as single trust boundary, one protocol for metrics+traces+logs).
+- **`otel.cove` through the nginx ingress, mTLS** from the local CA (sole-ingress invariant, no secret/Vault bootstrap).
 - **`cove observability init` CLI helper** (idempotent compose/.env edit) with auto-instrumentation over manual SDK wiring.
+
+Boundaries:
+- **Distributed tracing** (OTLP) is the narrowest, rarest need — added as the standard when a real cross-service latency hunt requires it.
+- **Profiling** (pprof/JFR/py-spy) is per-process and pull-based — a **per-app concern, not a platform service**. The platform's role is metrics/traces; profiling stays app-side.
+
+**Docs consequence:** PURPOSE.md's identity already frames Cove as infrastructure providing services dev tools connect to (PURPOSE.md:70) — observability fits, no mission rewrite. Only the service enumerations in PURPOSE.md and README's Services table get observability added.
 
 ## Open questions
 
-- **[Settled by parley T1]** Does Cove's value proposition extend to providing an observability backend, or is that scope creep beyond forge/vault/registry/pages? → **Default is no; only a log sink for now.**
-- **[Settled by parley T2]** Is OTLP-first + Prometheus-store + Grafana the right shape, or does a lighter "prometheus scrape endpoint per app + shared grafana" suffice? → **OTLP-first, conditionally.**
-- **[Settled by parley T3]** Where would the ingestion endpoint live and how would an app on Cove authenticate to it? → **`otel.cove` via nginx, mTLS from local CA.**
-- **[Settled by parley T4]** What's the minimal app-facing integration? → **`cove observability init` CLI helper + auto-instrumentation.**
+All original scope/shape questions are **settled by the parley** (record: `docs/musings/parleys/2026-08-06-observability-platform.md`):
 
-**Remaining open:** Is the T1 log-sink increment sufficient to debug Cove itself, or does the first real cross-service trace need force escalation to the full stack? That's the test that decides it.
+- **Scope** (T1) → **build the standard stack now** — Prometheus + Grafana, OTLP ingestion, first-class Cove service.
+- **Stack shape** (T2) → **OTLP-first** over scrape-endpoint-per-app.
+- **Endpoint/auth** (T3) → **`otel.cove` via nginx ingress, mTLS from local CA**.
+- **Integration** (T4) → **`cove observability init` CLI helper + auto-instrumentation**.
+- **Traces** (T5) → added via OTLP when a real cross-service latency hunt requires it (narrowest need).
+- **Profiling** (T6) → per-app concern (pprof/JFR/py-spy), **not** a platform service.
+
+**Next:** this musing → `docs/plans/` plan → sashay (branch + worktree + draft PR + subagent dispatch). The plan must pin the stack, the `otel.cove` nginx + mTLS wiring, the CLI helper, and the PURPOSE.md/README service-enumeration update.
