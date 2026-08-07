@@ -1,8 +1,41 @@
-# Plan: Observability Backend for Cove (Prometheus + Grafana + OTel)
+# Plan: Observability Backend for Cove (OpenObserve)
 
 > **Source:** `docs/musings/observability-prometheus-otel.md` → Parley record `docs/musings/parleys/2026-08-06-observability-platform.md`
 >
-> **Decision (operator, 2026-08-06):** build the **standard stack now** — Prometheus + Grafana with OTLP ingestion — as a first-class Cove service. The custom "step short of OTel" idea was dropped as contrary to Cove's identity of providing industry-standard tooling.
+> **Decision (operator, 2026-08-06):** observability is a first-class Cove service.
+>
+> **REVISED (2026-08-07, parley T7):** the backend is a **single OpenObserve all-in-one container**, NOT the Prometheus+Grafana assembled stack described in the body below. The body is retained as the historical superseded spec. **The operative spec is the T7 revision.** See `docs/musings/parleys/2026-08-06-observability-platform.md#T7`.
+
+## T7 REVISION — Operative spec (supersedes body)
+
+**Backend:** one **OpenObserve** container (`openobserve.cove`), OTel-native, ingesting OTLP at `otel.cove` for metrics + logs + traces + prebuilt APM dashboards in a single UI. Single binary, no external DB, object-storage (S3/MinIO) backend — aligns with Cove's existing MinIO.
+
+**App-facing contract (unchanged, durable):**
+- OTel instrumentation (the transferable, industry-standard practice — the durable asset).
+- OTLP ingestion at `otel.cove` through the nginx ingress, **bearer-token auth** at the boundary.
+- `cove observability init` CLI helper (idempotent compose/.env edit injecting `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`, token header).
+
+**Dropped:** Prometheus store, Grafana dashboards, custom dashboard-building. The dev sees OpenObserve's prebuilt APM dashboards; no query-language skill required.
+
+**Boundaries:**
+- Distributed tracing ships natively (OTLP spans) — no separate service.
+- Profiling stays per-app (pprof/JFR/py-spy) — not a platform service.
+
+**Implementation changes vs body:**
+- `compose/docker-compose.yml`: replace otel-collector/prometheus/grafana with **one `openobserve` service** (always-on, no published host ports, `restart: unless-stopped`, version-pinned image, data under `${COVE_DATA_ROOT}/observability/`).
+- `compose/observability/`: replace collector/prometheus/grafana configs with OpenObserve config/env (admin creds required — no weak default; object storage backend config).
+- `compose/nginx/default.conf.j2` (+ rendered `.conf`): `otel.cove` → OpenObserve OTLP endpoint with bearer-token auth; `openobserve.cove` → OpenObserve UI.
+- `cli/cove/observability.py`: `up/down/status/logs/init` against the `openobserve` service; `init` injects OTLP env + token.
+- `cli/cove/resources/compose/`: bundle updated configs (drift test guards).
+- Docs (PURPOSE.md/README/`docs/observability.md`): reference OpenObserve, not Grafana. README Services table → OpenObserve row (`openobserve.cove`).
+- Coverage matrix: update observability paths (OpenObserve compose, OTLP ingestion auth, `openobserve.cove` UI).
+- Tests: rewrite `cli/tests/test_observability.py` T0/T1 for the OpenObserve service (single container, OTLP auth at nginx, `init` behavior, resources-drift, inverse-assertion for unauthenticated OTLP).
+
+---
+
+## ORIGINAL SPEC (superseded by T7 — retained for history)
+
+> **Decision (operator, 2026-08-06):** build the **standard stack now** — Prometheus + Grafana with OTLP ingestion — as a first-class Cove service. The custom "step short of OTel" idea was dropped as contrary to Cove's identity of providing industry-standard tooling. *(Superseded by T7: single OpenObserve instead.)*
 
 ## Scope
 
