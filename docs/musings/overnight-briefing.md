@@ -1,24 +1,25 @@
 # Overnight Briefing — 2026-08-06
 
 ## Summary
-Implemented the Cove observability backend (OTel collector + Prometheus + Grafana) as a first-class, always-on service, per the parley decision and plan. Delivered TDD/BDD (red-green-refactor) via a full sashay: plan → compliance gate → adversarial review → branch/worktree → PR #40 → implementation subagent → code review → fix loop → E2E chronicle.
+Implemented the Cove observability backend as a **single OpenObserve all-in-one container** (per parley T7), via a full TDD/BDD sashay. The backend was initially built as a Prometheus+Grafana+OTel-collector stack (PR #40), then **reworked to OpenObserve** after the operator re-opened the parley with the reframe: support app development with transferable, industry-standard practices — not build custom Grafana dashboards.
 
 ## Results
-- **PR #40** (`obs-prometheus-otel`, base `main` on Forgejo): 17 files, +1099/-5, all observability-related. WIP draft, NOT merged.
-- **Tier-0 tests:** 30/30 observability pass; full suite 304 pass + 10 pre-existing litellm tech-debt failures (unchanged, documented in `docs/tech-debt/litellm-test-drift.md`).
-- **Adversarial plan review** caught 5 defects folded into the plan (always-on, no host ports, Vault bearer-token auth primary, no weak grafana password, resources drift test).
-- **Code review** (PR-level) found 2 majors + 3 minors, all fixed via RGR: collector bearertokenauth now attached to otlp receiver; `GRAFANA_ADMIN_PASSWORD` generated into bringup `.env`; vault scrape metrics path corrected; docs overclaim removed.
+- **PR #40** (`obs-prometheus-otel`, base `main` on Forgejo): 16 files, +1094/-7, all observability-related. WIP draft, NOT merged.
+- **Backend:** single `openobserve` container (always-on, no host ports, version-pinned, admin creds required). App-facing contract preserved: OTel instrumentation, OTLP ingestion at `otel.cove` (value-based bearer-token auth), `cove observability init` helper.
+- **Tier-0 tests:** 38/38 observability pass; full suite 312 pass + 10 pre-existing litellm tech-debt failures (unchanged, documented in `docs/tech-debt/litellm-test-drift.md`).
+- **Parley T7:** re-opened after implementation; resolved to OpenObserve over Prometheus+Grafana (and over SigNoz/Uptrace) — single binary, no DB to operate, standard SQL+PromQL, object-storage fit, OTel instrumentation is the durable OTLP-swappable asset.
+- **Code review (3 passes):** found + fixed OTLP org-path 404, nginx token presence-only→value-based, and a CRITICAL bringup task-ordering bug (token set_fact after nginx render). All via RGR. Final verdict: minor (one documented tradeoff).
 
 ## Needs Human Review (operator action required)
-1. **Run the operator-assisted live-stack E2E** — tier-1 tests (T1-1..T1-4) need `cove up` (sudo, per AGENTS.md). Command:
+1. **Run the operator-assisted live-stack E2E** — tier-1 tests need `cove up` (sudo, per AGENTS.md). Command:
    ```
    cd .worktrees/obs-prometheus-otel && uv run --directory cli pytest tests/test_observability.py -m e2e -x -q
    ```
-   Expected: up starts 3 containers; `otel.cove/health` 401 without token / 200 with; `grafana.cove` serves UI; metric roundtrip lands in Prometheus; wrong token rejected.
+   Expected: up starts openobserve; `otel.cove/health` 401 without token / 200 with valid / 401 with wrong; `openobserve.cove` serves UI; OTLP metric roundtrip lands in OpenObserve.
 2. **Approve + merge PR #40** after E2E passes. PR is WIP (draft) — remove `WIP:` prefix when ready.
 
 ## Logs / artifacts
 - Chronicle: PR #40 comments on Forgejo (`git.cove`).
-- Plan: `docs/plans/observability-prometheus-otel.md` (committed to trunk).
-- Musing: `docs/musings/observability-prometheus-otel.md`; Parley: `docs/musings/parleys/2026-08-06-observability-platform.md`.
-- Coverage matrix: `docs/test-coverage-matrix.yaml` (11 new observability paths).
+- Plan: `docs/plans/observability-prometheus-otel.md` (T7 REVISION is operative spec; original Prometheus+Grafana body retained as superseded history).
+- Musing: `docs/musings/observability-prometheus-otel.md`; Parley: `docs/musings/parleys/2026-08-06-observability-platform.md` (T7 resolved → OpenObserve).
+- Coverage matrix: `docs/test-coverage-matrix.yaml` (OpenObserve paths).
