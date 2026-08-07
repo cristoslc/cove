@@ -91,9 +91,18 @@ Each open question from the musing is dispatched to a subagent for an adversaria
 
 ---
 
+### T7: Assembled stack vs OTel-native all-in-one — REOPENED after implementation
+
+**Raised:** 2026-08-06 (re-opened 2026-08-07 after PR #40 implemented the assembled stack)
+**Status:** open — in progress
+
+**Operator reframe:** the goal is for the developer to use **transferable, industry-standard app practices** — not to get good at writing Grafana queries. The point is to **support app development**, not build custom dashboards. This reframes the earlier "standard stack now" decision: the *app-facing* standard (OTel instrumentation, PromQL, three signals) is what matters; the *platform-facing* tooling (Grafana dashboards, multi-component management) is secondary.
+
+**Context:** PR #40 built the assembled stack (Prometheus + Grafana + OTel collector, 3 containers). Research surfaced the OTel-native all-in-ones (SigNoz MIT, OpenObserve AGPL, Uptrace) that consolidate to one app with one UI/query language, at the cost of being less universal than Prometheus+Grafana.
+
 ## Synthesis
 
-**Status:** resolved — **scope decision made: build the standard stack now.**
+**Status:** PARTIALLY RE-OPENED — T7 in progress. See T7. The pre-T7 scope decision (build the standard stack now) stands for the *app-facing* contract (OTLP, PromQL, three signals); the *platform-facing* tool choice (assembled vs all-in-one) is being re-weighed against the operator's reframe (support app dev, not custom dashboards).
 
 T1's NO was reversed (tooling objection reframed as adoption/timing, contrary to Cove's identity of providing industry-standard tooling). The operator closed the remaining adoption/timing tension: **ship Prometheus + Grafana with OTLP ingestion now**, as a first-class Cove service alongside forge/vault/registry/pages. The custom "step short of OTel" idea is dropped as contrary to Cove's purpose.
 
