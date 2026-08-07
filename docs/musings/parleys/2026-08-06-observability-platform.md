@@ -94,20 +94,23 @@ Each open question from the musing is dispatched to a subagent for an adversaria
 ### T7: Assembled stack vs OTel-native all-in-one — REOPENED after implementation
 
 **Raised:** 2026-08-06 (re-opened 2026-08-07 after PR #40 implemented the assembled stack)
-**Status:** open — in progress
+**Status:** resolved — **OpenObserve**
 
-**Operator reframe:** the goal is for the developer to use **transferable, industry-standard app practices** — not to get good at writing Grafana queries. The point is to **support app development**, not build custom dashboards. This reframes the earlier "standard stack now" decision: the *app-facing* standard (OTel instrumentation, PromQL, three signals) is what matters; the *platform-facing* tooling (Grafana dashboards, multi-component management) is secondary.
+**Operator reframe:** the goal is for the developer to use **transferable, industry-standard app practices** — not to get good at writing Grafana queries. The point is to **support app development**, not build custom dashboards.
 
-**Context:** PR #40 built the assembled stack (Prometheus + Grafana + OTel collector, 3 containers). Research surfaced the OTel-native all-in-ones (SigNoz MIT, OpenObserve AGPL, Uptrace) that consolidate to one app with one UI/query language, at the cost of being less universal than Prometheus+Grafana.
+**Key decisions along the resolution:**
+1. **PromQL is not an appdev skill.** Research (Grafana materials, 2026) confirms writing PromQL/LogQL is a platform-infra skill; even Grafana itself is moving to "explore metrics without writing a query" and "SLOs with no PromQL required" (guided UI + prebuilt panels). The appdev's job is OTel instrumentation + reading prebuilt dashboards.
+2. **All-in-one over assembled stack.** The operator: "cove should have the simpler all-in-one SO LONG AS the rugpull risk is minimal. devs can always add their own prometheus+grafana stack, especially if we're encouraging instrumentation with OTel." The OTel instrumentation is the durable asset; the backend is swappable via OTLP — structurally satisfying PURPOSE.md:48 (rugpull must not break core).
+3. **OpenObserve over SigNoz/Uptrace.** Chosen for: **single binary/container, no database to operate** (aligns with Cove's refuse-operational-overhead identity); **standard SQL + PromQL** (transferable, no proprietary ClickHouse dialect like SigNoz); **object storage (S3/MinIO)** — aligns with the MinIO already in Cove's stack from the Dagu parley; built-in RUM/session replay. AGPL-3.0 self-hosting is not a rugpull risk (no redistribution). SigNoz (MIT) rejected for its heavier ClickHouse-cluster ops burden and less-transferable ClickHouse SQL escape hatch.
+
+**Consequence:** PR #40 (Prometheus + Grafana + OTel collector, 3 containers) is superseded. The observability backend should be **re-implemented as a single OpenObserve container** ingesting OTLP. The OTel collector's role (auth, fan-out) can be folded into OpenObserve's native OTLP ingestion or kept as a thin front-end if auth/filtering requires it. Grafana dashboard-building is dropped as an explicit goal.
 
 ## Synthesis
 
-**Status:** PARTIALLY RE-OPENED — T7 in progress. See T7. The pre-T7 scope decision (build the standard stack now) stands for the *app-facing* contract (OTLP, PromQL, three signals); the *platform-facing* tool choice (assembled vs all-in-one) is being re-weighed against the operator's reframe (support app dev, not custom dashboards).
-
-T1's NO was reversed (tooling objection reframed as adoption/timing, contrary to Cove's identity of providing industry-standard tooling). The operator closed the remaining adoption/timing tension: **ship Prometheus + Grafana with OTLP ingestion now**, as a first-class Cove service alongside forge/vault/registry/pages. The custom "step short of OTel" idea is dropped as contrary to Cove's purpose.
+**Status:** T7 resolved → OpenObserve. The pre-T7 "standard stack" decision is revised: **single OpenObserve all-in-one, not Prometheus+Grafana.** The app-facing contract is unchanged and is the durable part: OTel instrumentation, OTLP ingestion, three signals (metrics/logs/traces) with prebuilt APM dashboards. Platform-facing tooling simplifies from 3 managed containers to 1.
 
 **Adopted shape (from T2/T3/T4):**
-- **Stack:** OTLP-first — Prometheus store/query + Grafana dashboards (T2).
+- **Stack:** OTLP-first — Prometheus store/query + Grafana dashboards (T2). *(REVISED by T7 → single OpenObserve container instead.)*
 - **Endpoint/auth:** `otel.cove` through nginx ingress, mTLS from local CA (T3).
 - **Integration:** `cove observability init` CLI helper + auto-instrumentation (T4).
 
