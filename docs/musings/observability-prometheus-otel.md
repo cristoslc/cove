@@ -48,28 +48,28 @@ Cove is offline-first, localhost-only. A metrics stack adds memory, config surfa
 
 A parley with adversarial subagents probed the premise. **The initial finding (T1) cut against the platform framing** — that the vault/registry analogy may not hold because an observability backend is only useful if apps emit telemetry. That objection was **reversed on reframe**: it was an adoption objection, not a tooling one, and Cove's identity is to provide **industry-standard tooling** so a single dev gets real-platform leverage without hand-assembling it. A custom "step short of OTel" would be exactly the bespoke glue Cove exists to avoid.
 
-**Decision (operator): build the standard stack now.** Prometheus + Grafana with OTLP ingestion, shipped as a first-class Cove service alongside forge/vault/registry/pages — the industry standard, not a smaller substitute.
+**Decision (operator):** ship observability as a first-class Cove service. **Revised by T7 (re-opened after PR #40): the backend is a single OpenObserve all-in-one container, not the Prometheus+Grafana assembled stack.** Rationale: the app-facing goal is transferable OTel instrumentation + prebuilt APM dashboards, not building/querying Grafana; PromQL is a platform-infra skill, not an appdev skill. OTel instrumentation is the durable asset — the backend is OTLP-swappable, satisfying PURPOSE.md:48 (rugpull must not break core). OpenObserve chosen over SigNoz (ClickHouse ops burden, proprietary dialect) and Uptrace: single binary, no DB to operate, standard SQL+PromQL, object-storage (S3/MinIO) fit with Cove's existing MinIO.
 
-Adopted shape:
-- **OTLP-first** — Prometheus store/query + Grafana dashboards (collector as single trust boundary, one protocol for metrics+traces+logs).
-- **`otel.cove` through the nginx ingress, mTLS** from the local CA (sole-ingress invariant, no secret/Vault bootstrap).
-- **`cove observability init` CLI helper** (idempotent compose/.env edit) with auto-instrumentation over manual SDK wiring.
+Adopted shape (as revised):
+- **Single OpenObserve container** ingesting OTLP at `otel.cove` — metrics + logs + traces + prebuilt APM dashboards in one UI. (Grafana dashboard-building dropped as an explicit goal.)
+- **`otel.cove` through the nginx ingress** with bearer-token auth (sole-ingress invariant, ADR-014).
+- **`cove observability init` CLI helper** (idempotent compose/.env edit) injecting OTLP env + token header.
 
 Boundaries:
-- **Distributed tracing** (OTLP) is the narrowest, rarest need — added as the standard when a real cross-service latency hunt requires it.
-- **Profiling** (pprof/JFR/py-spy) is per-process and pull-based — a **per-app concern, not a platform service**. The platform's role is metrics/traces; profiling stays app-side.
+- **Distributed tracing** ships natively in OpenObserve (OTLP spans) — no separate service.
+- **Profiling** (pprof/JFR/py-spy) is per-process and pull-based — a **per-app concern, not a platform service**.
 
-**Docs consequence:** PURPOSE.md's identity already frames Cove as infrastructure providing services dev tools connect to (PURPOSE.md:70) — observability fits, no mission rewrite. Only the service enumerations in PURPOSE.md and README's Services table get observability added.
+**Docs consequence:** PURPOSE.md's identity already frames Cove as infrastructure providing services dev tools connect to (PURPOSE.md:70) — observability fits, no mission rewrite. Only the service enumerations in PURPOSE.md and README's Services table get observability added (update to reflect OpenObserve, not Grafana).
 
 ## Open questions
 
-All original scope/shape questions are **settled by the parley** (record: `docs/musings/parleys/2026-08-06-observability-platform.md`):
+All original scope/shape questions are **settled by the parley** (record: `docs/musings/parleys/2026-08-06-observability-platform.md`), **with T7 revising the platform-facing stack**:
 
-- **Scope** (T1) → **build the standard stack now** — Prometheus + Grafana, OTLP ingestion, first-class Cove service.
-- **Stack shape** (T2) → **OTLP-first** over scrape-endpoint-per-app.
-- **Endpoint/auth** (T3) → **`otel.cove` via nginx ingress, mTLS from local CA**.
-- **Integration** (T4) → **`cove observability init` CLI helper + auto-instrumentation**.
-- **Traces** (T5) → added via OTLP when a real cross-service latency hunt requires it (narrowest need).
+- **Scope** (T1) → observability is a first-class Cove service (adoption/timing objection reversed).
+- **Stack shape** (T2) → **OTLP-first**, **revised by T7: single OpenObserve container**, not Prometheus+Grafana.
+- **Endpoint/auth** (T3) → **`otel.cove` via nginx ingress**, bearer-token auth (mTLS dropped as unimplementable with OTel SDKs).
+- **Integration** (T4) → **`cove observability init` CLI helper** + OTLP env injection.
+- **Traces** (T5) → native in OpenObserve via OTLP spans.
 - **Profiling** (T6) → per-app concern (pprof/JFR/py-spy), **not** a platform service.
 
-**Next:** this musing → `docs/plans/` plan → sashay (branch + worktree + draft PR + subagent dispatch). The plan must pin the stack, the `otel.cove` nginx + mTLS wiring, the CLI helper, and the PURPOSE.md/README service-enumeration update.
+**Next:** PR #40 (Prometheus+Grafana, 3 containers) is **superseded** — replace with a re-implementation using a single OpenObserve container. The plan must be revised accordingly: OpenObserve compose service, `otel.cove` nginx + bearer-token wiring, `cove observability init`, PURPOSE.md/README service-enumeration update (OpenObserve, not Grafana), and coverage-matrix + test updates.
