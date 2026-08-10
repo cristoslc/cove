@@ -71,6 +71,36 @@ class TestDeploymentManifests:
             "docker_compose_v2 wait should be false to avoid sealed-Vault failures"
         )
 
+    def test_bringup_bootstraps_compose_plugin(self):
+        """The docker CLI alone lacks `docker compose`; bringup must bootstrap it.
+
+        Regression: `cove up` failed with `unknown flag: --project-directory`
+        because `docker compose` is a separate plugin that Homebrew's docker
+        formula does not install. The bringup playbook must ensure the compose
+        plugin is present (and discoverable) before invoking `docker compose`.
+        """
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+
+        with open(bp) as f:
+            data = yaml.safe_load(f)
+
+        tasks = data[0]["tasks"] if isinstance(data, list) else data.get("tasks", [])
+        compose_up_index = next(
+            i for i, t in enumerate(tasks)
+            if isinstance(t, dict) and t.get("name") == "Bring up pod via docker compose"
+        )
+
+        bootstrap_names = {
+            t.get("name") for t in tasks[:compose_up_index]
+            if isinstance(t, dict)
+        }
+
+        assert any("compose" in (n or "").lower() and "plugin" in (n or "").lower() for n in bootstrap_names), (
+            "bringup.yml must include a task that bootstraps the docker compose plugin "
+            "before 'Bring up pod via docker compose'"
+        )
+
     def test_tailscale_tasks_safe_when_daemon_dead(self):
         """All tailscale tasks must survive `tailscale status --json` returning {}."""
         bp = COMPOSE_DIR / "bringup.yml"
