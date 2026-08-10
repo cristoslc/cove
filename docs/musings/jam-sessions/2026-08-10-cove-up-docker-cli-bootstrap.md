@@ -38,3 +38,21 @@
   config: ghcr.io auth, credsStore, currentContext, and plugins all preserved.
 - Next: run full non-e2e suite; then rebuild+reinstall the `cove` uv tool so the bootstrapped
   docker-compose plugin change actually ships (AGENTS.md now documents the promote/rollback flow).
+
+## 2026-08-10 11:40 — Close-out
+
+- Full non-e2e suite: **275 passed, 10 failed** — all 10 failures are in `test_litellm.py`
+  (litellm config / nginx route whitelist / compose service defs), verified **pre-existing**
+  by stashing my changes and re-running the clean tree (17 litellm failures without my work).
+  None touch `compose/bringup.yml`, AGENTS.md, or the deployment-manifest tests I edited.
+- Deployment-manifest tests (`TestDeploymentManifests`) all pass (6/6), including the new
+  `test_bringup_bootstraps_compose_plugin`.
+- `cli/cove/resources/compose` is gitignored (build-time snapshot); `sync_compose_resources.py`
+  regenerates it. Canonical source is `compose/` at repo root — that's what got committed.
+- Committed + pushed to `main` (46d73b6): AGENTS.md reinstall section, compose plugin bootstrap,
+  regression test. `cli/uv.lock` editable-version bump (0.1.0→0.2.0) left untouched as pre-existing.
+- **Not done (needs operator):** the `cove` uv tool promote step — rebuild the wheel and
+  `uv tool install --force` so the compose-plugin fix ships to `~/.local/bin/cove`. Per AGENTS.md
+  this is post-merge, but the 10 pre-existing litellm failures are a gate concern. Recommend the
+  operator either (a) promote now (litellm failures are unrelated to this fix), or (b) fix the
+  litellm suite first. The fix is verified via `uv run --directory cli cove up` regardless.
