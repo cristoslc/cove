@@ -20,6 +20,61 @@
         forgejo_root_url: "https://git.cove.local/"
         forgejo_ssh_domain: git.cove.local
 
+    - name: Detect docker CLI presence (macOS)
+      when: ansible_system == "Darwin"
+      ansible.builtin.command: command -v docker
+      register: docker_cli_detect
+      changed_when: false
+      failed_when: false
+
+    - name: Bootstrap docker CLI via Homebrew (macOS)
+      when:
+        - ansible_system == "Darwin"
+        - docker_cli_detect.rc != 0
+      ansible.builtin.shell: brew install docker
+      changed_when: true
+
+    - name: Detect docker compose plugin (macOS)
+      when: ansible_system == "Darwin"
+      ansible.builtin.command: docker compose version
+      register: compose_detect
+      changed_when: false
+      failed_when: false
+
+    - name: Bootstrap docker compose plugin via Homebrew (macOS)
+      when:
+        - ansible_system == "Darwin"
+        - compose_detect.rc != 0
+      ansible.builtin.shell: brew install docker-compose
+      changed_when: true
+
+    - name: Register Homebrew docker cli-plugins dir for compose (macOS)
+      when: ansible_system == "Darwin"
+      ansible.builtin.shell: |
+        set -eo pipefail
+        CFG="{{ ansible_user_dir }}/.docker/config.json"
+        mkdir -p "$(dirname "$CFG")"
+        PLUGIN_DIR="/opt/homebrew/lib/docker/cli-plugins"
+        python3 - "$CFG" "$PLUGIN_DIR" <<'PY'
+        import json, os, sys
+        cfg_path, plugin_dir = sys.argv[1], sys.argv[2]
+        cfg = {}
+        if os.path.exists(cfg_path):
+            with open(cfg_path) as f:
+                cfg = json.load(f)
+        dirs = cfg.get("cliPluginsExtraDirs") or []
+        if plugin_dir not in dirs:
+            cfg["cliPluginsExtraDirs"] = dirs + [plugin_dir]
+            with open(cfg_path, "w") as f:
+                json.dump(cfg, f, indent=2)
+                f.write("\n")
+            print("added")
+        else:
+            print("already present")
+        PY
+      register: compose_plugin_cfg
+      changed_when: "'added' in compose_plugin_cfg.stdout and 'already' not in compose_plugin_cfg.stdout"
+
     - name: Ensure Colima is running (macOS)
       when: ansible_system == "Darwin"
       block:
