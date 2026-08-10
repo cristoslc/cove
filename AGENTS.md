@@ -11,6 +11,27 @@ Read **[PURPOSE.md](PURPOSE.md)** for this project's identity, worldview, and fo
 - **`fj`** is the Forgejo CLI. See [docs/fj-guide.md](docs/fj-guide.md) for draft PR workflow, WIP title conventions, and Cove-specific usage rules.
 - **`cove litellm`** manages the optional LiteLLM proxy service (hardened LLM proxy with Headroom compression). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://litellm.cove/` through nginx ingress. Security posture: version-pinned, nginx route-whitelisted, read-only container, env-var-only credentials. See [docs/litellm-proxy.md](docs/litellm-proxy.md).
 
+## Reinstall the cove CLI (uv tool)
+
+The `cove` CLI is installed as a **uv tool** (`~/.local/bin/cove`) from a wheel built out of `cli/`. The stable tool MUST always reflect the last good **released** state, never a branch under test.
+
+**Canonical source of compose resources is `compose/` at the repo root** — NOT `cli/cove/resources/compose/` (a build-time snapshot) and NOT `~/.config/cove/compose/` (the deployed runtime copy). During a build, `cli/scripts/sync_compose_resources.py` syncs `compose/` → resources. Edit `compose/`, never the extracted copy.
+
+- Dev/test loop (no reinstall): `uv run --directory cli cove ...`
+- Test gate before any promote: `uv run --directory cli pytest -x -q -m "not e2e and not staging"`
+- **Promote** (MUST be post-merge to `main`, only after the test gate is green):
+  ```
+  uv build --wheel --out-dir cli/dist   # from cli/
+  uv tool install --force --from cli/dist/cove_cli-<ver>-py3-none-any.whl
+  ```
+- **Rollback** on breakage (restore the last tagged release, then re-promote):
+  ```
+  git checkout v<last-tag> -- cli/ compose/   # restore canonical source for the tag
+  uv build --wheel --out-dir cli/dist         # from cli/
+  uv tool install --force --from cli/dist/cove_cli-<ver>-py3-none-any.whl
+  ```
+- **Sashay-aware:** the promote step is a post-merge *release* action, not a trunk action. During a sashay or while a branch is under test, NEVER reinstall the stable `cove` tool from a branch wheel. Use `uv run --directory cli` for branch behavior; the staging test harness already builds the wheel into an isolated venv for tier-2 staging tests.
+
 ## Test command
 
 ```
