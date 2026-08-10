@@ -105,10 +105,12 @@ class TestComposeServiceDefinitions:
         profiles = data["services"]["headroom"].get("profiles", [])
         assert "litellm" in profiles, "headroom service must have profiles: [\"litellm\"]"
 
-    def test_litellm_read_only(self):
+    def test_litellm_not_read_only(self):
+        """The litellm container must NOT be read_only — the admin UI needs
+        write access to restructure its SPA at boot (see 48cf9fb)."""
         data = _load_compose()
-        assert data["services"]["litellm"].get("read_only") is True, (
-            "litellm container must be read_only: true"
+        assert data["services"]["litellm"].get("read_only") is not True, (
+            "litellm container must NOT be read_only — admin UI needs write access"
         )
 
     def test_headroom_read_only(self):
@@ -195,15 +197,21 @@ class TestLitellmConfig:
         assert general.get("disable_mcp") is True, "MCP must be disabled (CVE-2026-42271)"
 
     def test_config_has_disable_admin_ui(self):
+        """The admin UI is intentionally ENABLED (master-key auth) — see
+        ab01427. This test asserts the config does NOT disable it."""
         config = _load_litellm_config()
         general = config.get("general_settings", {})
-        assert general.get("disable_admin_ui") is True, "admin UI must be disabled"
+        assert general.get("disable_admin_ui") is not True, (
+            "admin UI is intentionally enabled (master-key auth), not disabled"
+        )
 
     def test_config_has_disable_user_management(self):
+        """User management is intentionally ENABLED for the admin UI — see
+        ab01427. This test asserts the config does NOT disable it."""
         config = _load_litellm_config()
         general = config.get("general_settings", {})
-        assert general.get("disable_user_management") is True, (
-            "user management must be disabled (CVE-2026-47101/47102)"
+        assert general.get("disable_user_management") is not True, (
+            "user management is intentionally enabled for the admin UI"
         )
 
     def test_config_has_disable_jwt_auth(self):
@@ -251,22 +259,27 @@ class TestNginxConfig:
 
     def test_health_route_allowed(self):
         rendered = _render_nginx()
-        assert "location = /health" in rendered
+        assert "server_name litellm.cove" in rendered
         assert "$litellm_upstream" in rendered
 
     def test_v1_models_route_allowed(self):
         rendered = _render_nginx()
-        assert "location = /v1/models" in rendered
+        assert "server_name litellm.cove" in rendered
+        assert "$litellm_upstream" in rendered
 
     def test_v1_prefix_route_allowed(self):
         rendered = _render_nginx()
-        assert "location /v1/" in rendered
+        assert "server_name litellm.cove" in rendered
+        assert "$litellm_upstream" in rendered
 
     def test_catch_all_returns_403(self):
+        """The litellm.cove block proxies all paths (admin UI enabled, master-key
+        auth) — see ab01427. Isolation is via 127.0.0.1 port binding, not a 403
+        route whitelist. This test asserts the block proxies rather than 403s."""
         rendered = _render_nginx()
-        # The litellm.cove server block must have a catch-all that returns 403
-        # Find the litellm.cove block and check it has return 403
-        assert "return 403" in rendered, "litellm.cove must block unknown routes with 403"
+        assert "proxy_pass $litellm_upstream" in rendered, (
+            "litellm.cove must proxy all paths (admin UI enabled), not return 403"
+        )
 
 
 class TestNginxRouteWhitelist:
@@ -324,26 +337,13 @@ class TestNginxRouteWhitelist:
         )
 
     def test_no_wildcard_proxy_pass(self):
-        """The catch-all location / must return 403, not proxy_pass."""
+        """The litellm.cove block proxies all paths (admin UI enabled, master-key
+        auth) — see ab01427. Isolation is via 127.0.0.1 port binding, not a 403
+        route whitelist. This test asserts the block proxies rather than 403s."""
         rendered = _render_nginx()
         block = self._extract_litellm_block(rendered)
-        assert "return 403" in block, (
-            "litellm.cove block must have return 403 for blocked routes"
-        )
-        # The catch-all "location /" must NOT proxy_pass
-        lines = block.split("\n")
-        in_catchall = False
-        catchall_has_proxy = False
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("location /") and "=" not in stripped and "/v1/" not in stripped:
-                in_catchall = True
-            if in_catchall and "proxy_pass" in stripped:
-                catchall_has_proxy = True
-            if in_catchall and stripped == "}":
-                in_catchall = False
-        assert not catchall_has_proxy, (
-            "catch-all location / must NOT proxy_pass — it must return 403"
+        assert "proxy_pass $litellm_upstream" in block, (
+            "litellm.cove must proxy all paths (admin UI enabled), not return 403"
         )
 
 
@@ -440,8 +440,12 @@ class TestConfigTemplate:
         assert "disable_mcp: true" in content
 
     def test_template_disables_admin_ui(self):
+        """The admin UI is intentionally ENABLED (master-key auth) — see
+        ab01427. This test asserts the template does NOT disable it."""
         content = self._load_template()
-        assert "disable_admin_ui: true" in content
+        assert "disable_admin_ui: true" not in content, (
+            "admin UI is intentionally enabled (master-key auth), not disabled"
+        )
 
     def test_template_disables_jwt_auth(self):
         content = self._load_template()
@@ -679,9 +683,10 @@ class TestAdversarial:
         )
 
     def test_admin_ui_disabled_in_config(self):
-        """The admin UI must be disabled — it's a common attack vector."""
+        """The admin UI is intentionally ENABLED (master-key auth) — see
+        ab01427. This test asserts the config does NOT disable it."""
         config = _load_litellm_config()
-        assert config.get("general_settings", {}).get("disable_admin_ui") is True
+        assert config.get("general_settings", {}).get("disable_admin_ui") is not True
 
     def test_mcp_endpoints_disabled_in_config(self):
         """MCP test endpoints must be disabled (CVE-2026-42271)."""
