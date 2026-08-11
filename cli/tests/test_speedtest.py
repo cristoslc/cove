@@ -448,6 +448,140 @@ class TestAppKeyAutoGen:
         assert "SPEEDTEST_APP_KEY=base64:OPERATOR" in env_file.read_text()
 
 
+class TestEnvFilePermissions:
+    """The compose .env holds the generated SPEEDTEST_APP_KEY — it must never be
+    world-readable. `_upsert_env` uses `write_text`, which creates a fresh .env at
+    0644 (umask default) when the file does not already exist. The fix must chmod
+    it to 0600, mirroring local_cache.py's 0600 handling."""
+
+    def _write_key(self, monkeypatch, tmp_path):
+        import cove.speedtest as st
+        env_file = tmp_path / ".env"
+        monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
+        st._upsert_env("SPEEDTEST_APP_KEY", "base64:TESTKEY")
+        return env_file
+
+    def test_fresh_env_is_0600(self, monkeypatch, tmp_path):
+        """A freshly created .env (file did NOT pre-exist) must be mode 0600, NOT
+        the 0644 write_text default. Prevents leaking the generated APP_KEY
+        world-readable when `cove speedtest up` runs before first `cove up`."""
+        env_file = self._write_key(monkeypatch, tmp_path)
+        assert env_file.exists()
+        mode = env_file.stat().st_mode & 0o777
+        assert mode == 0o600, f".env must be 0600 after fresh write, got {oct(mode)}"
+
+    def test_existing_0600_env_stays_0600(self, monkeypatch, tmp_path):
+        """An already-restricted .env must stay 0600 after _upsert_env rewrites it."""
+        import cove.speedtest as st
+        env_file = tmp_path / ".env"
+        env_file.write_text("FOO=bar\n")
+        env_file.chmod(0o600)
+        monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
+        st._upsert_env("SPEEDTEST_APP_KEY", "base64:TESTKEY")
+        mode = env_file.stat().st_mode & 0o777
+        assert mode == 0o600, f".env must remain 0600, got {oct(mode)}"
+
+
+class TestSeedRendering:
+    """The seed file must render the runtime hostname so the 1Password item title
+    matches the op_ref, and the temp seed must be cleaned up after use."""
+
+    def test_render_seed_replaces_hostname(self, monkeypatch, tmp_path):
+        """_render_seed must substitute the placeholder with the runtime hostname
+        (not leave `{{ hostname }}` or the ansible variant)."""
+        import cove.speedtest as st
+        seed = tmp_path / "speedtest-creds.yaml.example"
+        seed.write_text(
+            'items:\n  - title: "Speedtest {{ hostname }} APP_KEY"\n'
+            '      host[text]: "{{ hostname }}"\n'
+        )
+        monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
+        monkeypatch.setattr(st, "_hostname", lambda: "myhost")
+        rendered = st._render_seed()
+        assert "{{ hostname }}" not in rendered
+        assert "{{ ansible_hostname }}" not in rendered
+        assert "myhost" in rendered
+
+    def test_seed_temp_file_unlinked(self, monkeypatch, tmp_path):
+        """The temp seed file written for 1p-bulk-write must be removed after
+        _ensure_app_key runs — no orphaned seed files left behind."""
+        import os
+        from pathlib import Path
+        import cove.speedtest as st
+
+        monkeypatch.delenv("SPEEDTEST_APP_KEY", raising=False)
+        env_file = tmp_path / ".env"
+        monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
+        seed = tmp_path / "speedtest-creds.yaml.example"
+        seed.write_text(
+            'items:\n  - title: "Speedtest {{ hostname }} APP_KEY"\n'
+            "    vault: Private\n    category: login\n    fields:\n"
+            '      username: "cove-speedtest"\n'
+            '      password: "{{generate:64}}"\n'
+        )
+        monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
+
+        seen_paths = []
+        real_run = st.subprocess.run
+
+        def capture_run(*args, **kwargs):
+            argv = args[0] if args and isinstance(args[0], list) else []
+            if "1p-bulk-write" in " ".join(argv):
+                seed_arg = argv[argv.index("1p-bulk-write") + 1]
+                seen_paths.append(Path(seed_arg))
+                assert Path(seed_arg).exists(), "seed arg must exist at call time"
+            return _fake_provision_run(*args, **kwargs)
+
+        with patch("cove.speedtest.subprocess.run", side_effect=capture_run):
+            st._ensure_app_key()
+
+        assert seen_paths, "expected a 1p-bulk-write call with a seed path"
+        for p in seen_paths:
+            assert not p.exists(), (
+                f"temp seed file not unlinked after use: {p}"
+            )
+
+
+class TestAppKeyAutoGen1PBulkWrite:
+    """`1p-bulk-write --execute` must be checked for failure — a non-zero return
+    must surface the real 1Password root cause, not a misleading Vault error."""
+
+    def test_failed_1p_bulk_write_raises_clear_error(self, monkeypatch, tmp_path):
+        """When 1p-bulk-write --execute fails, _ensure_app_key must raise an error
+        naming the 1Password write failure (not a generic 'Failed to cache in
+        Vault' that masks the root cause)."""
+        import subprocess
+        import click
+        import cove.speedtest as st
+
+        monkeypatch.delenv("SPEEDTEST_APP_KEY", raising=False)
+        env_file = tmp_path / ".env"
+        monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
+        seed = tmp_path / "speedtest-creds.yaml.example"
+        seed.write_text(
+            'items:\n  - title: "Speedtest {{ hostname }} APP_KEY"\n'
+        )
+        monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
+
+        def fake_run(*args, **kwargs):
+            argv = args[0] if args and isinstance(args[0], list) else []
+            if "1p-bulk-write" in " ".join(argv):
+                return subprocess.CompletedProcess(
+                    argv, 1, stdout="", stderr="op: item already exists"
+                )
+            if "vault-get" in " ".join(argv):
+                return subprocess.CompletedProcess(argv, 2, stdout="")
+            return subprocess.CompletedProcess(argv, 0, stdout="base64:TESTKEY")
+
+        with patch("cove.speedtest.subprocess.run", side_effect=fake_run):
+            with pytest.raises(click.ClickException) as excinfo:
+                st._ensure_app_key()
+        assert "1Password" in str(excinfo.value), (
+            f"error must name the 1Password write failure, got: {excinfo.value}"
+        )
+        assert "op: item already exists" in str(excinfo.value)
+
+
 class TestBringupIntegration:
     """Validate bringup.yml includes speedtest.cove in cert SANs, hosts, .env,
     and creates the data directory."""
