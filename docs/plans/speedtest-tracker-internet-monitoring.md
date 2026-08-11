@@ -120,6 +120,7 @@ Written FIRST (red), before any implementation:
 - **T0-23 (resources drift)** `test_resources_tree_in_sync` — SHA-256 of `compose/` (speedtest additions) equals `cli/cove/resources/compose/` (security/integrity).
 - **T0-24 (inverse)** `test_wrong_host_does_not_route_to_speedtest` — a non-cove Host header does NOT route to the tracker (adversarial, FC-2).
 - **T0-25 (inverse)** `test_speedtest_not_in_required_services` — Speedtest is NOT in required `SERVICES` (it's optional) (FC-1).
+- **T0-26 (auth posture)** `test_auth_posture_documented` — `docs/speedtest.md` states the auth posture (app login enforced OR nginx basic-auth fallback), so an unauthenticated dashboard can't silently regress (security, adversarial).
 
 ### Tier 1 — integration E2E (live stack, `-m e2e and not staging`)
 - **T1-1** `test_speedtest_up_starts_container` — `cove speedtest up` starts the container (FC-1).
@@ -161,7 +162,8 @@ Run `cli/scripts/sync_compose_resources.py` to copy the new compose files into `
 ## Security posture
 
 - **No published `0.0.0.0` host port** — binds `127.0.0.1` only (mirror litellm); reachable only through nginx (sole ingress, ADR-014). nginx publishes `0.0.0.0:8443`, so `speedtest.cove` is LAN/Tailscale-reachable → auth is required, not cosmetic.
-- **App login auth** — Speedtest Tracker has its own user/auth. It runs behind the nginx ingress; the app's own login is the access gate (matching the litellm admin-UI-with-master-key posture — no additional nginx basic-auth layered on unless a follow-up decides otherwise).
+- **Access gate is the app's own login — posture must be verified against the pinned version.** Speedtest Tracker historically shipped **unauthenticated by default** on early versions; recent versions added user auth. The implementer MUST verify the pinned image's auth posture at `speedtest.cove` and confirm login is enforced (mirroring the litellm admin-UI-with-master-key gate). Because `speedtest.cove` is LAN/Tailscale-reachable, an unauthenticated-by-default image is NOT acceptable without an explicit mitigation (enable auth on first boot, or layer nginx basic-auth).
+- **Low sensitivity accepted only when auth is enforced** — the payload is WAN speed metrics (no credentials, no secrets), so app-login-only is acceptable; but it must be a real login, not a silent unauthenticated dashboard. If the pinned version cannot enforce login, fall back to nginx basic-auth at the `speedtest.cove` block (documented in `docs/speedtest.md`).
 - **`APP_KEY` required, no weak default** — `up`/bringup fails loud if unset (mirrors litellm's `UI_PASSWORD: ${...:-}` no-weak-literal rule).
 - **Version-pinned image** (no `latest`), non-root, memory-limited.
 - **SQLite, single container** — no external DB to operate, no additional CVE surface beyond the app container.
@@ -174,7 +176,7 @@ Run `cli/scripts/sync_compose_resources.py` to copy the new compose files into `
 
 ## Acceptance criteria
 
-1. All Tier 0 tests pass (T0-1..T0-25), written red first.
+1. All Tier 0 tests pass (T0-1..T0-26), written red first.
 2. `cove speedtest up` starts the tracker; `speedtest.cove` serves the UI through nginx.
 3. `cove speedtest down/status/logs` work; down uses `stop`, status checks through nginx on 8443.
 4. Landing page shows the `speedtest.cove` card; `cove status` reports it as optional.
