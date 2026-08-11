@@ -201,3 +201,32 @@ services:
       resources:
         limits:
           memory: ${HEADROOM_MEM_LIMIT:-256M}
+
+  speedtest-tracker:
+    profiles: ["speedtest"]
+    image: ${SPEEDTEST_IMAGE:-lscr.io/linuxserver/speedtest-tracker:v1.14.5-ls162}
+    container_name: ${SPEEDTEST_CONTAINER_NAME:-cove-speedtest-tracker}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${SPEEDTEST_PORT:-8982}:80"
+    volumes:
+      - ${COVE_DATA_ROOT}/speedtest:/config
+    environment:
+      PUID: "${SPEEDTEST_PUID:-1000}"
+      PGID: "${SPEEDTEST_PGID:-1000}"
+      TZ: "${SPEEDTEST_TZ:-America/New_York}"
+      APP_KEY: "${SPEEDTEST_APP_KEY:-}"
+      APP_URL: https://speedtest.cove.local
+      DB_CONNECTION: sqlite
+      SPEEDTEST_SCHEDULE: ${SPEEDTEST_SCHEDULE:-}
+      SPEEDTEST_SERVERS: ${SPEEDTEST_SERVERS:-}
+      PRUNE_RESULTS_OLDER_THAN: ${PRUNE_RESULTS_OLDER_THAN:-}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      start_period: 30s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${SPEEDTEST_MEM_LIMIT:-512M}
