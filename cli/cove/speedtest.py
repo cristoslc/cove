@@ -164,7 +164,7 @@ def up():
     """
     _ensure_app_key()
     click.echo("Starting Speedtest Tracker...")
-    subprocess.run(_compose_cmd("up", "-d", "--profile", "speedtest"), check=True)
+    subprocess.run(_compose_cmd("--profile", "speedtest", "up", "-d"), check=True)
     click.echo("Speedtest Tracker is running at https://speedtest.cove/")
 
 
