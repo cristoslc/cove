@@ -40,6 +40,9 @@ def _render_seed() -> str:
 
 
 def _seed_path() -> str:
+    """Write the rendered seed to a temp file for 1p-bulk-write, returning the
+    path. The caller MUST unlink the returned path after use (see
+    `_ensure_app_key`)."""
     import tempfile
     fd, path_str = tempfile.mkstemp(
         prefix="cove-speedtest-seed-", suffix=".yaml"
@@ -88,6 +91,7 @@ def _upsert_env(key: str, value: str) -> None:
             lines.append(existing)
     lines.append(line)
     env_path.write_text("\n".join(lines) + "\n")
+    env_path.chmod(0o600)
 
 
 def _ensure_app_key() -> str:
@@ -117,8 +121,17 @@ def _ensure_app_key() -> str:
         return cached
 
     # 4. Auto-generate: seed 1Password, cache in Vault, inject into .env.
-    _run_cove_creds("1p-bulk-write", _seed_path(), "--execute")
-    value = _vault_put(op_ref)
+    seed_path = _seed_path()
+    try:
+        write = _run_cove_creds("1p-bulk-write", seed_path, "--execute")
+        if write.returncode != 0:
+            raise click.ClickException(
+                "Failed to write Speedtest APP_KEY to 1Password: "
+                f"{write.stderr.strip()}"
+            )
+        value = _vault_put(op_ref)
+    finally:
+        os.unlink(seed_path)
     _upsert_env("SPEEDTEST_APP_KEY", value)
     return value
 
