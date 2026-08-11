@@ -1,10 +1,23 @@
 """CLI commands for Speedtest Tracker lifecycle."""
 
+import os
 import subprocess
 
 import click
 
 from cove.stateless import resolve_compose_dir
+
+
+def _require_app_key() -> None:
+    """Fail loud if SPEEDTEST_APP_KEY is unset or empty.
+
+    APP_KEY is a required secret (no weak default) used to encrypt stored data.
+    """
+    if not os.environ.get("SPEEDTEST_APP_KEY"):
+        raise click.ClickException(
+            "SPEEDTEST_APP_KEY must be set before starting Speedtest Tracker. "
+            "Generate one with: export SPEEDTEST_APP_KEY=\"base64:$(openssl rand -base64 32)\""
+        )
 
 
 def _compose_cmd(*args: str) -> list[str]:
@@ -29,6 +42,7 @@ def speedtest():
 @speedtest.command()
 def up():
     """Start the Speedtest Tracker service."""
+    _require_app_key()
     click.echo("Starting Speedtest Tracker...")
     subprocess.run(_compose_cmd("up", "-d", "--profile", "speedtest"), check=True)
     click.echo("Speedtest Tracker is running at https://speedtest.cove/")
