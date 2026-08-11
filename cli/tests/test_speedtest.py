@@ -86,8 +86,10 @@ def _fake_provision_run(*args, **kwargs):
     import subprocess
     argv = args[0] if args and isinstance(args[0], list) else []
     argv_str = " ".join(str(a) for a in argv)
-    if "creds" in argv_str and ("vault-put" in argv_str or "vault-get" in argv_str):
+    if "creds" in argv_str and "vault-put" in argv_str:
         return subprocess.CompletedProcess(argv, 0, stdout="base64:TESTKEY")
+    if "creds" in argv_str and "vault-get" in argv_str:
+        return subprocess.CompletedProcess(argv, 2, stdout="")  # not cached
     return subprocess.CompletedProcess(argv, 0, stdout="")
 
 
@@ -301,6 +303,14 @@ class TestCLI:
         monkeypatch.delenv("SPEEDTEST_APP_KEY", raising=False)
         env_file = tmp_path / ".env"
         monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
+        seed = tmp_path / "speedtest-creds.yaml.example"
+        seed.write_text(
+            'items:\n  - title: "Speedtest {{ hostname }} APP_KEY"\n'
+            "    vault: Private\n    category: login\n    fields:\n"
+            '      username: "cove-speedtest"\n'
+            '      password: "{{generate:64}}"\n'
+        )
+        monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
 
         runner = CliRunner()
         with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
@@ -324,6 +334,14 @@ class TestAppKeyAutoGen:
         monkeypatch.delenv("SPEEDTEST_APP_KEY", raising=False)
         env_file = tmp_path / ".env"
         monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
+        seed = tmp_path / "speedtest-creds.yaml.example"
+        seed.write_text(
+            'items:\n  - title: "Speedtest {{ hostname }} APP_KEY"\n'
+            "    vault: Private\n    category: login\n    fields:\n"
+            '      username: "cove-speedtest"\n'
+            '      password: "{{generate:64}}"\n'
+        )
+        monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
         return env_file
 
     def test_up_writes_app_key_to_1p_vault_and_env(self, monkeypatch, tmp_path):
