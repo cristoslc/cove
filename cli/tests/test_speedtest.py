@@ -133,14 +133,19 @@ class TestComposeServiceDefinition:
             f"speedtest-tracker image must have a version tag, got: {image}"
         )
 
-    def test_speedtest_app_key_env_required(self):
-        """APP_KEY must be required via env var with no weak literal default."""
+    def test_speedtest_app_key_compose_strict_form(self):
+        """APP_KEY must use the fail-loud compose form (`${...:?msg}`), not a
+        weak default (`${...:-}`), so `docker compose config` itself aborts when
+        SPEEDTEST_APP_KEY is unset or empty."""
         data = _load_compose()
         env = data["services"]["speedtest-tracker"].get("environment", {})
         assert "APP_KEY" in env, "speedtest-tracker must accept APP_KEY env var"
         app_key = str(env.get("APP_KEY", ""))
-        assert app_key == "${SPEEDTEST_APP_KEY:-}", (
-            f"APP_KEY must have no weak default (fail loud if unset), got: {app_key!r}"
+        assert "${SPEEDTEST_APP_KEY:?" in app_key, (
+            f"APP_KEY must fail loud at compose time via ${{SPEEDTEST_APP_KEY:?}}, got: {app_key!r}"
+        )
+        assert ":-" not in app_key, (
+            f"APP_KEY must not have a weak default, got: {app_key!r}"
         )
 
     def test_speedtest_app_url_env(self):
@@ -251,6 +256,48 @@ class TestCLI:
         assert "8443" in source, (
             "cove speedtest status must check through nginx on 8443"
         )
+
+    def test_speedtest_up_fails_loud_without_app_key(self, monkeypatch):
+        """cove speedtest up must fail loud (ClickException) before running
+        compose when SPEEDTEST_APP_KEY is unset or empty."""
+        from click.testing import CliRunner
+        from cove.speedtest import up
+
+        for value in (None, ""):
+            if value is None:
+                monkeypatch.delenv("SPEEDTEST_APP_KEY", raising=False)
+            else:
+                monkeypatch.setenv("SPEEDTEST_APP_KEY", value)
+            runner = CliRunner()
+            result = runner.invoke(up)
+            assert result.exit_code != 0, (
+                f"cove speedtest up must fail when SPEEDTEST_APP_KEY={value!r}"
+            )
+            assert "SPEEDTEST_APP_KEY" in result.output.upper(), (
+                "fail-loud message must mention SPEEDTEST_APP_KEY"
+            )
+
+    def test_speedtest_up_passes_with_app_key(self, monkeypatch):
+        """cove speedtest up must proceed to compose when SPEEDTEST_APP_KEY is
+        set (guard passes the value through)."""
+        from click.testing import CliRunner
+        from cove.speedtest import up
+
+        monkeypatch.setenv("SPEEDTEST_APP_KEY", "base64:c2VjcmV0")
+
+        runner = CliRunner()
+        with patch("cove.speedtest.subprocess.run") as mock_run:
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, (
+            f"cove speedtest up should proceed with APP_KEY set, got {result.output}"
+        )
+        compose_calls = [
+            c.args[0] for c in mock_run.call_args_list
+            if isinstance(c.args[0], list)
+        ]
+        assert compose_calls, "expected a docker compose invocation"
+        assert any("--profile" in args and "speedtest" in args for args in compose_calls)
 
 
 class TestBringupIntegration:
@@ -378,13 +425,22 @@ class TestAuthPosture:
     regresses, and the posture is documented."""
 
     def test_auth_posture_documented(self):
-        """docs/speedtest.md must state the auth posture explicitly."""
+        """docs/speedtest.md must state the auth posture explicitly, including
+        the login gate (or basic-auth fallback) so an unauthenticated dashboard
+        can't silently regress."""
         doc = PROJECT_ROOT / "docs" / "speedtest.md"
         assert doc.exists(), "docs/speedtest.md must exist"
         content = doc.read_text().lower()
         assert "auth" in content, "docs/speedtest.md must state the auth posture"
         assert "login" in content, (
             "docs/speedtest.md must confirm app login is enforced (or basic-auth)"
+        )
+        assert "unauthenticated" in content, (
+            "docs/speedtest.md must address the unauthenticated-by-default hazard "
+            "(an open dashboard is not acceptable)"
+        )
+        assert "basic-auth" in content, (
+            "docs/speedtest.md must document the nginx basic-auth fallback posture"
         )
 
     def test_wrong_host_does_not_route_to_speedtest(self):
@@ -410,7 +466,10 @@ class TestAuthPosture:
         data = _load_compose()
         env = data["services"]["speedtest-tracker"].get("environment", {})
         app_key = str(env.get("APP_KEY", ""))
-        assert app_key == "${SPEEDTEST_APP_KEY:-}", (
+        assert "${SPEEDTEST_APP_KEY:?" in app_key, (
+            "APP_KEY must fail loud at compose time via ${SPEEDTEST_APP_KEY:?}"
+        )
+        assert ":-" not in app_key, (
             "APP_KEY must have no weak literal default (fail loud if unset)"
         )
 
@@ -447,8 +506,11 @@ class TestE2ESpeedtestStack:
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
 
     def test_speedtest_requires_auth(self):
-        """An unauthenticated request must not land on a naked dashboard — it
-        must be redirected to the app login (auth enforced by the app)."""
+        """An unauthenticated request must NOT land on a naked dashboard. The
+        pinned Speedtest Tracker version enforces app login on first run and
+        redirects unauthenticated visitors away from the dashboard. We assert
+        either a login redirect (301/302 to a /login route) or a 401 — never a
+        bare 200 serving dashboard content."""
         import requests
         resp = requests.get(
             "https://127.0.0.1:8443/",
@@ -457,7 +519,21 @@ class TestE2ESpeedtestStack:
             timeout=10,
             allow_redirects=False,
         )
-        assert resp.status_code in (200, 301, 302), (
-            f"Expected login redirect (or 200 login page), got {resp.status_code}"
-        )
+        if resp.status_code == 200:
+            # A 200 must be the login page, NOT the unauthenticated dashboard.
+            # Speedtest Tracker redirects unauth'd / to /login; a 200 body with
+            # a login form is acceptable only if it is verifiably the login page.
+            assert "login" in resp.text.lower(), (
+                "Unauthenticated request returned 200 but no login content — "
+                "this looks like an open dashboard; auth posture is violated"
+            )
+        else:
+            assert resp.status_code in (301, 302, 401), (
+                f"Expected login redirect (301/302) or 401, got {resp.status_code}"
+            )
+            loc = resp.headers.get("location", "").lower()
+            if resp.status_code in (301, 302):
+                assert "login" in loc, (
+                    f"Redirect must target a login route, got Location: {loc!r}"
+                )
 
