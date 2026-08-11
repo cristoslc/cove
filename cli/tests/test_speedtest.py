@@ -133,19 +133,39 @@ class TestComposeServiceDefinition:
             f"speedtest-tracker image must have a version tag, got: {image}"
         )
 
-    def test_speedtest_app_key_compose_strict_form(self):
-        """APP_KEY must use the fail-loud compose form (`${...:?msg}`), not a
-        weak default (`${...:-}`), so `docker compose config` itself aborts when
-        SPEEDTEST_APP_KEY is unset or empty."""
+    def test_speedtest_app_key_compose_non_blocking_form(self):
+        """APP_KEY must use the non-blocking compose form (`${...:-}`), NOT the
+        fail-loud `:?` form. Fail-loud is enforced at the `cove speedtest up`
+        CLI boundary (`_require_app_key`), so the optional service's secret must
+        not abort the global `cove up` / `docker compose config` path when
+        SPEEDTEST_APP_KEY is unset."""
         data = _load_compose()
         env = data["services"]["speedtest-tracker"].get("environment", {})
         assert "APP_KEY" in env, "speedtest-tracker must accept APP_KEY env var"
         app_key = str(env.get("APP_KEY", ""))
-        assert "${SPEEDTEST_APP_KEY:?" in app_key, (
-            f"APP_KEY must fail loud at compose time via ${{SPEEDTEST_APP_KEY:?}}, got: {app_key!r}"
+        assert "${SPEEDTEST_APP_KEY:-" in app_key, (
+            f"APP_KEY must use the non-blocking ${{SPEEDTEST_APP_KEY:-}} form, got: {app_key!r}"
         )
-        assert ":-" not in app_key, (
-            f"APP_KEY must not have a weak default, got: {app_key!r}"
+        assert ":?" not in app_key, (
+            f"APP_KEY must NOT use the fail-loud :? form (breaks global cove up), got: {app_key!r}"
+        )
+
+    def test_compose_config_succeeds_without_app_key(self):
+        """`docker compose config` must succeed when SPEEDTEST_APP_KEY is unset —
+        the core platform (forge/vault/nginx) must not be blocked by the
+        optional speedtest service's secret."""
+        import os
+        import subprocess
+
+        env = dict(os.environ)
+        env.pop("SPEEDTEST_APP_KEY", None)
+        result = subprocess.run(
+            ["docker", "compose", "--project-directory", str(COMPOSE_DIR), "config"],
+            capture_output=True, text=True, env=env,
+        )
+        assert result.returncode == 0, (
+            "docker compose config must succeed without SPEEDTEST_APP_KEY; "
+            f"got rc={result.returncode}: {result.stderr}"
         )
 
     def test_speedtest_app_url_env(self):
@@ -462,15 +482,17 @@ class TestAuthPosture:
         )
 
     def test_app_key_no_weak_literal_in_compose(self):
-        """APP_KEY must not be a weak literal default — it must fail loud when unset."""
+        """APP_KEY must not be a weak literal default — fail-loud is enforced at
+        the `cove speedtest up` CLI boundary (`_require_app_key`), not via a
+        compose `:?` interpolation that would break the global `cove up` path."""
         data = _load_compose()
         env = data["services"]["speedtest-tracker"].get("environment", {})
         app_key = str(env.get("APP_KEY", ""))
-        assert "${SPEEDTEST_APP_KEY:?" in app_key, (
-            "APP_KEY must fail loud at compose time via ${SPEEDTEST_APP_KEY:?}"
+        assert "${SPEEDTEST_APP_KEY:-" in app_key, (
+            "APP_KEY must use the non-blocking ${SPEEDTEST_APP_KEY:-} form"
         )
-        assert ":-" not in app_key, (
-            "APP_KEY must have no weak literal default (fail loud if unset)"
+        assert ":?" not in app_key, (
+            "APP_KEY must NOT use the fail-loud :? form (breaks global cove up)"
         )
 
 
