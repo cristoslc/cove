@@ -77,6 +77,20 @@ def _render_nginx() -> str:
     return tmpl.render(FULL_TEMPLATE_VARS)
 
 
+def _fake_provision_run(*args, **kwargs):
+    """Fake subprocess.run for the auto-gen flow.
+
+    Returns a CompletedProcess that emits a base64 key for `vault-put`/`vault-get`
+    (the CLI resolves the secret via stdout), and succeeds for compose invocations.
+    """
+    import subprocess
+    argv = args[0] if args and isinstance(args[0], list) else []
+    argv_str = " ".join(str(a) for a in argv)
+    if "creds" in argv_str and ("vault-put" in argv_str or "vault-get" in argv_str):
+        return subprocess.CompletedProcess(argv, 0, stdout="base64:TESTKEY")
+    return subprocess.CompletedProcess(argv, 0, stdout="")
+
+
 class TestComposeServiceDefinition:
     """Validate the speedtest-tracker service definition in docker-compose.yml."""
 
@@ -277,47 +291,143 @@ class TestCLI:
             "cove speedtest status must check through nginx on 8443"
         )
 
-    def test_speedtest_up_fails_loud_without_app_key(self, monkeypatch):
-        """cove speedtest up must fail loud (ClickException) before running
-        compose when SPEEDTEST_APP_KEY is unset or empty."""
+    def test_speedtest_up_does_not_fail_loud_without_app_key(self, monkeypatch, tmp_path):
+        """cove speedtest up must succeed WITHOUT the operator manually setting
+        SPEEDTEST_APP_KEY — no fail-loud on unset (T0-27)."""
         from click.testing import CliRunner
+        import cove.speedtest as st
         from cove.speedtest import up
 
-        for value in (None, ""):
-            if value is None:
-                monkeypatch.delenv("SPEEDTEST_APP_KEY", raising=False)
-            else:
-                monkeypatch.setenv("SPEEDTEST_APP_KEY", value)
-            runner = CliRunner()
-            result = runner.invoke(up)
-            assert result.exit_code != 0, (
-                f"cove speedtest up must fail when SPEEDTEST_APP_KEY={value!r}"
-            )
-            assert "SPEEDTEST_APP_KEY" in result.output.upper(), (
-                "fail-loud message must mention SPEEDTEST_APP_KEY"
-            )
-
-    def test_speedtest_up_passes_with_app_key(self, monkeypatch):
-        """cove speedtest up must proceed to compose when SPEEDTEST_APP_KEY is
-        set (guard passes the value through)."""
-        from click.testing import CliRunner
-        from cove.speedtest import up
-
-        monkeypatch.setenv("SPEEDTEST_APP_KEY", "base64:c2VjcmV0")
+        monkeypatch.delenv("SPEEDTEST_APP_KEY", raising=False)
+        env_file = tmp_path / ".env"
+        monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
 
         runner = CliRunner()
-        with patch("cove.speedtest.subprocess.run") as mock_run:
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
             result = runner.invoke(up)
 
-        assert result.exit_code == 0, (
-            f"cove speedtest up should proceed with APP_KEY set, got {result.output}"
-        )
+        assert result.exit_code == 0, result.output
         compose_calls = [
             c.args[0] for c in mock_run.call_args_list
             if isinstance(c.args[0], list)
         ]
-        assert compose_calls, "expected a docker compose invocation"
         assert any("--profile" in args and "speedtest" in args for args in compose_calls)
+
+
+class TestAppKeyAutoGen:
+    """cove speedtest up must auto-generate SPEEDTEST_APP_KEY and store it in
+    1Password + Vault + the compose .env on first run, then reuse the cached
+    value on subsequent runs (idempotent). No manual key-setting required."""
+
+    def _patch_env(self, monkeypatch, tmp_path):
+        import cove.speedtest as st
+        monkeypatch.delenv("SPEEDTEST_APP_KEY", raising=False)
+        env_file = tmp_path / ".env"
+        monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
+        return env_file
+
+    def test_up_writes_app_key_to_1p_vault_and_env(self, monkeypatch, tmp_path):
+        """First `up` auto-generates the key: 1p-bulk-write --execute creates the
+        1P item, vault-put caches it in Vault, and the .env gets the key."""
+        from click.testing import CliRunner
+        from cove.speedtest import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        runner = CliRunner()
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        calls = [
+            c.args[0] for c in mock_run.call_args_list
+            if isinstance(c.args[0], list)
+        ]
+        assert any("1p-bulk-write" in args and "--execute" in args for args in calls), (
+            "expected cove creds 1p-bulk-write --execute call"
+        )
+        assert any("vault-put" in args for args in calls), (
+            "expected cove creds vault-put call"
+        )
+        assert env_file.exists(), ".env must be written"
+        content = env_file.read_text()
+        assert "SPEEDTEST_APP_KEY=base64:TESTKEY" in content, (
+            f".env must contain the generated key, got: {content}"
+        )
+
+    def test_up_reuses_cached_key_no_duplicate(self, monkeypatch, tmp_path):
+        """A second `up` with the key already in .env must NOT regenerate,
+        write to 1Password, or cache in Vault again (idempotent)."""
+        from click.testing import CliRunner
+        from cove.speedtest import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        env_file.write_text("SPEEDTEST_APP_KEY=base64:EXISTING\n")
+        runner = CliRunner()
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        calls = [
+            c.args[0] for c in mock_run.call_args_list
+            if isinstance(c.args[0], list)
+        ]
+        assert not any("1p-bulk-write" in args for args in calls), (
+            "must not write to 1Password when key is cached"
+        )
+        assert not any("vault-put" in args for args in calls), (
+            "must not re-cache in Vault when key is cached"
+        )
+        content = env_file.read_text()
+        assert content.count("SPEEDTEST_APP_KEY=") == 1, (
+            f".env must not get a duplicate SPEEDTEST_APP_KEY line, got: {content}"
+        )
+        assert "SPEEDTEST_APP_KEY=base64:EXISTING" in content
+
+    def test_up_reuses_vault_cached_key(self, monkeypatch, tmp_path):
+        """If .env is empty but the key is already cached in Vault (via
+        vault-get), `up` reuses it instead of regenerating."""
+        from click.testing import CliRunner
+        import cove.speedtest as st
+        from cove.speedtest import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            st, "_vault_get", lambda op_ref: "base64:FROMVAULT"
+        )
+        runner = CliRunner()
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        calls = [
+            c.args[0] for c in mock_run.call_args_list
+            if isinstance(c.args[0], list)
+        ]
+        assert not any("1p-bulk-write" in args for args in calls), (
+            "must not regenerate when key is cached in Vault"
+        )
+        assert "SPEEDTEST_APP_KEY=base64:FROMVAULT" in env_file.read_text()
+
+    def test_up_respects_operator_env_override(self, monkeypatch, tmp_path):
+        """An operator-set SPEEDTEST_APP_KEY env var is honored and written to
+        .env without touching 1Password/Vault."""
+        from click.testing import CliRunner
+        from cove.speedtest import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        monkeypatch.setenv("SPEEDTEST_APP_KEY", "base64:OPERATOR")
+        runner = CliRunner()
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        calls = [
+            c.args[0] for c in mock_run.call_args_list
+            if isinstance(c.args[0], list)
+        ]
+        assert not any("1p-bulk-write" in args for args in calls)
+        assert not any("vault-put" in args for args in calls)
+        assert "SPEEDTEST_APP_KEY=base64:OPERATOR" in env_file.read_text()
 
 
 class TestBringupIntegration:
