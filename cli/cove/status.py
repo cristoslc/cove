@@ -32,6 +32,7 @@ SERVICES = [
 OPTIONAL_SERVICES = [
     ("cove-litellm", "LiteLLM"),
     ("cove-headroom", "Headroom"),
+    ("cove-speedtest-tracker", "Speedtest"),
 ]
 
 NGINX_HTTPS_PORT = 8443
