@@ -1,0 +1,15 @@
+# Cove Speedtest Tracker APP_KEY credential seed for 1Password.
+# Run: cove creds 1p-bulk-write compose/seeds/speedtest-creds.yaml --execute
+# (cove speedtest up does this automatically on first run.)
+# Copy to speedtest-creds.yaml to pin values for your host.
+
+items:
+  - title: "Speedtest {{ hostname }} APP_KEY"
+    vault: Private
+    category: login
+    fields:
+      username: "cove-speedtest"
+      password: "{{generate:64}}"
+      host[text]: "{{ hostname }}"
+      url[text]: "https://speedtest.cove/"
+      purpose[text]: "Speedtest Tracker APP_KEY for Cove stack on {{ hostname }}"
