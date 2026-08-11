@@ -499,6 +499,36 @@ class TestCLI:
             "cove litellm up must use --profile litellm"
         )
 
+    def test_litellm_up_profile_before_subcommand(self):
+        """docker compose requires --profile as a GLOBAL flag BEFORE the
+        subcommand (Docker Compose 5.4.0). `cove litellm up` must pass
+        `--profile litellm` before `up`, not after (`up ... --profile litellm`
+        fails with 'unknown flag'). Regression: same root cause as speedtest."""
+        from click.testing import CliRunner
+        from cove.litellm import litellm
+
+        captured: list[list[str]] = []
+
+        def fake_subprocess_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("cove.litellm.subprocess.run", side_effect=fake_subprocess_run):
+            runner = CliRunner()
+            result = runner.invoke(litellm, ["up"])
+
+        assert result.exit_code == 0, f"cove litellm up failed: {result.output}"
+        assert captured, "no subprocess call captured"
+        compose_cmds = [c for c in captured if c and c[0] == "docker" and len(c) > 1 and c[1] == "compose"]
+        assert compose_cmds, f"no docker compose call captured: {captured}"
+        cmd = compose_cmds[0]
+        up_idx = cmd.index("up")
+        assert "--profile" in cmd, f"--profile missing from compose cmd: {cmd}"
+        prof_idx = cmd.index("--profile")
+        assert prof_idx < up_idx, (
+            f"--profile must precede 'up' (global flag), got cmd: {cmd}"
+        )
+
     def test_litellm_down_uses_stop_not_down(self):
         """cove litellm down must use 'stop' not 'down' to avoid stopping
         core Cove services."""

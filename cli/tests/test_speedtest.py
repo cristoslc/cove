@@ -274,6 +274,39 @@ class TestCLI:
             "cove speedtest up must use --profile speedtest"
         )
 
+    def test_speedtest_up_profile_before_subcommand(self):
+        """docker compose requires --profile as a GLOBAL flag BEFORE the
+        subcommand (Docker Compose 5.4.0). `cove speedtest up` must pass
+        `--profile speedtest` before `up`, not after (`up ... --profile
+        speedtest` fails with 'unknown flag'). Regression: the compose argv
+        must not contain 'up' before '--profile'."""
+        from click.testing import CliRunner
+        from cove.speedtest import _ensure_app_key, speedtest
+
+        captured: list[list[str]] = []
+
+        def fake_subprocess_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("cove.speedtest.subprocess.run", side_effect=fake_subprocess_run):
+            with patch("cove.speedtest._ensure_app_key", return_value="test-key"):
+                runner = CliRunner()
+                result = runner.invoke(speedtest, ["up"])
+
+        assert result.exit_code == 0, f"cove speedtest up failed: {result.output}"
+        assert captured, "no subprocess call captured"
+        compose_cmds = [c for c in captured if c and c[0] == "docker" and len(c) > 1 and c[1] == "compose"]
+        assert compose_cmds, f"no docker compose call captured: {captured}"
+        cmd = compose_cmds[0]
+        # Find the 'up' subcommand index and the '--profile' index.
+        up_idx = cmd.index("up")
+        assert "--profile" in cmd, f"--profile missing from compose cmd: {cmd}"
+        prof_idx = cmd.index("--profile")
+        assert prof_idx < up_idx, (
+            f"--profile must precede 'up' (global flag), got cmd: {cmd}"
+        )
+
     def test_speedtest_down_uses_stop(self):
         """cove speedtest down must use 'stop' not 'down' to avoid stopping
         core Cove services."""
