@@ -248,6 +248,10 @@
           - --sans
           - litellm.cove.local
           - --sans
+          - speedtest.cove
+          - --sans
+          - speedtest.cove.local
+          - --sans
           - hc.cove
           - --sans
           - hc.cove.local
@@ -280,6 +284,7 @@
           "git.cove" "git.cove.local" \
           "vault.cove" "vault.cove.local" \
           "litellm.cove" "litellm.cove.local" \
+          "speedtest.cove" "speedtest.cove.local" \
           "hc.cove" "hc.cove.local" \
           "ca.cove" "ca.cove.local" \
           "*.cove" "*.cove.local" \
@@ -300,7 +305,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local litellm.cove litellm.cove.local hc.cove hc.cove.local ca.cove ca.cove.local"
+        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local hc.cove hc.cove.local ca.cove ca.cove.local"
         state: present
       failed_when: false
 
@@ -339,6 +344,7 @@
         - "{{ cove_data_root }}/nginx/config/dns"
         - "{{ cove_data_root }}/dnsmasq"
         - "{{ cove_data_root }}/litellm"
+        - "{{ cove_data_root }}/speedtest"
 
     # TEMPLATES ----------------------------------------------------------------
     - name: Render nginx config from template
@@ -412,6 +418,10 @@
           HEADROOM_IMAGE={{ headroom_image | default('ghcr.io/chopratejas/headroom:latest@sha256:50b85d8e320cfcdf1b38919bb7ae067b93ff7a8de0a93f05b2c1246370200d1c') }}
           HEADROOM_CONTAINER_NAME={{ headroom_container_name | default('cove-headroom') }}
           HEADROOM_PORT={{ headroom_port | default('4001') }}
+          SPEEDTEST_IMAGE={{ speedtest_image | default('lscr.io/linuxserver/speedtest-tracker:v1.14.5-ls162') }}
+          SPEEDTEST_CONTAINER_NAME={{ speedtest_container_name | default('cove-speedtest-tracker') }}
+          SPEEDTEST_PORT={{ speedtest_port | default('8982') }}
+          SPEEDTEST_APP_KEY={{ speedtest_app_key | default('') }}
 
     # CONTAINERS -------------------------------------------------------------
     - name: Detect active docker context endpoint
