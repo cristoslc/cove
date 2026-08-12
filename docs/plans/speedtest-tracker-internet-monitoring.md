@@ -121,6 +121,7 @@ Written FIRST (red), before any implementation:
 - **T0-24 (inverse)** `test_wrong_host_does_not_route_to_speedtest` — a non-cove Host header does NOT route to the tracker (adversarial, FC-2).
 - **T0-25 (inverse)** `test_speedtest_not_in_required_services` — Speedtest is NOT in required `SERVICES` (it's optional) (FC-1).
 - **T0-26 (auth posture)** `test_auth_posture_documented` — `docs/speedtest.md` states the auth posture (app login enforced OR nginx basic-auth fallback), so an unauthenticated dashboard can't silently regress (security, adversarial).
+- **T0-27 (APP_KEY auto-gen)** `test_app_key_autogen` — `cove speedtest up` auto-generates `SPEEDTEST_APP_KEY` when absent (writes to 1Password + Vault + `.env`), and reuses the cached value on subsequent runs (idempotent). No manual key-setting required (FC-1, security).
 
 ### Tier 1 — integration E2E (live stack, `-m e2e and not staging`)
 - **T1-1** `test_speedtest_up_starts_container` — `cove speedtest up` starts the container (FC-1).
@@ -142,6 +143,8 @@ Add a `speedtest.cove` server block mirroring the litellm block: deferred-DNS `s
 ### 3. CLI — `cli/cove/speedtest.py`
 Mirror `litellm.py`: `up/down/status/logs` against the `speedtest-tracker` service. `up` uses `--profile speedtest`; `down` uses `stop` (avoid stopping core services); `status` checks `speedtest.cove` through nginx on 8443. Register `app.add_command(speedtest)` in `cli/cove/cli.py`.
 
+**`up` auto-generates `APP_KEY`:** on first run, if `SPEEDTEST_APP_KEY` is not already cached, generate a random key (e.g. `secrets.token_urlsafe(32)` or `openssl rand -base64 32`), write it to 1Password via a seed file + `cove creds 1p-bulk-write --execute`, cache it in Vault via `cove creds vault-put`, and inject it into the compose `.env` (idempotent). Subsequent runs read the cached value. Mirror the forgejo/minio credential provisioning pattern (`compose/seeds/*.yaml` + `cove creds`).
+
 ### 4. Status — `cli/cove/status.py`
 Add `("cove-speedtest-tracker", "Speedtest")` to `OPTIONAL_SERVICES` (not `SERVICES`).
 
@@ -149,7 +152,7 @@ Add `("cove-speedtest-tracker", "Speedtest")` to `OPTIONAL_SERVICES` (not `SERVI
 Add a `speedtest.cove` card + `dot-speedtest` status entry to the `services` array (mirror litellm).
 
 ### 6. bringup.yml
-Add `speedtest.cove`/`speedtest.cove.local` to cert SANs, `/etc/hosts`, cert validation, `.env` (`SPEEDTEST_IMAGE`, `SPEEDTEST_PORT`, `SPEEDTEST_CONTAINER_NAME`, `SPEEDTEST_APP_KEY`). Create `${COVE_DATA_ROOT}/speedtest/`. Render `config`/`.env` from template on first boot (conditional `when: not exists`), mirroring litellm's `config.yaml.j2` pattern.
+Add `speedtest.cove`/`speedtest.cove.local` to cert SANs, `/etc/hosts`, cert validation, `.env` (`SPEEDTEST_IMAGE`, `SPEEDTEST_PORT`, `SPEEDTEST_CONTAINER_NAME`, `SPEEDTEST_APP_KEY`). Create `${COVE_DATA_ROOT}/speedtest/`. Render `config`/`.env` from template on first boot (conditional `when: not exists`), mirroring litellm's `config.yaml.j2` pattern. `SPEEDTEST_APP_KEY` in `.env` is populated by the CLI auto-gen flow (not a static default).
 
 ### 7. Bundled resources
 Run `cli/scripts/sync_compose_resources.py` to copy the new compose files into `cli/cove/resources/compose/`.
@@ -164,7 +167,7 @@ Run `cli/scripts/sync_compose_resources.py` to copy the new compose files into `
 - **No published `0.0.0.0` host port** — binds `127.0.0.1` only (mirror litellm); reachable only through nginx (sole ingress, ADR-014). nginx publishes `0.0.0.0:8443`, so `speedtest.cove` is LAN/Tailscale-reachable → auth is required, not cosmetic.
 - **Access gate is the app's own login — posture must be verified against the pinned version.** Speedtest Tracker historically shipped **unauthenticated by default** on early versions; recent versions added user auth. The implementer MUST verify the pinned image's auth posture at `speedtest.cove` and confirm login is enforced (mirroring the litellm admin-UI-with-master-key gate). Because `speedtest.cove` is LAN/Tailscale-reachable, an unauthenticated-by-default image is NOT acceptable without an explicit mitigation (enable auth on first boot, or layer nginx basic-auth).
 - **Low sensitivity accepted only when auth is enforced** — the payload is WAN speed metrics (no credentials, no secrets), so app-login-only is acceptable; but it must be a real login, not a silent unauthenticated dashboard. If the pinned version cannot enforce login, fall back to nginx basic-auth at the `speedtest.cove` block (documented in `docs/speedtest.md`).
-- **`APP_KEY` required, no weak default** — `up`/bringup fails loud if unset (mirrors litellm's `UI_PASSWORD: ${...:-}` no-weak-literal rule).
+- **`APP_KEY` + admin credentials auto-generated and stored in 1Password + Vault, keyed by the `speedtest.cove.local` URL** — a **single shared 1Password item** (title `Speedtest Tracker`, URL `https://speedtest.cove.local/`) holds the admin username, admin password, and APP_KEY. This item is **shared across all the operator's machines** (not per-hostname), so the same credentials work everywhere. On first `cove speedtest up`, the flow **checks 1Password for an existing `speedtest.cove.local` item first** and reuses it if present; only if absent does it generate new credentials, write them to 1Password (via a seed file + `cove creds 1p-bulk-write`), cache in Vault (via `cove creds vault-put`), and inject into the compose `.env`. Subsequent runs read the cached value. No manual key-setting, no weak default, no fail-loud-on-unset friction.
 - **Version-pinned image** (no `latest`), non-root, memory-limited.
 - **SQLite, single container** — no external DB to operate, no additional CVE surface beyond the app container.
 
@@ -176,13 +179,13 @@ Run `cli/scripts/sync_compose_resources.py` to copy the new compose files into `
 
 ## Acceptance criteria
 
-1. All Tier 0 tests pass (T0-1..T0-26), written red first.
+1. All Tier 0 tests pass (T0-1..T0-27), written red first.
 2. `cove speedtest up` starts the tracker; `speedtest.cove` serves the UI through nginx.
 3. `cove speedtest down/status/logs` work; down uses `stop`, status checks through nginx on 8443.
 4. Landing page shows the `speedtest.cove` card; `cove status` reports it as optional.
 5. PURPOSE.md, README, and `docs/speedtest.md` reflect the service.
 6. Coverage matrix updated with new paths.
-7. No `0.0.0.0` host port; nginx is the sole ingress; `APP_KEY` has no weak default.
+7. No `0.0.0.0` host port; nginx is the sole ingress; `APP_KEY` + admin credentials auto-generated and stored in 1Password + Vault, keyed by the `speedtest.cove.local` URL (shared across machines, reused if present).
 8. Cleanup: worktree removed, PR merged (operator approval).
 
 ## Deferred (not in this PR)

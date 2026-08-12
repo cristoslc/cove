@@ -293,3 +293,7 @@ Cove generates a locally-trusted CA and certificates for `*.cove`, `localhost`, 
 ```
 
 The CLI reads `VAULT_TOKEN` from the environment or the OS keychain. If Vault is sealed, `vault-put` and `vault-get` automatically unseal it using keys from the keychain.
+
+### Unified admin identity
+
+Cove services that expose an admin login share a single unified admin identity — `admin@cove.local` with a word-based passphrase, stored in a shared, URL-keyed 1Password item reused across machines (see [ADR-017](adr/adr-017-unified-cove-admin-identity.md)). Speedtest Tracker is the first service to adopt it.
