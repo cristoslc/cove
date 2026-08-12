@@ -33,7 +33,12 @@ def _generate_app_key() -> str:
     return "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
 
 
-# A small portable wordlist for friendly usernames and word-based passphrases.
+# Speedtest Tracker's admin login uses an EMAIL address, not a username.
+# A cove-specific email (shared across machines) is used for the admin identity.
+SPEEDTEST_ADMIN_EMAIL = "admin@cove.local"
+
+
+# A small portable wordlist for word-based passphrases.
 # Kept in-repo (not /usr/share/dict/words) so it works on any platform.
 _FRIENDLY_WORDS = (
     "acorn", "amber", "breeze", "canyon", "daisy", "ember", "falcon",
@@ -41,11 +46,6 @@ _FRIENDLY_WORDS = (
     "nimbus", "ocean", "pixel", "quartz", "river", "summit", "tundra",
     "willow", "zephyr",
 )
-
-
-def _friendly_username() -> str:
-    """Return a short, readable, friendly username (not random alphanumeric)."""
-    return secrets.choice(_FRIENDLY_WORDS) + str(secrets.randbelow(100))
 
 
 def _passphrase() -> str:
@@ -79,10 +79,10 @@ def _render_seed() -> str:
 
     The `{{generate:N}}` placeholders are replaced with a base64-prefixed
     APP_KEY (Speedtest Tracker/Laravel requires that format; a raw string
-    causes HTTP 500), a friendly username, and a word-based passphrase."""
+    causes HTTP 500), the admin email, and a word-based passphrase."""
     template = _seed_example_path().read_text()
     rendered = template.replace("{{generate:64}}", _generate_app_key())
-    rendered = rendered.replace("{{generate:16}}", _friendly_username())
+    rendered = rendered.replace("{{generate:16}}", SPEEDTEST_ADMIN_EMAIL)
     rendered = rendered.replace("{{generate:32}}", _passphrase())
     return rendered
 
