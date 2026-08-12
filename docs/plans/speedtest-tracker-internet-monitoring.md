@@ -167,7 +167,7 @@ Run `cli/scripts/sync_compose_resources.py` to copy the new compose files into `
 - **No published `0.0.0.0` host port** — binds `127.0.0.1` only (mirror litellm); reachable only through nginx (sole ingress, ADR-014). nginx publishes `0.0.0.0:8443`, so `speedtest.cove` is LAN/Tailscale-reachable → auth is required, not cosmetic.
 - **Access gate is the app's own login — posture must be verified against the pinned version.** Speedtest Tracker historically shipped **unauthenticated by default** on early versions; recent versions added user auth. The implementer MUST verify the pinned image's auth posture at `speedtest.cove` and confirm login is enforced (mirroring the litellm admin-UI-with-master-key gate). Because `speedtest.cove` is LAN/Tailscale-reachable, an unauthenticated-by-default image is NOT acceptable without an explicit mitigation (enable auth on first boot, or layer nginx basic-auth).
 - **Low sensitivity accepted only when auth is enforced** — the payload is WAN speed metrics (no credentials, no secrets), so app-login-only is acceptable; but it must be a real login, not a silent unauthenticated dashboard. If the pinned version cannot enforce login, fall back to nginx basic-auth at the `speedtest.cove` block (documented in `docs/speedtest.md`).
-- **`APP_KEY` auto-generated and stored in 1Password + Vault** — mirroring the forgejo/minio credential pattern. On first `cove speedtest up`, if no `SPEEDTEST_APP_KEY` exists, generate a random key, write it to 1Password (via a seed file + `cove creds 1p-bulk-write`), cache it in Vault (via `cove creds vault-put`), and inject it into the compose `.env`. Subsequent runs read the cached value. No manual key-setting, no weak default, no fail-loud-on-unset friction.
+- **`APP_KEY` + admin credentials auto-generated and stored in 1Password + Vault, keyed by the `speedtest.cove.local` URL** — a **single shared 1Password item** (title `Speedtest Tracker`, URL `https://speedtest.cove.local/`) holds the admin username, admin password, and APP_KEY. This item is **shared across all the operator's machines** (not per-hostname), so the same credentials work everywhere. On first `cove speedtest up`, the flow **checks 1Password for an existing `speedtest.cove.local` item first** and reuses it if present; only if absent does it generate new credentials, write them to 1Password (via a seed file + `cove creds 1p-bulk-write`), cache in Vault (via `cove creds vault-put`), and inject into the compose `.env`. Subsequent runs read the cached value. No manual key-setting, no weak default, no fail-loud-on-unset friction.
 - **Version-pinned image** (no `latest`), non-root, memory-limited.
 - **SQLite, single container** — no external DB to operate, no additional CVE surface beyond the app container.
 
@@ -185,7 +185,7 @@ Run `cli/scripts/sync_compose_resources.py` to copy the new compose files into `
 4. Landing page shows the `speedtest.cove` card; `cove status` reports it as optional.
 5. PURPOSE.md, README, and `docs/speedtest.md` reflect the service.
 6. Coverage matrix updated with new paths.
-7. No `0.0.0.0` host port; nginx is the sole ingress; `APP_KEY` auto-generated and stored in 1Password + Vault (no manual key-setting, no weak default).
+7. No `0.0.0.0` host port; nginx is the sole ingress; `APP_KEY` + admin credentials auto-generated and stored in 1Password + Vault, keyed by the `speedtest.cove.local` URL (shared across machines, reused if present).
 8. Cleanup: worktree removed, PR merged (operator approval).
 
 ## Deferred (not in this PR)
