@@ -1,0 +1,6 @@
+# Session stash settings — plaintext, scrubbed (no private material)
+stash_count_threshold: 8
+keys:
+  - public_key: age1hkutnlvrysljt076mxkfgvk08k56z3xphe6c7n8hlc4rtejdjy3s0drhat
+    confirmed_source: "1password secure note 'age-key: cove session-stash'"
+    confirmed_on: 2026-08-12
