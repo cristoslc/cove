@@ -18,9 +18,9 @@ Cove already has a canonical operator identity: `admin@cove.local`, the shared C
 
 - **Email / username:** `admin@cove.local` — the shared Cove admin email, identical on every machine.
 - **Password:** a word-based passphrase (hyphen-separated words from a small portable wordlist), generated once and shared across machines.
-- **Storage:** the credentials live in a single shared 1Password item, keyed to the service's `https://<service>.cove.local/` URL (not per-hostname), so the same credentials work on all the operator's machines. The first machine seeds the item; the rest inherit it.
+- **Storage:** the credentials live in a single shared 1Password item **`Cove Admin`**, keyed to `https://cove.local/` (not per-hostname, not per-service), so the same credentials work on all the operator's machines and across all Cove services. The first machine seeds the item; the rest inherit it.
 
-For Speedtest Tracker specifically, the admin email, admin password, and `SPEEDTEST_APP_KEY` are stored together in the shared 1Password item titled `Speedtest Tracker`, keyed to `https://speedtest.cove.local/`, and cached in Vault for offline use.
+For Speedtest Tracker specifically, the admin email/password come from the shared **`Cove Admin`** item (keyed to `https://cove.local/`), while `SPEEDTEST_APP_KEY` lives in the separate `Speedtest Tracker` item keyed to `https://speedtest.cove.local/`. Both are cached in Vault for offline use.
 
 ## Rationale
 
@@ -38,8 +38,8 @@ The operator runs Cove on multiple machines. Per-hostname credentials would forc
 
 ## Consequences
 
-- **Speedtest Tracker admin login is `admin@cove.local`** with a word-based passphrase, stored in the shared 1Password item `Speedtest Tracker` keyed to `https://speedtest.cove.local/`, reused across machines.
-- **Future Cove services with admin logins should follow the same pattern** — the unified `admin@cove.local` identity and a shared, URL-keyed 1Password item — rather than inventing per-service usernames.
+- **Speedtest Tracker admin login is `admin@cove.local`** with a word-based passphrase, stored in the shared 1Password item `Cove Admin` keyed to `https://cove.local/`, reused across machines and across all Cove services.
+- **Future Cove services with admin logins should follow the same pattern** — the unified `admin@cove.local` identity in the shared `Cove Admin` item — rather than inventing per-service usernames.
 - **The random friendly-username generator is removed** from the Speedtest Tracker flow; the admin identity is the fixed Cove email.
 - **No per-hostname credential drift:** because the item is shared and URL-keyed, all machines present the same admin identity.
 

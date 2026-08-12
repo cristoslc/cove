@@ -10,7 +10,7 @@ Read **[PURPOSE.md](PURPOSE.md)** for this project's identity, worldview, and fo
 - **`uv run --directory cli cove up`** runs the project-local CLI without reinstalling the system tool. Use this for testing changes.
 - **`fj`** is the Forgejo CLI. See [docs/fj-guide.md](docs/fj-guide.md) for draft PR workflow, WIP title conventions, and Cove-specific usage rules.
 - **`cove litellm`** manages the optional LiteLLM proxy service (hardened LLM proxy with Headroom compression). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://litellm.cove/` through nginx ingress. Security posture: version-pinned, nginx route-whitelisted, read-only container, env-var-only credentials. See [docs/litellm-proxy.md](docs/litellm-proxy.md).
-- **`cove speedtest`** manages the optional Speedtest Tracker service (WAN-link monitor). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://speedtest.cove/` through nginx ingress. Credentials (admin email/password + APP_KEY) are stored in a **single shared 1Password item** keyed to `https://speedtest.cove.local/` and reused across all machines. See [docs/speedtest.md](docs/speedtest.md).
+- **`cove speedtest`** manages the optional Speedtest Tracker service (WAN-link monitor). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://speedtest.cove/` through nginx ingress. The admin identity comes from the shared **`Cove Admin`** 1Password item (keyed to `https://cove.local/`, ADR-017); the APP_KEY lives in the `Speedtest Tracker` item keyed to `https://speedtest.cove.local/`. Both reused across all machines. See [docs/speedtest.md](docs/speedtest.md).
 
 ## IaC bias
 
