@@ -33,6 +33,28 @@ def _generate_app_key() -> str:
     return "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
 
 
+# A small portable wordlist for friendly usernames and word-based passphrases.
+# Kept in-repo (not /usr/share/dict/words) so it works on any platform.
+_FRIENDLY_WORDS = (
+    "acorn", "amber", "breeze", "canyon", "daisy", "ember", "falcon",
+    "garden", "harbor", "iris", "juniper", "kestrel", "lagoon", "meadow",
+    "nimbus", "ocean", "pixel", "quartz", "river", "summit", "tundra",
+    "willow", "zephyr",
+)
+
+
+def _friendly_username() -> str:
+    """Return a short, readable, friendly username (not random alphanumeric)."""
+    return secrets.choice(_FRIENDLY_WORDS) + str(secrets.randbelow(100))
+
+
+def _passphrase() -> str:
+    """Return a word-based passphrase (hyphen-separated words), not random
+    alphanumeric. 4 words from a 23-word list ≈ 4 * log2(23) ≈ 18 bits of
+    entropy — adequate for a local single-operator service."""
+    return "-".join(secrets.choice(_FRIENDLY_WORDS) for _ in range(4))
+
+
 def _compose_dir():
     return resolve_compose_dir()
 
@@ -57,19 +79,11 @@ def _render_seed() -> str:
 
     The `{{generate:N}}` placeholders are replaced with a base64-prefixed
     APP_KEY (Speedtest Tracker/Laravel requires that format; a raw string
-    causes HTTP 500) and random admin username/password."""
+    causes HTTP 500), a friendly username, and a word-based passphrase."""
     template = _seed_example_path().read_text()
     rendered = template.replace("{{generate:64}}", _generate_app_key())
-    import string
-    _alphabet = string.ascii_letters + string.digits
-    rendered = rendered.replace(
-        "{{generate:16}}",
-        "".join(secrets.choice(_alphabet) for _ in range(16)),
-    )
-    rendered = rendered.replace(
-        "{{generate:32}}",
-        "".join(secrets.choice(_alphabet) for _ in range(32)),
-    )
+    rendered = rendered.replace("{{generate:16}}", _friendly_username())
+    rendered = rendered.replace("{{generate:32}}", _passphrase())
     return rendered
 
 
