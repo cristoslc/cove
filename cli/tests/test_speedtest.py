@@ -616,20 +616,22 @@ class TestSeedRendering:
         assert "{{generate:64}}" not in rendered
         assert "{{generate:32}}" not in rendered
 
-    def test_render_seed_uses_friendly_username_and_passphrase(self, monkeypatch, tmp_path):
-        """The admin username must be friendly (not random alphanumeric) and the
-        password must be a word-based passphrase (not random alphanumeric)."""
+    def test_render_seed_uses_email_and_passphrase(self, monkeypatch, tmp_path):
+        """Speedtest Tracker's admin login uses an EMAIL address (not a random
+        username) and a word-based passphrase (not random alphanumeric)."""
         import re
         import cove.speedtest as st
         seed = tmp_path / "speedtest-creds.yaml.example"
         seed.write_text(SHARED_SPEEDTEST_SEED)
         monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
         rendered = st._render_seed()
-        # Extract the username and password field values.
+        # Extract the username (email) and password field values.
         username = re.search(r'username: "([^"]+)"', rendered).group(1)
         password = re.search(r'password: "([^"]+)"', rendered).group(1)
-        # Username must be friendly — a short readable word, not 16 random chars.
-        assert len(username) <= 20, f"username should be short/friendly, got: {username!r}"
+        # Username must be the shared cove admin email, not random alphanumeric.
+        assert username == "admin@cove.local", (
+            f"admin identity must be the cove email, got: {username!r}"
+        )
         assert not re.fullmatch(r"[A-Za-z0-9]{16}", username), (
             f"username must not be random alphanumeric, got: {username!r}"
         )
