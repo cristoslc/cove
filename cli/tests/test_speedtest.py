@@ -89,6 +89,11 @@ def _fake_provision_run(*args, **kwargs):
     if "creds" in argv_str and "vault-put" in argv_str:
         return subprocess.CompletedProcess(argv, 0, stdout="base64:TESTKEY")
     if "creds" in argv_str and "vault-get" in argv_str:
+        # Return admin creds for the Cove Admin item, else not-cached.
+        if "Cove Admin" in argv_str and "username" in argv_str:
+            return subprocess.CompletedProcess(argv, 0, stdout="admin@cove.local")
+        if "Cove Admin" in argv_str and "password" in argv_str:
+            return subprocess.CompletedProcess(argv, 0, stdout="breeze-canyon-garden-quartz")
         return subprocess.CompletedProcess(argv, 2, stdout="")  # not cached
     return subprocess.CompletedProcess(argv, 0, stdout="")
 
@@ -554,6 +559,28 @@ class TestAppKeyAutoGen:
         )
         assert "SPEEDTEST_ADMIN_PASSWORD=breeze-canyon-garden-quartz" in content, (
             f".env must contain SPEEDTEST_ADMIN_PASSWORD, got: {content}"
+        )
+
+    def test_up_fails_loud_when_cove_admin_item_missing(self, monkeypatch, tmp_path):
+        """IaC/fail-loud: if the shared 'Cove Admin' item is absent (vault-get
+        returns nothing), `up` must FAIL LOUD — not silently fall back to the
+        app default admin@example.com/password."""
+        from click.testing import CliRunner
+        import cove.speedtest as st
+        from cove.speedtest import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        # Simulate the Cove Admin item being absent (vault-get returns None).
+        monkeypatch.setattr(st, "_vault_get", lambda op_ref: None)
+        runner = CliRunner()
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run):
+            result = runner.invoke(up)
+
+        assert result.exit_code != 0, (
+            "cove speedtest up must fail loud when the Cove Admin item is missing"
+        )
+        assert "Cove Admin" in result.output or "admin" in result.output.lower(), (
+            f"error must reference the missing Cove Admin identity, got: {result.output}"
         )
 
     def test_up_reuses_env_key_no_duplicate(self, monkeypatch, tmp_path):

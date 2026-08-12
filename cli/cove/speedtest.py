@@ -206,13 +206,21 @@ def _ensure_app_key() -> str:
 
 def _inject_admin_env() -> None:
     """Inject the shared admin email/password into the compose .env so a fresh
-    deploy seeds the correct admin user (IaC)."""
+    deploy seeds the correct admin user (IaC).
+
+    Fail loud: if the shared 'Cove Admin' item (ADR-017) is absent, raise —
+    never silently fall back to the app default admin@example.com/password."""
     email = _vault_get(SPEEDTEST_ADMIN_USERNAME_OP_REF)
     password = _vault_get(SPEEDTEST_ADMIN_PASSWORD_OP_REF)
-    if email:
-        _upsert_env("SPEEDTEST_ADMIN_EMAIL", email)
-    if password:
-        _upsert_env("SPEEDTEST_ADMIN_PASSWORD", password)
+    if not email or not password:
+        raise click.ClickException(
+            "Speedtest Tracker admin identity is missing. The shared 'Cove Admin' "
+            "1Password item (keyed to https://cove.local/, ADR-017) must exist "
+            "with username and password fields. Run `cove creds batch-pull` or "
+            "provision the Cove Admin item first."
+        )
+    _upsert_env("SPEEDTEST_ADMIN_EMAIL", email)
+    _upsert_env("SPEEDTEST_ADMIN_PASSWORD", password)
 
 
 def _compose_cmd(*args: str) -> list[str]:
