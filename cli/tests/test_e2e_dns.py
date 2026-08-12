@@ -126,6 +126,31 @@ class TestNginxConfigRendering:
         assert "~^(?<owner>[a-zA-Z0-9-]+)\\.pages\\.cove$" in rendered
         assert "~^(?<owner>[a-zA-Z0-9-]+)\\.pages\\.cove\\.local$" in rendered
 
+    def test_default_conf_has_pages_portal(self):
+        rendered = self._render("default.conf.j2", MINIMAL_TEMPLATE_VARS)
+        assert "server_name pages.cove pages.cove.local" in rendered
+        assert "try_files /pages.html =404" in rendered
+        assert "include /etc/nginx/cove-pages-locations.conf" in rendered
+
+    def test_pages_locations_conf_has_autoindex_api(self):
+        content = (NGINX_DIR / "cove-pages-locations.conf").read_text()
+        assert "location = /api/owners/" in content
+        assert "autoindex on" in content
+        assert "autoindex_format json" in content
+        assert "alias /data/pages/sites/" in content
+
+    def test_pages_html_exists_and_lists_api(self):
+        content = (NGINX_DIR / "pages.html").read_text()
+        assert "Cove Pages" in content
+        assert "/api/owners/" in content
+        assert "pages.cove.local" in content
+
+    def test_landing_page_has_pages_card(self):
+        content = (NGINX_DIR / "landing.html").read_text()
+        assert "pages.cove.local" in content
+        assert "Pages" in content
+        assert "dot-pages" in content
+
     def test_tailscale_block_conditional(self):
         rendered_minimal = self._render("default.conf.j2", MINIMAL_TEMPLATE_VARS)
         rendered_full = self._render("default.conf.j2", FULL_TEMPLATE_VARS)
@@ -363,6 +388,18 @@ class TestComposeConfig:
         volumes = data["services"]["nginx"]["volumes"]
         volume_paths = [str(v) for v in volumes]
         assert any("rootCA.pem" in v for v in volume_paths)
+
+    def test_nginx_mounts_pages_html(self):
+        data = self._load_compose()
+        volumes = data["services"]["nginx"]["volumes"]
+        volume_paths = [str(v) for v in volumes]
+        assert any("pages.html" in v for v in volume_paths)
+
+    def test_nginx_mounts_pages_locations(self):
+        data = self._load_compose()
+        volumes = data["services"]["nginx"]["volumes"]
+        volume_paths = [str(v) for v in volumes]
+        assert any("cove-pages-locations.conf" in v for v in volume_paths)
 
 
 class TestInverseAssertions:
