@@ -105,7 +105,7 @@ def _vault_token() -> str:
 def _vault_request(
     method: str, path: str, body: Optional[dict] = None, _allow_retry: bool = True
 ) -> tuple[int, dict]:
-    url = f"{_vault_addr()}/v1/{path}"
+    url = f"{_vault_addr().rstrip('/')}/v1/{path}"
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("X-Vault-Token", _vault_token())

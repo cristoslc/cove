@@ -1,6 +1,8 @@
 """CLI commands for Speedtest Tracker lifecycle."""
 
+import base64
 import os
+import secrets
 import subprocess
 
 import click
@@ -9,6 +11,15 @@ from cove.stateless import resolve_compose_dir
 
 
 APP_KEY_OP_REF_TEMPLATE = "op://Private/Speedtest {hostname} APP_KEY/password"
+
+
+def _generate_app_key() -> str:
+    """Generate a Speedtest Tracker APP_KEY in the required `base64:` format.
+
+    Speedtest Tracker (Laravel) requires APP_KEY as `base64:<32-byte base64>`.
+    A raw string causes HTTP 500 'Unsupported cipher or incorrect key length'.
+    """
+    return "base64:" + base64.b64encode(secrets.token_bytes(32)).decode()
 
 
 def _compose_dir():
@@ -34,9 +45,14 @@ def _seed_example_path():
 
 def _render_seed() -> str:
     """Render the speedtest seed template with the runtime hostname so the
-    1Password item title matches the op_ref (mirrors Ansible seed rendering)."""
+    1Password item title matches the op_ref (mirrors Ansible seed rendering).
+
+    The `{{generate:64}}` placeholder is replaced with a `base64:`-prefixed
+    key (Speedtest Tracker/Laravel requires that format; a raw string causes
+    HTTP 500)."""
     template = _seed_example_path().read_text()
-    return template.replace("{{ hostname }}", _hostname())
+    rendered = template.replace("{{ hostname }}", _hostname())
+    return rendered.replace("{{generate:64}}", _generate_app_key())
 
 
 def _seed_path() -> str:
