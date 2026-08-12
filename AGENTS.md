@@ -10,6 +10,16 @@ Read **[PURPOSE.md](PURPOSE.md)** for this project's identity, worldview, and fo
 - **`uv run --directory cli cove up`** runs the project-local CLI without reinstalling the system tool. Use this for testing changes.
 - **`fj`** is the Forgejo CLI. See [docs/fj-guide.md](docs/fj-guide.md) for draft PR workflow, WIP title conventions, and Cove-specific usage rules.
 - **`cove litellm`** manages the optional LiteLLM proxy service (hardened LLM proxy with Headroom compression). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://litellm.cove/` through nginx ingress. Security posture: version-pinned, nginx route-whitelisted, read-only container, env-var-only credentials. See [docs/litellm-proxy.md](docs/litellm-proxy.md).
+- **`cove speedtest`** manages the optional Speedtest Tracker service (WAN-link monitor). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://speedtest.cove/` through nginx ingress. Credentials (admin email/password + APP_KEY) are stored in a **single shared 1Password item** keyed to `https://speedtest.cove.local/` and reused across all machines. See [docs/speedtest.md](docs/speedtest.md).
+
+## IaC bias
+
+Cove is **infrastructure-as-code first**. Every service's configuration, credentials, and runtime state MUST be declared in code (compose, bringup.yml, seeds, CLI provisioning) — never configured by hand in a running container or via ad-hoc UI clicks. Concretely:
+
+- **Admin users / credentials** are provisioned from 1Password (via `cove creds` + shared items) and injected into the compose `.env`, so a fresh deploy seeds the correct identity — never the app's default (e.g. `admin@example.com`).
+- **Schedules / defaults** (e.g. a speedtest schedule) are declared in compose with sensible defaults, so the service is functional without manual setup.
+- **Manual fixes to a running container are a smell** — if you find yourself editing a DB or config by hand, that change belongs in code (compose env, seed, or CLI provisioning) and a test.
+- See ADR-017 (Unified Cove Admin Identity) for the shared-identity convention.
 
 ## Reinstall the cove CLI (uv tool)
 

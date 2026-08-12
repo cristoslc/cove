@@ -149,10 +149,14 @@ def _ensure_app_key() -> str:
     On every run we CHECK 1Password for an existing shared item first (via
     `cove creds vault-get` on the shared op_ref) and REUSE it if present — so
     the same credentials work on all the operator's machines. Only if no such
-    shared item exists do we generate admin username/password + APP_KEY, write
+    shared item exists do we generate admin email/password + APP_KEY, write
     them to 1Password (seed + `1p-bulk-write --execute`), cache in Vault
     (`vault-put`), and inject into the compose .env (mirrors the forgejo/minio
-    credential pattern)."""
+    credential pattern).
+
+    IaC: the admin email/password are also injected into the compose .env
+    (SPEEDTEST_ADMIN_EMAIL / SPEEDTEST_ADMIN_PASSWORD) so a fresh deploy seeds
+    the correct admin user — not the default admin@example.com/password."""
     # 1. Operator explicitly set it — honor directly.
     explicit = os.environ.get("SPEEDTEST_APP_KEY")
     if explicit:
@@ -175,6 +179,7 @@ def _ensure_app_key() -> str:
     cached = _vault_get(op_ref)
     if cached:
         _upsert_env("SPEEDTEST_APP_KEY", cached)
+        _inject_admin_env()
         return cached
 
     # 4. No shared item exists — generate admin creds + APP_KEY, write the
@@ -191,7 +196,19 @@ def _ensure_app_key() -> str:
     finally:
         os.unlink(seed_path)
     _upsert_env("SPEEDTEST_APP_KEY", value)
+    _inject_admin_env()
     return value
+
+
+def _inject_admin_env() -> None:
+    """Inject the shared admin email/password into the compose .env so a fresh
+    deploy seeds the correct admin user (IaC)."""
+    email = _vault_get(SPEEDTEST_ADMIN_USERNAME_OP_REF)
+    password = _vault_get(SPEEDTEST_ADMIN_PASSWORD_OP_REF)
+    if email:
+        _upsert_env("SPEEDTEST_ADMIN_EMAIL", email)
+    if password:
+        _upsert_env("SPEEDTEST_ADMIN_PASSWORD", password)
 
 
 def _compose_cmd(*args: str) -> list[str]:
