@@ -21,17 +21,18 @@ The Speedtest Tracker admin login uses the **unified Cove admin identity** (see 
 
 - **Email:** `admin@cove.local` — the shared Cove admin email, identical on every machine.
 - **Password:** a word-based passphrase (hyphen-separated words), generated once and shared across machines.
-- **Storage:** stored in the shared 1Password item `Speedtest Tracker`, keyed to `https://speedtest.cove.local/`, reused across machines.
+- **Storage:** stored in the shared 1Password item **`Cove Admin`**, keyed to `https://cove.local/` (ADR-017), reused across machines and across all Cove services.
 
 Because the item is shared and URL-keyed, the same admin identity works on all the operator's machines — the first machine seeds it, the rest inherit it.
 
-## APP_KEY + admin credentials (shared, URL-keyed — no manual setup)
+## APP_KEY (shared, URL-keyed — no manual setup)
 
-`SPEEDTEST_APP_KEY` is the encryption key Speedtest Tracker uses for stored data. The admin username, admin password, and APP_KEY are stored together in a **single shared 1Password item titled `Speedtest Tracker`, keyed to the `https://speedtest.cove.local/` URL** — **not** per-hostname. Because the item is shared, the **same credentials work on all the operator's machines**; there is no manual key-setting and no fail-loud-on-unset friction.
+`SPEEDTEST_APP_KEY` is the encryption key Speedtest Tracker uses for stored data. It is stored in a **shared 1Password item titled `Speedtest Tracker`, keyed to the `https://speedtest.cove.local/` URL** — **not** per-hostname. The admin email/password come from the separate shared **`Cove Admin`** item (ADR-017). Because the items are shared, the **same credentials work on all the operator's machines**; there is no manual key-setting and no fail-loud-on-unset friction.
 
 On every `cove speedtest up`:
 1. The flow **checks 1Password for an existing `speedtest.cove.local` item first** (via `cove creds vault-get` on the shared op_ref `op://Private/Speedtest Tracker/app_key`) and **reuses it if present** — no regeneration.
-2. Only if no such shared item exists does it generate a random admin username, admin password, and APP_KEY, write them to 1Password via the `compose/seeds/speedtest-creds.yaml` seed (`cove creds 1p-bulk-write <seed> --execute`, rendering to the shared `Speedtest Tracker` item in the `Private` vault), cache in Vault via `cove creds vault-put`, and inject `SPEEDTEST_APP_KEY=<key>` into the compose `.env` (idempotent — no duplicate lines).
+2. Only if no such shared item exists does it generate an APP_KEY, write it to 1Password via the `compose/seeds/speedtest-creds.yaml` seed (`cove creds 1p-bulk-write <seed> --execute`, rendering to the shared `Speedtest Tracker` item in the `Private` vault), cache in Vault via `cove creds vault-put`, and inject `SPEEDTEST_APP_KEY=<key>` into the compose `.env` (idempotent — no duplicate lines).
+3. The admin email/password are injected into the compose `.env` as `SPEEDTEST_ADMIN_EMAIL` / `SPEEDTEST_ADMIN_PASSWORD` from the shared `Cove Admin` item, so a fresh deploy seeds the correct admin (IaC).
 
 On subsequent runs, the shared item / cached value is reused — no regeneration, no duplicate 1Password item. If you set `SPEEDTEST_APP_KEY` yourself in the environment or `.env`, that value is honored directly. Because the op_ref is URL-keyed (not hostname-keyed), the same item is reused across machines — the first machine seeds it, the rest inherit it.
 

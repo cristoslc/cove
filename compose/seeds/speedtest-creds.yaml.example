@@ -3,22 +3,18 @@
 # (cove speedtest up does this automatically when no shared item exists.)
 # Copy to speedtest-creds.yaml to pin values for your host.
 #
-# This is a SINGLE SHARED item keyed to the https://speedtest.cove.local/ URL
-# (NOT per-hostname), so the same admin email/password + APP_KEY work on all
-# the operator's machines. `cove speedtest up` checks for this item first and
-# reuses it; it only generates new credentials when no such item exists.
-#
-# Speedtest Tracker's admin login uses an EMAIL address (not a username).
-# {{generate:16}} is replaced with the cove admin email (admin@cove.local) and
-# {{generate:32}} with a word-based passphrase by _render_seed.
+# This item holds ONLY the Speedtest Tracker APP_KEY, keyed to the
+# https://speedtest.cove.local/ URL (NOT per-hostname). The admin email/password
+# come from the SHARED 'Cove Admin' item (keyed to https://cove.local/, ADR-017),
+# which is the unified Cove admin identity used across all Cove services.
+# `cove speedtest up` checks for this item first and reuses it; it only
+# generates a new APP_KEY when no such item exists.
 
 items:
   - title: "Speedtest Tracker"
     vault: Private
     category: login
     fields:
-      username: "{{generate:16}}"
-      password: "{{generate:32}}"
       app_key[concealed]: "{{generate:64}}"
       url[text]: "https://speedtest.cove.local/"
-      purpose[text]: "Speedtest Tracker admin email/password + APP_KEY shared across Cove machines"
+      purpose[text]: "Speedtest Tracker APP_KEY (admin identity is the shared Cove Admin item, ADR-017)"

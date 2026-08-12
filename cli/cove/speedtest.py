@@ -13,14 +13,18 @@ from cove.stateless import resolve_compose_dir
 SPEEDTEST_URL = "https://speedtest.cove.local/"
 SPEEDTEST_OP_VAULT = "Private"
 SPEEDTEST_ITEM_TITLE = "Speedtest Tracker"
+# The shared Cove admin identity (ADR-017) lives in a cove.local-keyed item,
+# NOT a per-service item. The Speedtest APP_KEY stays in the Speedtest Tracker
+# item; the admin email/password come from the shared Cove Admin item.
+COVE_ADMIN_ITEM_TITLE = "Cove Admin"
 APP_KEY_OP_REF_TEMPLATE = (
     f"op://{SPEEDTEST_OP_VAULT}/{SPEEDTEST_ITEM_TITLE}/app_key"
 )
 SPEEDTEST_ADMIN_USERNAME_OP_REF = (
-    f"op://{SPEEDTEST_OP_VAULT}/{SPEEDTEST_ITEM_TITLE}/username"
+    f"op://{SPEEDTEST_OP_VAULT}/{COVE_ADMIN_ITEM_TITLE}/username"
 )
 SPEEDTEST_ADMIN_PASSWORD_OP_REF = (
-    f"op://{SPEEDTEST_OP_VAULT}/{SPEEDTEST_ITEM_TITLE}/password"
+    f"op://{SPEEDTEST_OP_VAULT}/{COVE_ADMIN_ITEM_TITLE}/password"
 )
 
 
@@ -74,17 +78,17 @@ def _seed_example_path():
 def _render_seed() -> str:
     """Render the speedtest seed template into a shared, URL-keyed 1Password
     item (title 'Speedtest Tracker' keyed to `https://speedtest.cove.local/`,
-    NOT per-hostname), so the same credentials work on all the operator's
-    machines.
+    NOT per-hostname), so the same APP_KEY works on all the operator's machines.
 
-    The `{{generate:N}}` placeholders are replaced with a base64-prefixed
+    The item holds ONLY the APP_KEY. The admin email/password come from the
+    shared 'Cove Admin' item (keyed to https://cove.local/, ADR-017), the
+    unified Cove admin identity used across all Cove services.
+
+    The `{{generate:64}}` placeholder is replaced with a base64-prefixed
     APP_KEY (Speedtest Tracker/Laravel requires that format; a raw string
-    causes HTTP 500), the admin email, and a word-based passphrase."""
+    causes HTTP 500)."""
     template = _seed_example_path().read_text()
-    rendered = template.replace("{{generate:64}}", _generate_app_key())
-    rendered = rendered.replace("{{generate:16}}", SPEEDTEST_ADMIN_EMAIL)
-    rendered = rendered.replace("{{generate:32}}", _passphrase())
-    return rendered
+    return template.replace("{{generate:64}}", _generate_app_key())
 
 
 def _seed_path() -> str:

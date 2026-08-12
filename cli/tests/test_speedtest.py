@@ -390,11 +390,9 @@ class TestCLI:
 SHARED_SPEEDTEST_SEED = (
     'items:\n  - title: "Speedtest Tracker"\n'
     "    vault: Private\n    category: login\n    fields:\n"
-    '      username: "{{generate:16}}"\n'
-    '      password: "{{generate:32}}"\n'
     '      app_key[concealed]: "{{generate:64}}"\n'
     '      url[text]: "https://speedtest.cove.local/"\n'
-    '      purpose[text]: "Speedtest Tracker admin + APP_KEY shared across Cove machines"\n'
+    '      purpose[text]: "Speedtest Tracker APP_KEY (admin identity is the shared Cove Admin item, ADR-017)"\n'
 )
 
 
@@ -434,24 +432,27 @@ class TestAppKeyAutoGen:
         )
 
     def test_op_refs_share_one_item_for_admin_and_app_key(self):
-        """The admin username, admin password, and APP_KEY must all live in the
-        SAME shared 1Password item (same vault+title), keyed to the URL."""
+        """The APP_KEY lives in the Speedtest Tracker item; the admin email and
+        password live in the SHARED 'Cove Admin' item (keyed to cove.local,
+        ADR-017) — the unified Cove admin identity used across all Cove
+        services."""
         import cove.speedtest as st
-        item = f"{st.SPEEDTEST_OP_VAULT}/{st.SPEEDTEST_ITEM_TITLE}"
-        assert st.APP_KEY_OP_REF_TEMPLATE.startswith(f"op://{item}/"), (
-            f"APP_KEY op_ref must be under the shared item, got: {st.APP_KEY_OP_REF_TEMPLATE!r}"
+        speedtest_item = f"{st.SPEEDTEST_OP_VAULT}/{st.SPEEDTEST_ITEM_TITLE}"
+        cove_admin_item = f"{st.SPEEDTEST_OP_VAULT}/{st.COVE_ADMIN_ITEM_TITLE}"
+        assert st.APP_KEY_OP_REF_TEMPLATE.startswith(f"op://{speedtest_item}/"), (
+            f"APP_KEY op_ref must be under the Speedtest Tracker item, got: {st.APP_KEY_OP_REF_TEMPLATE!r}"
         )
-        assert st.SPEEDTEST_ADMIN_USERNAME_OP_REF.startswith(f"op://{item}/"), (
-            f"admin username op_ref must be under the shared item, got: {st.SPEEDTEST_ADMIN_USERNAME_OP_REF!r}"
+        assert st.SPEEDTEST_ADMIN_USERNAME_OP_REF.startswith(f"op://{cove_admin_item}/"), (
+            f"admin username op_ref must be under the shared Cove Admin item, got: {st.SPEEDTEST_ADMIN_USERNAME_OP_REF!r}"
         )
-        assert st.SPEEDTEST_ADMIN_PASSWORD_OP_REF.startswith(f"op://{item}/"), (
-            f"admin password op_ref must be under the shared item, got: {st.SPEEDTEST_ADMIN_PASSWORD_OP_REF!r}"
+        assert st.SPEEDTEST_ADMIN_PASSWORD_OP_REF.startswith(f"op://{cove_admin_item}/"), (
+            f"admin password op_ref must be under the shared Cove Admin item, got: {st.SPEEDTEST_ADMIN_PASSWORD_OP_REF!r}"
         )
 
-    def test_seed_defines_shared_item_with_admin_and_app_key(self, monkeypatch, tmp_path):
-        """The rendered seed must define a SINGLE shared item titled 'Speedtest
-        Tracker' keyed to https://speedtest.cove.local/, with username, password,
-        and app_key fields — not a per-hostname item."""
+    def test_seed_defines_shared_item_with_app_key(self, monkeypatch, tmp_path):
+        """The rendered seed must define the Speedtest Tracker item keyed to
+        https://speedtest.cove.local/, with the app_key field (admin identity
+        comes from the shared Cove Admin item) — not a per-hostname item."""
         import cove.speedtest as st
         self._patch_env(monkeypatch, tmp_path)
         rendered = st._render_seed()
@@ -459,8 +460,6 @@ class TestAppKeyAutoGen:
         assert "https://speedtest.cove.local/" in rendered, (
             "seed must key the item to the speedtest.cove.local URL"
         )
-        assert "username" in rendered, "seed must define the admin username"
-        assert "password" in rendered, "seed must define the admin password"
         assert "app_key" in rendered, "seed must define the app_key"
         assert "{{ hostname }}" not in rendered, "seed must not be hostname-templated"
         assert "{{ ansible_hostname }}" not in rendered, (
@@ -677,33 +676,23 @@ class TestSeedRendering:
         assert "{{generate:64}}" not in rendered
         assert "{{generate:32}}" not in rendered
 
-    def test_render_seed_uses_email_and_passphrase(self, monkeypatch, tmp_path):
-        """Speedtest Tracker's admin login uses an EMAIL address (not a random
-        username) and a word-based passphrase (not random alphanumeric)."""
-        import re
+    def test_admin_identity_comes_from_cove_admin_item(self):
+        """The admin email/password must come from the SHARED 'Cove Admin' item
+        (keyed to cove.local, ADR-017), NOT the Speedtest Tracker item — so the
+        same Cove admin identity is used across all Cove services."""
         import cove.speedtest as st
-        seed = tmp_path / "speedtest-creds.yaml.example"
-        seed.write_text(SHARED_SPEEDTEST_SEED)
-        monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
-        rendered = st._render_seed()
-        # Extract the username (email) and password field values.
-        username = re.search(r'username: "([^"]+)"', rendered).group(1)
-        password = re.search(r'password: "([^"]+)"', rendered).group(1)
-        # Username must be the shared cove admin email, not random alphanumeric.
-        assert username == "admin@cove.local", (
-            f"admin identity must be the cove email, got: {username!r}"
+        assert st.SPEEDTEST_ADMIN_EMAIL == "admin@cove.local", (
+            f"admin email must be the shared cove identity, got: {st.SPEEDTEST_ADMIN_EMAIL!r}"
         )
-        assert not re.fullmatch(r"[A-Za-z0-9]{16}", username), (
-            f"username must not be random alphanumeric, got: {username!r}"
+        assert st.COVE_ADMIN_ITEM_TITLE == "Cove Admin", (
+            f"admin item must be titled 'Cove Admin', got: {st.COVE_ADMIN_ITEM_TITLE!r}"
         )
-        # Password must be a word-based passphrase (hyphen-separated words),
-        # not a random alphanumeric string.
-        assert "-" in password, f"password must be a hyphenated passphrase, got: {password!r}"
-        words = password.split("-")
-        assert len(words) >= 3, f"passphrase must have >=3 words, got: {password!r}"
-        assert all(w.isalpha() for w in words), (
-            f"passphrase words must be alphabetic, got: {password!r}"
-        )
+        assert st.SPEEDTEST_ADMIN_USERNAME_OP_REF.startswith(
+            f"op://{st.SPEEDTEST_OP_VAULT}/{st.COVE_ADMIN_ITEM_TITLE}/"
+        ), f"admin username op_ref must point to Cove Admin item, got: {st.SPEEDTEST_ADMIN_USERNAME_OP_REF!r}"
+        assert st.SPEEDTEST_ADMIN_PASSWORD_OP_REF.startswith(
+            f"op://{st.SPEEDTEST_OP_VAULT}/{st.COVE_ADMIN_ITEM_TITLE}/"
+        ), f"admin password op_ref must point to Cove Admin item, got: {st.SPEEDTEST_ADMIN_PASSWORD_OP_REF!r}"
 
     def test_seed_temp_file_unlinked(self, monkeypatch, tmp_path):
         """The temp seed file written for 1p-bulk-write must be removed after
