@@ -215,6 +215,26 @@ server {
     }
 }
 
+# pages.cove — pages list / portal
+server {
+    listen 443 ssl;
+    server_name pages.cove pages.cove.local;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    root /usr/share/nginx/html;
+    try_files /pages.html =404;
+
+    include /etc/nginx/cove-pages-locations.conf;
+
+    location = /_health {
+        access_log off;
+        add_header Content-Type text/plain;
+        return 200 "ok\n";
+    }
+}
+
 # pages subdomain — *.pages.cove
 server {
     listen 443 ssl;

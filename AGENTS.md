@@ -21,6 +21,8 @@ Cove is **infrastructure-as-code first**. Every service's configuration, credent
 - **Manual fixes to a running container are a smell** — if you find yourself editing a DB or config by hand, that change belongs in code (compose env, seed, or CLI provisioning) and a test.
 - See ADR-017 (Unified Cove Admin Identity) for the shared-identity convention.
 
+- **nginx config is generated**: `compose/nginx/default.conf` is a rendered artifact, gitignored, regenerated unconditionally by `bringup.yml` (template `default.conf.j2`). NEVER edit `default.conf` — it will be overwritten on the next `cove up`. Always edit `default.conf.j2` and regenerate. Note: `bringup.yml` renders the config but does not reload nginx, so after a template change run `docker exec cove-nginx nginx -s reload` (or restart the container) to apply it.
+
 ## Reinstall the cove CLI (uv tool)
 
 The `cove` CLI is installed as a **uv tool** (`~/.local/bin/cove`) from a wheel built out of `cli/`. The stable tool MUST always reflect the last good **released** state, never a branch under test.

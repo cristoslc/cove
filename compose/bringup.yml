@@ -305,7 +305,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local hc.cove hc.cove.local ca.cove ca.cove.local"
+        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
         state: present
       failed_when: false
 
@@ -352,6 +352,7 @@
         src: "{{ nginx_conf_dir }}/default.conf.j2"
         dest: "{{ nginx_conf_dir }}/default.conf"
         mode: "0644"
+      notify: Reload nginx
 
     - name: Render litellm config from template (first boot only)
       ansible.builtin.template:
@@ -498,3 +499,10 @@
             1. ansible-playbook -i inventory.yml bootstrap_vault.yml
             2. ansible-playbook -i inventory.yml provision_vault_user.yml
             3. ansible-playbook -i inventory.yml provision_forgejo.yml
+
+  handlers:
+    - name: Reload nginx
+      ansible.builtin.command: docker exec {{ nginx_container_name }} nginx -s reload
+      environment:
+        DOCKER_HOST: "{{ docker_host_detect.stdout }}"
+      changed_when: false

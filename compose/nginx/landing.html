@@ -65,6 +65,16 @@
     </div>
   </a>
 
+  <a class="card" href="https://pages.cove.local/" id="pages">
+    <span class="status-dot" id="dot-pages"></span>
+    <div class="card-content">
+      <div class="card-title">Pages</div>
+      <div class="card-url">pages.cove.local</div>
+    </div>
+  </a>
+    </div>
+  </a>
+
   <div class="section-title">Links</div>
   <div class="link-row">
     <a href="/config/">Configuration</a>
@@ -80,7 +90,7 @@
 </div>
 
 <script>
-const services = ['forgejo', 'vault', 'litellm', 'speedtest'];
+const services = ['forgejo', 'vault', 'litellm', 'speedtest', 'pages'];
 async function checkHealth() {
   let anyDown = false;
   for (const svc of services) {

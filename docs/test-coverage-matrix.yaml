@@ -195,3 +195,24 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "pages.cove portal serves pages list page"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "pages autoindex JSON API lists owners and sites"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "landing page has Pages card"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
