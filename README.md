@@ -19,9 +19,15 @@ All services run in Docker Compose with `restart: unless-stopped`. Configuration
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
+Cove is **not on PyPI**. Install from a GitHub release wheel (replace `v0.4.1` with the version you want):
+
 ```bash
-uv tool install cove-cli
+uv tool install --from https://github.com/cristoslc/cove/releases/download/v0.4.1/cove_cli-0.4.1-py3-none-any.whl cove-cli
 ```
+
+Releases are listed at <https://github.com/cristoslc/cove/releases>. The wheel for each version is attached as `cove_cli-<version>-py3-none-any.whl`.
+
+> **Note:** the wheel bundles all compose resources. Reinstalling `cove` pulls updated compose — there is no separate deploy step.
 
 ## Quick Start
 
