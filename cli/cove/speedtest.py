@@ -10,7 +10,18 @@ import click
 from cove.stateless import resolve_compose_dir
 
 
-APP_KEY_OP_REF_TEMPLATE = "op://Private/Speedtest {hostname} APP_KEY/password"
+SPEEDTEST_URL = "https://speedtest.cove.local/"
+SPEEDTEST_OP_VAULT = "Private"
+SPEEDTEST_ITEM_TITLE = "Speedtest Tracker"
+APP_KEY_OP_REF_TEMPLATE = (
+    f"op://{SPEEDTEST_OP_VAULT}/{SPEEDTEST_ITEM_TITLE}/app_key"
+)
+SPEEDTEST_ADMIN_USERNAME_OP_REF = (
+    f"op://{SPEEDTEST_OP_VAULT}/{SPEEDTEST_ITEM_TITLE}/username"
+)
+SPEEDTEST_ADMIN_PASSWORD_OP_REF = (
+    f"op://{SPEEDTEST_OP_VAULT}/{SPEEDTEST_ITEM_TITLE}/password"
+)
 
 
 def _generate_app_key() -> str:
@@ -30,13 +41,8 @@ def _compose_env_path():
     return _compose_dir() / ".env"
 
 
-def _hostname() -> str:
-    import platform
-    return platform.node().split(".")[0]
-
-
 def _app_key_op_ref() -> str:
-    return APP_KEY_OP_REF_TEMPLATE.format(hostname=_hostname())
+    return APP_KEY_OP_REF_TEMPLATE
 
 
 def _seed_example_path():
@@ -44,15 +50,27 @@ def _seed_example_path():
 
 
 def _render_seed() -> str:
-    """Render the speedtest seed template with the runtime hostname so the
-    1Password item title matches the op_ref (mirrors Ansible seed rendering).
+    """Render the speedtest seed template into a shared, URL-keyed 1Password
+    item (title 'Speedtest Tracker' keyed to `https://speedtest.cove.local/`,
+    NOT per-hostname), so the same credentials work on all the operator's
+    machines.
 
-    The `{{generate:64}}` placeholder is replaced with a `base64:`-prefixed
-    key (Speedtest Tracker/Laravel requires that format; a raw string causes
-    HTTP 500)."""
+    The `{{generate:N}}` placeholders are replaced with a base64-prefixed
+    APP_KEY (Speedtest Tracker/Laravel requires that format; a raw string
+    causes HTTP 500) and random admin username/password."""
     template = _seed_example_path().read_text()
-    rendered = template.replace("{{ hostname }}", _hostname())
-    return rendered.replace("{{generate:64}}", _generate_app_key())
+    rendered = template.replace("{{generate:64}}", _generate_app_key())
+    import string
+    _alphabet = string.ascii_letters + string.digits
+    rendered = rendered.replace(
+        "{{generate:16}}",
+        "".join(secrets.choice(_alphabet) for _ in range(16)),
+    )
+    rendered = rendered.replace(
+        "{{generate:32}}",
+        "".join(secrets.choice(_alphabet) for _ in range(32)),
+    )
+    return rendered
 
 
 def _seed_path() -> str:
@@ -111,9 +129,16 @@ def _upsert_env(key: str, value: str) -> None:
 
 
 def _ensure_app_key() -> str:
-    """Return a usable SPEEDTEST_APP_KEY, auto-generating + storing it in
-    1Password + Vault + the compose .env on first run (mirrors the forgejo/minio
-    credential pattern). Subsequent runs reuse the cached value (idempotent)."""
+    """Return a usable SPEEDTEST_APP_KEY from the shared Speedtest Tracker
+    1Password item keyed to `https://speedtest.cove.local/` (NOT per-hostname).
+
+    On every run we CHECK 1Password for an existing shared item first (via
+    `cove creds vault-get` on the shared op_ref) and REUSE it if present — so
+    the same credentials work on all the operator's machines. Only if no such
+    shared item exists do we generate admin username/password + APP_KEY, write
+    them to 1Password (seed + `1p-bulk-write --execute`), cache in Vault
+    (`vault-put`), and inject into the compose .env (mirrors the forgejo/minio
+    credential pattern)."""
     # 1. Operator explicitly set it — honor directly.
     explicit = os.environ.get("SPEEDTEST_APP_KEY")
     if explicit:
@@ -129,20 +154,23 @@ def _ensure_app_key() -> str:
                 if value:
                     return value
 
-    # 3. Already cached in Vault — reuse (no regen).
+    # 3. Shared item already exists in 1Password (cached in Vault) — reuse it.
+    #    Checked FIRST so credentials are shared across all the operator's
+    #    machines (no per-machine regeneration).
     op_ref = _app_key_op_ref()
     cached = _vault_get(op_ref)
     if cached:
         _upsert_env("SPEEDTEST_APP_KEY", cached)
         return cached
 
-    # 4. Auto-generate: seed 1Password, cache in Vault, inject into .env.
+    # 4. No shared item exists — generate admin creds + APP_KEY, write the
+    #    shared item to 1Password, cache in Vault, inject into .env.
     seed_path = _seed_path()
     try:
         write = _run_cove_creds("1p-bulk-write", seed_path, "--execute")
         if write.returncode != 0:
             raise click.ClickException(
-                "Failed to write Speedtest APP_KEY to 1Password: "
+                "Failed to write Speedtest credentials to 1Password: "
                 f"{write.stderr.strip()}"
             )
         value = _vault_put(op_ref)
