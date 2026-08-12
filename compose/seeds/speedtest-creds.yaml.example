@@ -1,15 +1,20 @@
-# Cove Speedtest Tracker APP_KEY credential seed for 1Password.
+# Cove Speedtest Tracker credential seed for 1Password.
 # Run: cove creds 1p-bulk-write compose/seeds/speedtest-creds.yaml --execute
-# (cove speedtest up does this automatically on first run.)
+# (cove speedtest up does this automatically when no shared item exists.)
 # Copy to speedtest-creds.yaml to pin values for your host.
+#
+# This is a SINGLE SHARED item keyed to the https://speedtest.cove.local/ URL
+# (NOT per-hostname), so the same admin username/password + APP_KEY work on all
+# the operator's machines. `cove speedtest up` checks for this item first and
+# reuses it; it only generates new credentials when no such item exists.
 
 items:
-  - title: "Speedtest {{ hostname }} APP_KEY"
+  - title: "Speedtest Tracker"
     vault: Private
     category: login
     fields:
-      username: "cove-speedtest"
-      password: "{{generate:64}}"
-      host[text]: "{{ hostname }}"
-      url[text]: "https://speedtest.cove/"
-      purpose[text]: "Speedtest Tracker APP_KEY for Cove stack on {{ hostname }}"
+      username: "{{generate:16}}"
+      password: "{{generate:32}}"
+      app_key[concealed]: "{{generate:64}}"
+      url[text]: "https://speedtest.cove.local/"
+      purpose[text]: "Speedtest Tracker admin username/password + APP_KEY shared across Cove machines"
