@@ -23,22 +23,30 @@ Cove is **infrastructure-as-code first**. Every service's configuration, credent
 
 - **nginx config is generated**: `compose/nginx/default.conf` is a rendered artifact, gitignored, regenerated unconditionally by `bringup.yml` (template `default.conf.j2`). NEVER edit `default.conf` — it will be overwritten on the next `cove up`. Always edit `default.conf.j2`; `cove up` re-renders it and auto-reloads nginx via a handler.
 
+## The cove CLI is the single source of truth
+
+**`cove` (the installed uv tool) is the single, self-contained source of truth for the entire Cove platform.** It bundles ALL compose resources (compose files, bringup.yml, seeds, nginx templates, certs) inside the wheel. Reinstalling `cove` pulls updated compose files. **No runtime files should exist outside the cove install** — the deployed compose dir (`~/.config/cove/compose/`) and the running stack's `.env` are runtime copies regenerated from the wheel, never hand-edited.
+
+The repo's `compose/` at the root is the **dev-time source** that gets synced INTO the wheel at build time (via `cli/scripts/sync_compose_resources.py`). It is NOT the runtime source of truth — the wheel is. A change to `compose/` only takes effect after the wheel is rebuilt and `cove` reinstalled.
+
+**Consequence:** any change to compose (services, schedules, defaults, credentials) requires a **reinstall** of `cove` to propagate. There is no separate "deploy the compose change" step — reinstalling `cove` IS the deploy.
+
 ## Reinstall the cove CLI (uv tool)
 
 The `cove` CLI is installed as a **uv tool** (`~/.local/bin/cove`) from a wheel built out of `cli/`. The stable tool MUST always reflect the last good **released** state, never a branch under test.
-
-**Canonical source of compose resources is `compose/` at the repo root** — NOT `cli/cove/resources/compose/` (a build-time snapshot) and NOT `~/.config/cove/compose/` (the deployed runtime copy). During a build, `cli/scripts/sync_compose_resources.py` syncs `compose/` → resources. Edit `compose/`, never the extracted copy.
 
 - Dev/test loop (no reinstall): `uv run --directory cli cove ...`
 - Test gate before any promote: `uv run --directory cli pytest -x -q -m "not e2e and not staging"`
 - **Promote** (MUST be post-merge to `main`, only after the test gate is green):
   ```
-  uv build --wheel --out-dir cli/dist   # from cli/
+  python3 cli/scripts/sync_compose_resources.py   # sync compose/ -> bundled resources
+  uv build --wheel --out-dir cli/dist             # from cli/
   uv tool install --force --from cli/dist/cove_cli-<ver>-py3-none-any.whl
   ```
 - **Rollback** on breakage (restore the last tagged release, then re-promote):
   ```
   git checkout v<last-tag> -- cli/ compose/   # restore canonical source for the tag
+  python3 cli/scripts/sync_compose_resources.py
   uv build --wheel --out-dir cli/dist         # from cli/
   uv tool install --force --from cli/dist/cove_cli-<ver>-py3-none-any.whl
   ```
