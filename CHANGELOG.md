@@ -4,6 +4,24 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-08-12
+
+### Added
+- **Speedtest Tracker service** (`cove speedtest up|down|status|logs`) — optional profiled service monitoring the operator's WAN link (uptime, latency, download/upload bandwidth, jitter, packet loss) via scheduled Ookla `speedtest` CLI runs. Accessible at `https://speedtest.cove/` through nginx ingress. Default schedule: 8 daytime runs (`0 7,9,11,13,15,17,19,21 * * *`).
+- **IaC provisioning** for Speedtest Tracker — admin email/password sourced from the shared **`Cove Admin`** 1Password item (keyed to `https://cove.local/`, ADR-017); APP_KEY in the `Speedtest Tracker` item (keyed to `https://speedtest.cove.local/`); fail-loud if the Cove Admin item is missing.
+- **ADR-017** — Unified Cove Admin Identity: all Cove services share the `admin@cove.local` identity.
+- **Cove Pages portal** — `pages.cove` autoindex portal listing owners/sites, plus an autoindex JSON API.
+- **nginx auto-reload** — `cove up` re-renders the nginx config and auto-reloads via a handler.
+
+### Changed
+- **IaC bias codified in AGENTS.md** — the `cove` wheel is the single self-contained source of truth for compose; reinstalling `cove` pulls updated compose; no runtime files outside the install.
+- **Docker Compose `--profile` flag ordering** fixed — `--profile` must precede the subcommand (Docker Compose 5.4.0); `cove speedtest up` / `cove litellm up` corrected.
+- **Vault double-slash URL** fixed — `vault_cache.py` and `vault_unseal.py` no longer build `https://vault.cove.local//v1/...` (Vault returned 404).
+
+### Fixed
+- Speedtest APP_KEY format (`base64:` prefix required by Laravel).
+- Speedtest `.env` created with 0600 mode (was world-readable on fresh creation).
+
 ## [0.3.0] — 2026-07-29
 
 ### Added
