@@ -480,6 +480,19 @@ class TestAppKeyAutoGen:
         assert not any("vault-put" in args for args in calls)
         assert "SPEEDTEST_APP_KEY=base64:OPERATOR" in env_file.read_text()
 
+    def test_generated_app_key_has_base64_prefix(self):
+        """Speedtest Tracker (Laravel) requires APP_KEY in `base64:<32-byte
+        base64>` format. A raw 64-char string causes HTTP 500 'Unsupported
+        cipher or incorrect key length'. The auto-gen helper must emit a
+        `base64:`-prefixed key."""
+        import cove.speedtest as st
+        key = st._generate_app_key()
+        assert key.startswith("base64:"), (
+            f"APP_KEY must start with 'base64:', got: {key[:20]}..."
+        )
+        # base64: + 32 bytes base64-encoded = 44 chars (with padding)
+        assert len(key) > len("base64:"), "APP_KEY must have a non-empty payload"
+
 
 class TestEnvFilePermissions:
     """The compose .env holds the generated SPEEDTEST_APP_KEY — it must never be

@@ -79,6 +79,27 @@ class TestVaultPost:
             assert "context" in kwargs
             assert isinstance(kwargs["context"], ssl.SSLContext)
 
+    def test_vault_post_url_has_no_double_slash(self, monkeypatch):
+        """The default VAULT_ADDR ends with a trailing slash. _vault_post must
+        not produce a double-slash URL, which Vault rejects with 404."""
+        import ssl
+
+        monkeypatch.setenv("VAULT_ADDR", "https://vault.cove.local/")
+        monkeypatch.setattr(
+            "cove.vault_unseal._vault_ssl_context",
+            lambda: ssl.create_default_context(),
+        )
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = mock_urlopen.return_value.__enter__.return_value
+            mock_resp.status = 200
+            mock_resp.read.return_value = b"{}"
+            vault_unseal._vault_post("v1/sys/unseal", {"key": "k"})
+            args, kwargs = mock_urlopen.call_args
+            url = args[0].full_url if args else kwargs.get("url", "")
+            assert "//v1/" not in url, (
+                f"URL must not contain a double slash before /v1/, got: {url}"
+            )
+
 
 class TestEnsureUnsealed:
     def test_raises_if_not_initialized(self):
