@@ -357,10 +357,25 @@ class TestCLI:
         assert any("--profile" in args and "speedtest" in args for args in compose_calls)
 
 
+SHARED_SPEEDTEST_SEED = (
+    'items:\n  - title: "Speedtest Tracker"\n'
+    "    vault: Private\n    category: login\n    fields:\n"
+    '      username: "{{generate:16}}"\n'
+    '      password: "{{generate:32}}"\n'
+    '      app_key[concealed]: "{{generate:64}}"\n'
+    '      url[text]: "https://speedtest.cove.local/"\n'
+    '      purpose[text]: "Speedtest Tracker admin + APP_KEY shared across Cove machines"\n'
+)
+
+
 class TestAppKeyAutoGen:
-    """cove speedtest up must auto-generate SPEEDTEST_APP_KEY and store it in
-    1Password + Vault + the compose .env on first run, then reuse the cached
-    value on subsequent runs (idempotent). No manual key-setting required."""
+    """cove speedtest up must store Speedtest Tracker credentials as a SINGLE
+    SHARED 1Password item keyed by the `https://speedtest.cove.local/` URL (NOT
+    per-hostname), holding the admin username, admin password, and APP_KEY. On
+    every `up` it checks for an existing shared item first (via `cove creds
+    vault-get` on the shared op_ref) and REUSES it if present — so the same
+    credentials work on all the operator's machines — and only generates new
+    ones if no such item exists."""
 
     def _patch_env(self, monkeypatch, tmp_path):
         import cove.speedtest as st
@@ -368,18 +383,94 @@ class TestAppKeyAutoGen:
         env_file = tmp_path / ".env"
         monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
         seed = tmp_path / "speedtest-creds.yaml.example"
-        seed.write_text(
-            'items:\n  - title: "Speedtest {{ hostname }} APP_KEY"\n'
-            "    vault: Private\n    category: login\n    fields:\n"
-            '      username: "cove-speedtest"\n'
-            '      password: "{{generate:64}}"\n'
-        )
+        seed.write_text(SHARED_SPEEDTEST_SEED)
         monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
         return env_file
 
-    def test_up_writes_app_key_to_1p_vault_and_env(self, monkeypatch, tmp_path):
-        """First `up` auto-generates the key: 1p-bulk-write --execute creates the
-        1P item, vault-put caches it in Vault, and the .env gets the key."""
+    def test_op_ref_is_url_keyed_shared_not_hostname(self):
+        """The APP_KEY op_ref must be shared/URL-keyed (referencing
+        speedtest.cove.local), NOT per-hostname — so the same item is reused
+        on every machine. It must contain no hostname templating."""
+        import cove.speedtest as st
+        assert "{" not in st.APP_KEY_OP_REF_TEMPLATE, (
+            f"APP_KEY op_ref must be fully resolved (no templating), got: "
+            f"{st.APP_KEY_OP_REF_TEMPLATE!r}"
+        )
+        assert "hostname" not in st.APP_KEY_OP_REF_TEMPLATE.lower(), (
+            f"APP_KEY op_ref must NOT be per-hostname, got: {st.APP_KEY_OP_REF_TEMPLATE!r}"
+        )
+        assert st.SPEEDTEST_URL == "https://speedtest.cove.local/", (
+            "SPEEDTEST_URL must be the shared speedtest.cove.local URL"
+        )
+
+    def test_op_refs_share_one_item_for_admin_and_app_key(self):
+        """The admin username, admin password, and APP_KEY must all live in the
+        SAME shared 1Password item (same vault+title), keyed to the URL."""
+        import cove.speedtest as st
+        item = f"{st.SPEEDTEST_OP_VAULT}/{st.SPEEDTEST_ITEM_TITLE}"
+        assert st.APP_KEY_OP_REF_TEMPLATE.startswith(f"op://{item}/"), (
+            f"APP_KEY op_ref must be under the shared item, got: {st.APP_KEY_OP_REF_TEMPLATE!r}"
+        )
+        assert st.SPEEDTEST_ADMIN_USERNAME_OP_REF.startswith(f"op://{item}/"), (
+            f"admin username op_ref must be under the shared item, got: {st.SPEEDTEST_ADMIN_USERNAME_OP_REF!r}"
+        )
+        assert st.SPEEDTEST_ADMIN_PASSWORD_OP_REF.startswith(f"op://{item}/"), (
+            f"admin password op_ref must be under the shared item, got: {st.SPEEDTEST_ADMIN_PASSWORD_OP_REF!r}"
+        )
+
+    def test_seed_defines_shared_item_with_admin_and_app_key(self, monkeypatch, tmp_path):
+        """The rendered seed must define a SINGLE shared item titled 'Speedtest
+        Tracker' keyed to https://speedtest.cove.local/, with username, password,
+        and app_key fields — not a per-hostname item."""
+        import cove.speedtest as st
+        self._patch_env(monkeypatch, tmp_path)
+        rendered = st._render_seed()
+        assert "Speedtest Tracker" in rendered, "shared item title missing from seed"
+        assert "https://speedtest.cove.local/" in rendered, (
+            "seed must key the item to the speedtest.cove.local URL"
+        )
+        assert "username" in rendered, "seed must define the admin username"
+        assert "password" in rendered, "seed must define the admin password"
+        assert "app_key" in rendered, "seed must define the app_key"
+        assert "{{ hostname }}" not in rendered, "seed must not be hostname-templated"
+        assert "{{ ansible_hostname }}" not in rendered, (
+            "seed must not be ansible-hostname-templated"
+        )
+
+    def test_up_reuses_shared_item_no_generate(self, monkeypatch, tmp_path):
+        """When the shared item is already cached in Vault (vault-get on the
+        shared op_ref returns the app_key), `up` must REUSE it — no
+        1p-bulk-write, no regeneration. This is how the same creds work on all
+        machines."""
+        from click.testing import CliRunner
+        import cove.speedtest as st
+        from cove.speedtest import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        monkeypatch.setattr(st, "_vault_get", lambda op_ref: "base64:FROMVAULT")
+        runner = CliRunner()
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        calls = [
+            c.args[0] for c in mock_run.call_args_list
+            if isinstance(c.args[0], list)
+        ]
+        assert not any("1p-bulk-write" in args for args in calls), (
+            "must NOT write to 1Password when the shared item already exists"
+        )
+        assert not any("vault-put" in args for args in calls), (
+            "must NOT re-cache in Vault when the shared item already exists"
+        )
+        assert "SPEEDTEST_APP_KEY=base64:FROMVAULT" in env_file.read_text(), (
+            ".env must be populated from the reused shared item"
+        )
+
+    def test_up_generates_and_writes_shared_item_when_absent(self, monkeypatch, tmp_path):
+        """When no shared item exists (vault-get returns nothing), `up`
+        generates admin creds + APP_KEY, writes the shared item to 1Password
+        (1p-bulk-write), caches it in Vault, and injects APP_KEY into .env."""
         from click.testing import CliRunner
         from cove.speedtest import up
 
@@ -394,7 +485,7 @@ class TestAppKeyAutoGen:
             if isinstance(c.args[0], list)
         ]
         assert any("1p-bulk-write" in args and "--execute" in args for args in calls), (
-            "expected cove creds 1p-bulk-write --execute call"
+            "expected cove creds 1p-bulk-write --execute to create the shared item"
         )
         assert any("vault-put" in args for args in calls), (
             "expected cove creds vault-put call"
@@ -402,10 +493,10 @@ class TestAppKeyAutoGen:
         assert env_file.exists(), ".env must be written"
         content = env_file.read_text()
         assert "SPEEDTEST_APP_KEY=base64:TESTKEY" in content, (
-            f".env must contain the generated key, got: {content}"
+            f".env must contain the generated base64 APP_KEY, got: {content}"
         )
 
-    def test_up_reuses_cached_key_no_duplicate(self, monkeypatch, tmp_path):
+    def test_up_reuses_env_key_no_duplicate(self, monkeypatch, tmp_path):
         """A second `up` with the key already in .env must NOT regenerate,
         write to 1Password, or cache in Vault again (idempotent)."""
         from click.testing import CliRunner
@@ -433,31 +524,6 @@ class TestAppKeyAutoGen:
             f".env must not get a duplicate SPEEDTEST_APP_KEY line, got: {content}"
         )
         assert "SPEEDTEST_APP_KEY=base64:EXISTING" in content
-
-    def test_up_reuses_vault_cached_key(self, monkeypatch, tmp_path):
-        """If .env is empty but the key is already cached in Vault (via
-        vault-get), `up` reuses it instead of regenerating."""
-        from click.testing import CliRunner
-        import cove.speedtest as st
-        from cove.speedtest import up
-
-        env_file = self._patch_env(monkeypatch, tmp_path)
-        monkeypatch.setattr(
-            st, "_vault_get", lambda op_ref: "base64:FROMVAULT"
-        )
-        runner = CliRunner()
-        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
-            result = runner.invoke(up)
-
-        assert result.exit_code == 0, result.output
-        calls = [
-            c.args[0] for c in mock_run.call_args_list
-            if isinstance(c.args[0], list)
-        ]
-        assert not any("1p-bulk-write" in args for args in calls), (
-            "must not regenerate when key is cached in Vault"
-        )
-        assert "SPEEDTEST_APP_KEY=base64:FROMVAULT" in env_file.read_text()
 
     def test_up_respects_operator_env_override(self, monkeypatch, tmp_path):
         """An operator-set SPEEDTEST_APP_KEY env var is honored and written to
@@ -529,24 +595,26 @@ class TestEnvFilePermissions:
 
 
 class TestSeedRendering:
-    """The seed file must render the runtime hostname so the 1Password item title
-    matches the op_ref, and the temp seed must be cleaned up after use."""
+    """The seed file must define the shared, URL-keyed 'Speedtest Tracker'
+    1Password item (NOT hostname-specific), and the temp seed must be cleaned
+    up after use."""
 
-    def test_render_seed_replaces_hostname(self, monkeypatch, tmp_path):
-        """_render_seed must substitute the placeholder with the runtime hostname
-        (not leave `{{ hostname }}` or the ansible variant)."""
+    def test_render_seed_defines_shared_item(self, monkeypatch, tmp_path):
+        """_render_seed must emit the shared URL-keyed item (title 'Speedtest
+        Tracker', URL https://speedtest.cove.local/) with no hostname templating
+        left over, and substitute {{generate:N}} placeholders."""
         import cove.speedtest as st
         seed = tmp_path / "speedtest-creds.yaml.example"
-        seed.write_text(
-            'items:\n  - title: "Speedtest {{ hostname }} APP_KEY"\n'
-            '      host[text]: "{{ hostname }}"\n'
-        )
+        seed.write_text(SHARED_SPEEDTEST_SEED)
         monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
-        monkeypatch.setattr(st, "_hostname", lambda: "myhost")
         rendered = st._render_seed()
         assert "{{ hostname }}" not in rendered
         assert "{{ ansible_hostname }}" not in rendered
-        assert "myhost" in rendered
+        assert "Speedtest Tracker" in rendered
+        assert "https://speedtest.cove.local/" in rendered
+        # generate placeholders are replaced with real values
+        assert "{{generate:64}}" not in rendered
+        assert "{{generate:32}}" not in rendered
 
     def test_seed_temp_file_unlinked(self, monkeypatch, tmp_path):
         """The temp seed file written for 1p-bulk-write must be removed after
@@ -559,12 +627,7 @@ class TestSeedRendering:
         env_file = tmp_path / ".env"
         monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
         seed = tmp_path / "speedtest-creds.yaml.example"
-        seed.write_text(
-            'items:\n  - title: "Speedtest {{ hostname }} APP_KEY"\n'
-            "    vault: Private\n    category: login\n    fields:\n"
-            '      username: "cove-speedtest"\n'
-            '      password: "{{generate:64}}"\n'
-        )
+        seed.write_text(SHARED_SPEEDTEST_SEED)
         monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
 
         seen_paths = []
@@ -604,9 +667,7 @@ class TestAppKeyAutoGen1PBulkWrite:
         env_file = tmp_path / ".env"
         monkeypatch.setattr(st, "_compose_env_path", lambda: env_file)
         seed = tmp_path / "speedtest-creds.yaml.example"
-        seed.write_text(
-            'items:\n  - title: "Speedtest {{ hostname }} APP_KEY"\n'
-        )
+        seed.write_text(SHARED_SPEEDTEST_SEED)
         monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
 
         def fake_run(*args, **kwargs):
