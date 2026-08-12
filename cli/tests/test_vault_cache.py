@@ -169,3 +169,26 @@ class TestVaultTLSContext:
             args, kwargs = mock_urlopen.call_args
             assert "context" in kwargs, "urlopen must be called with an SSL context"
             assert isinstance(kwargs["context"], ssl.SSLContext)
+
+    def test_vault_request_url_has_no_double_slash(self, monkeypatch):
+        """The default VAULT_ADDR ends with a trailing slash
+        ('https://vault.cove.local/'). _vault_request must NOT produce a
+        double-slash URL ('https://vault.cove.local//v1/...'), which Vault
+        rejects with HTTP 404. Regression: the auto-gen APP_KEY flow failed
+        with 'Vault write failed ... HTTP 404' because of this."""
+        monkeypatch.setenv("VAULT_ADDR", "https://vault.cove.local/")
+        monkeypatch.setattr("cove.vault_cache._vault_token", lambda: "tok")
+        monkeypatch.setattr(
+            "cove.vault_cache._vault_ssl_context",
+            lambda: ssl.create_default_context(),
+        )
+        with patch("urllib.request.urlopen") as mock_urlopen:
+            mock_resp = mock_urlopen.return_value.__enter__.return_value
+            mock_resp.status = 200
+            mock_resp.read.return_value = b'{"data": {"data": {"value": "v"}}}'
+            vault_cache.vault_get_cached("op://Private/Item/field")
+            args, kwargs = mock_urlopen.call_args
+            url = args[0].full_url if args else kwargs.get("url", "")
+            assert "//v1/" not in url, (
+                f"URL must not contain a double slash before /v1/, got: {url}"
+            )
