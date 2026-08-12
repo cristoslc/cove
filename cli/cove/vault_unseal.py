@@ -63,7 +63,7 @@ def _read_keystore(service: str) -> str:
 
 
 def _vault_post(path: str, body: Optional[dict] = None) -> tuple[int, dict]:
-    url = f"{_vault_addr()}/{path}"
+    url = f"{_vault_addr().rstrip('/')}/{path}"
     data = json.dumps(body).encode() if body else None
     req = urllib.request.Request(url, data=data, method="POST")
     req.add_header("Content-Type", "application/json")
@@ -80,7 +80,7 @@ def _vault_post(path: str, body: Optional[dict] = None) -> tuple[int, dict]:
 
 
 def vault_health() -> dict:
-    url = f"{_vault_addr()}/v1/sys/health"
+    url = f"{_vault_addr().rstrip('/')}/v1/sys/health"
     req = urllib.request.Request(url)
     try:
         with urllib.request.urlopen(req, context=_vault_ssl_context()) as resp:
