@@ -815,8 +815,11 @@ class TestE2ESpeedtestStack:
 
     def test_speedtest_up_starts_container(self):
         import subprocess
+        from click.testing import CliRunner
         from cove.speedtest import up
-        up()
+        runner = CliRunner()
+        result = runner.invoke(up)
+        assert result.exit_code == 0, f"cove speedtest up failed: {result.output}"
         result = subprocess.run(
             ["docker", "ps", "--filter", "name=cove-speedtest-tracker",
              "--format", "{{.Names}}"],
@@ -864,7 +867,11 @@ class TestE2ESpeedtestStack:
             )
             loc = resp.headers.get("location", "").lower()
             if resp.status_code in (301, 302):
-                assert "login" in loc, (
-                    f"Redirect must target a login route, got Location: {loc!r}"
+                # First run (no account yet) redirects to /getting-started
+                # (setup page); after setup it redirects to /login. Both are
+                # auth gates — the key invariant is that an unauthenticated
+                # request never lands on the naked dashboard.
+                assert ("login" in loc) or ("getting-started" in loc), (
+                    f"Redirect must target a login/setup route, got Location: {loc!r}"
                 )
 
