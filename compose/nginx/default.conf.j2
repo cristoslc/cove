@@ -152,6 +152,31 @@ server {
     }
 }
 
+# speedtest.cove — Speedtest Tracker
+# speedtest-tracker is an optional profiled service. Using a variable for
+# the upstream host defers DNS resolution to request time, so nginx starts
+# even when the speedtest-tracker container is not running.
+# All paths are proxied — isolation is from the 127.0.0.1 port binding and
+# the app's own login gate (Speedtest Tracker enforces login on first run).
+server {
+    listen 443 ssl;
+    server_name speedtest.cove speedtest.cove.local;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    resolver 127.0.0.11 valid=10s;
+    set $speedtest_upstream http://speedtest-tracker:80;
+
+    location / {
+        proxy_pass $speedtest_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+
 # Per-machine forge — git.cove.<slug> and cove.<slug>
 server {
     listen 443 ssl;

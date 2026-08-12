@@ -146,3 +146,52 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "cove speedtest up"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "cove speedtest down"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove speedtest status"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "GET / on speedtest.cove"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "speedtest-tracker compose definition (profile, sqlite, pinned, app-key)"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "TLS cert SANs include speedtest.cove"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "bringup.yml hosts entry includes speedtest.cove"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip

@@ -7,11 +7,11 @@ status: Active
 
 # Cove
 
-Cove is a local developer platform for one person. One command gives you a working forge, vault, CI runner, container registry, static pages server, and observability backend (Prometheus + Grafana with OTLP ingestion) — all running locally, all working offline, nothing on the cloud.
+Cove is a local developer platform for one person. One command gives you a working forge, vault, CI runner, container registry, static pages server, and observability backend (Prometheus + Grafana with OTLP ingestion) — all running locally, all working offline, nothing on the cloud. An optional Speedtest Tracker profile monitors the operator's WAN link (uptime/latency/bandwidth).
 
 ## Identity
 
-Cove is a **harbor**. It is the line between your machine and everything you need to build software. Nothing runs on the host. Everything runs inside the harbor — a forge, a vault, runners, a registry, pages, observability. They arrive together, wired to each other, with no manual assembly. When the outside world disappears — no WiFi, no cell signal — everything inside keeps working.
+Cove is a **harbor**. It is the line between your machine and everything you need to build software. Nothing runs on the host. Everything runs inside the harbor — a forge, a vault, runners, a registry, pages, observability, and an optional WAN-link monitor (Speedtest Tracker). They arrive together, wired to each other, with no manual assembly. When the outside world disappears — no WiFi, no cell signal — everything inside keeps working.
 
 ## Core Concepts
 
