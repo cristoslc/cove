@@ -139,6 +139,36 @@ class TestComposeServiceDefinition:
             "speedtest-tracker must use DB_CONNECTION=sqlite (single-container)"
         )
 
+    def test_speedtest_admin_env_provisioned(self):
+        """IaC: the compose service must pass ADMIN_EMAIL and ADMIN_PASSWORD
+        (from the shared 1P item) so a fresh deploy seeds the correct admin
+        user — NOT the default admin@example.com/password."""
+        data = _load_compose()
+        env = data["services"]["speedtest-tracker"].get("environment", {})
+        assert "ADMIN_EMAIL" in env, (
+            "speedtest-tracker must accept ADMIN_EMAIL env var (IaC admin provisioning)"
+        )
+        assert "ADMIN_PASSWORD" in env, (
+            "speedtest-tracker must accept ADMIN_PASSWORD env var (IaC admin provisioning)"
+        )
+        assert "${SPEEDTEST_ADMIN_EMAIL:-" in str(env.get("ADMIN_EMAIL", "")), (
+            f"ADMIN_EMAIL must be sourced from SPEEDTEST_ADMIN_EMAIL, got: {env.get('ADMIN_EMAIL')!r}"
+        )
+        assert "${SPEEDTEST_ADMIN_PASSWORD:-" in str(env.get("ADMIN_PASSWORD", "")), (
+            f"ADMIN_PASSWORD must be sourced from SPEEDTEST_ADMIN_PASSWORD, got: {env.get('ADMIN_PASSWORD')!r}"
+        )
+
+    def test_speedtest_schedule_default(self):
+        """IaC: a speedtest schedule must be in place by default so the WAN link
+        is monitored without manual setup."""
+        data = _load_compose()
+        env = data["services"]["speedtest-tracker"].get("environment", {})
+        schedule = str(env.get("SPEEDTEST_SCHEDULE", ""))
+        assert schedule, "SPEEDTEST_SCHEDULE must have a default (IaC schedule provisioning)"
+        assert "${SPEEDTEST_SCHEDULE:-" in schedule, (
+            f"SPEEDTEST_SCHEDULE must have a non-empty default, got: {schedule!r}"
+        )
+
     def test_speedtest_image_pinned(self):
         data = _load_compose()
         image = str(data["services"]["speedtest-tracker"].get("image", ""))
@@ -494,6 +524,37 @@ class TestAppKeyAutoGen:
         content = env_file.read_text()
         assert "SPEEDTEST_APP_KEY=base64:TESTKEY" in content, (
             f".env must contain the generated base64 APP_KEY, got: {content}"
+        )
+
+    def test_up_injects_admin_email_and_password_into_env(self, monkeypatch, tmp_path):
+        """IaC: `cove speedtest up` must inject SPEEDTEST_ADMIN_EMAIL and
+        SPEEDTEST_ADMIN_PASSWORD into the compose .env (sourced from the shared
+        1P item) so a fresh deploy seeds the correct admin — not the default."""
+        from click.testing import CliRunner
+        import cove.speedtest as st
+        from cove.speedtest import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        # Simulate the shared item existing in Vault with admin email/password.
+        monkeypatch.setattr(
+            st, "_vault_get",
+            lambda op_ref: {
+                st.APP_KEY_OP_REF_TEMPLATE: "base64:TESTKEY",
+                st.SPEEDTEST_ADMIN_USERNAME_OP_REF: "admin@cove.local",
+                st.SPEEDTEST_ADMIN_PASSWORD_OP_REF: "breeze-canyon-garden-quartz",
+            }.get(op_ref),
+        )
+        runner = CliRunner()
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run):
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        content = env_file.read_text()
+        assert "SPEEDTEST_ADMIN_EMAIL=admin@cove.local" in content, (
+            f".env must contain SPEEDTEST_ADMIN_EMAIL, got: {content}"
+        )
+        assert "SPEEDTEST_ADMIN_PASSWORD=breeze-canyon-garden-quartz" in content, (
+            f".env must contain SPEEDTEST_ADMIN_PASSWORD, got: {content}"
         )
 
     def test_up_reuses_env_key_no_duplicate(self, monkeypatch, tmp_path):
