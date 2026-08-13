@@ -387,7 +387,7 @@
         - unknown
 
     # COMPOSE .env -----------------------------------------------------------
-    - name: Render compose .env
+    - name: Render compose .env (first boot only)
       ansible.builtin.copy:
         dest: "{{ compose_dir }}/.env"
         mode: "0600"
@@ -423,6 +423,7 @@
           SPEEDTEST_CONTAINER_NAME={{ speedtest_container_name | default('cove-speedtest-tracker') }}
           SPEEDTEST_PORT={{ speedtest_port | default('8982') }}
           SPEEDTEST_APP_KEY={{ speedtest_app_key | default('') }}
+      when: not (compose_dir ~ "/.env") is exists
 
     # CONTAINERS -------------------------------------------------------------
     - name: Detect active docker context endpoint

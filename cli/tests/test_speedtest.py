@@ -844,11 +844,84 @@ class TestBringupIntegration:
             "bringup.yml must create the speedtest data directory"
         )
 
+    def test_bringup_env_render_is_first_boot_only(self):
+        """The compose .env render must be conditional (`when: not exists`) so a
+        subsequent `cove up` does NOT clobber the SPEEDTEST_APP_KEY that
+        `cove speedtest up` wrote into .env. Regression: bringup.yml rendered
+        .env unconditionally with `SPEEDTEST_APP_KEY={{ speedtest_app_key |
+        default('') }}` (empty), so every `cove up` wiped the key and the
+        container restarted with an empty APP_KEY → Laravel halts init →
+        unhealthy."""
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        env_tasks = [
+            t for t in tasks
+            if isinstance(t, dict)
+            and "env" in (t.get("name", "") or "").lower()
+            and "SPEEDTEST_APP_KEY" in str(t.get("ansible.builtin.copy", {}).get("content", ""))
+        ]
+        assert env_tasks, "No .env render task with SPEEDTEST_APP_KEY found in bringup.yml"
+        for t in env_tasks:
+            when = t.get("when", "")
+            assert "is exists" in str(when) and "not" in str(when), (
+                "compose .env render must be conditional `when: not (...) is exists` "
+                "(first boot only) so it does not clobber the auto-generated "
+                f"SPEEDTEST_APP_KEY; got when={when!r}"
+            )
+
+    def test_bringup_env_does_not_hardcode_empty_app_key(self):
+        """The .env render must NOT hardcode an empty SPEEDTEST_APP_KEY default
+        that overwrites the CLI-provisioned key. The key is populated by the
+        CLI auto-gen flow, not a static empty default."""
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        env_tasks = [
+            t for t in tasks
+            if isinstance(t, dict)
+            and "env" in (t.get("name", "") or "").lower()
+            and "SPEEDTEST_APP_KEY" in str(t.get("ansible.builtin.copy", {}).get("content", ""))
+        ]
+        assert env_tasks, "No .env render task with SPEEDTEST_APP_KEY found in bringup.yml"
+        for t in env_tasks:
+            content = str(t.get("ansible.builtin.copy", {}).get("content", ""))
+            assert "SPEEDTEST_APP_KEY=" in content
+            # The value must not be an empty literal default that clobbers the key.
+            assert "SPEEDTEST_APP_KEY=\n" not in content, (
+                "SPEEDTEST_APP_KEY must not be rendered as an empty literal"
+            )
+
     def test_bringup_cert_validation_includes_speedtest(self):
         with open(COMPOSE_DIR / "bringup.yml") as f:
             content = f.read()
         assert "speedtest.cove" in content, (
             "bringup.yml cert validation must include speedtest.cove"
+        )
+
+
+class TestCredsBatchPullCoveAdmin:
+    """`cove creds batch-pull` must pull the shared 'Cove Admin' item (ADR-017)
+    so `cove speedtest up` can resolve the admin email/password on a fresh
+    machine. Regression: OP_REFS only covered forgejo/vault/minio, so the Cove
+    Admin item was never cached and `cove speedtest up` always failed with
+    'Speedtest Tracker admin identity is missing'."""
+
+    def test_batch_pull_includes_cove_admin(self):
+        from cove import creds
+        refs = " ".join(creds.OP_REFS.values())
+        assert "Cove Admin" in refs, (
+            "cove creds batch-pull must include the shared 'Cove Admin' item "
+            "(ADR-017) so cove speedtest up can resolve the admin identity"
+        )
+
+    def test_batch_pull_includes_speedtest_app_key(self):
+        """The Speedtest Tracker APP_KEY op_ref must be pullable via batch-pull
+        (or already cached) so a fresh machine can resolve it without a manual
+        vault-put."""
+        from cove import creds
+        refs = " ".join(creds.OP_REFS.values())
+        assert "Speedtest" in refs, (
+            "cove creds batch-pull must include the Speedtest Tracker item "
+            "so the APP_KEY is resolvable on a fresh machine"
         )
 
 
