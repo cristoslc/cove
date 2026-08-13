@@ -174,6 +174,7 @@ def _ensure_app_key() -> str:
             if line.startswith("SPEEDTEST_APP_KEY="):
                 value = line.split("=", 1)[1].strip()
                 if value:
+                    _inject_admin_env()
                     return value
 
     # 3. Shared item already exists in 1Password (cached in Vault) — reuse it.
