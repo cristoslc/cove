@@ -992,22 +992,22 @@ class TestAuthPosture:
     regresses, and the posture is documented."""
 
     def test_auth_posture_documented(self):
-        """docs/speedtest.md must state the auth posture explicitly, including
+        """docs/services/speedtest.md must state the auth posture explicitly, including
         the login gate (or basic-auth fallback) so an unauthenticated dashboard
         can't silently regress."""
-        doc = PROJECT_ROOT / "docs" / "speedtest.md"
-        assert doc.exists(), "docs/speedtest.md must exist"
+        doc = PROJECT_ROOT / "docs" / "services" / "speedtest.md"
+        assert doc.exists(), "docs/services/speedtest.md must exist"
         content = doc.read_text().lower()
-        assert "auth" in content, "docs/speedtest.md must state the auth posture"
+        assert "auth" in content, "docs/services/speedtest.md must state the auth posture"
         assert "login" in content, (
-            "docs/speedtest.md must confirm app login is enforced (or basic-auth)"
+            "docs/services/speedtest.md must confirm app login is enforced (or basic-auth)"
         )
         assert "unauthenticated" in content, (
-            "docs/speedtest.md must address the unauthenticated-by-default hazard "
+            "docs/services/speedtest.md must address the unauthenticated-by-default hazard "
             "(an open dashboard is not acceptable)"
         )
         assert "basic-auth" in content, (
-            "docs/speedtest.md must document the nginx basic-auth fallback posture"
+            "docs/services/speedtest.md must document the nginx basic-auth fallback posture"
         )
 
     def test_wrong_host_does_not_route_to_speedtest(self):
