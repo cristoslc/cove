@@ -70,10 +70,11 @@ All data lives in `~/Documents/cove-data/`. TLS via cove certs with wildcard `*.
 
 ## Forgejo CLI
 
-Cove uses Forgejo as its Git forge. The `fj` CLI manages repositories, pull requests, and more. See [Forgejo CLI Guide](docs/fj-guide.md) for draft PR workflow and conventions.
+Cove uses Forgejo as its Git forge. The `fj` CLI manages repositories, pull requests, and more. See [Forgejo CLI Guide](docs/guides/fj-guide.md) for draft PR workflow and conventions.
 
 ## Architecture Docs
 
 - [Architecture](docs/architecture.md) — system boundaries, bounded contexts, service topology, DNS strategy, data persistence
 - [Abstractions](docs/abstractions.md) — domain concepts: project, pipeline, secret, image, site, deployment, identity, workspace
-- [Pages](docs/pages.md) — static site hosting via Forgejo Actions and nginx
+- [Pages](docs/services/pages.md) — static site hosting via Forgejo Actions and nginx
+- [Data Inventory](docs/architecture/data-inventory.md) — every piece of state Cove holds, classified by source-of-truth and durability

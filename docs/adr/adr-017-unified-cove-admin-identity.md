@@ -46,5 +46,5 @@ The operator runs Cove on multiple machines. Per-hostname credentials would forc
 ## See also
 
 - ADR-016 — Two-Tier Service Adoption Rubric (Speedtest Tracker is a Tier 2 extended service)
-- `docs/speedtest.md` — Speedtest Tracker admin identity and credential flow
+- `docs/services/speedtest.md` — Speedtest Tracker admin identity and credential flow
 - PURPOSE.md — "one owner, one identity, one admin"
