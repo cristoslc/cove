@@ -17,6 +17,13 @@ OP_REFS = {
     "forgejo_admin": "op://Private/Forgejo {hostname} Admin/password",
     "vault_user": "op://Private/Vault {hostname} {username}/password",
     "minio_root": "op://Private/MinIO {hostname} Root/password",
+    # Shared (non-hostname) items — ADR-017 unified Cove admin identity and the
+    # Speedtest Tracker APP_KEY. These have no {hostname}/{username} placeholders,
+    # so .format() is a no-op. Pulled by batch-pull so `cove speedtest up` can
+    # resolve the admin identity + APP_KEY on a fresh machine.
+    "cove_admin_username": "op://Private/Cove Admin/username",
+    "cove_admin_password": "op://Private/Cove Admin/password",
+    "speedtest_app_key": "op://Private/Speedtest Tracker/app_key",
 }
 
 HOSTNAME = platform.node().split(".")[0]
