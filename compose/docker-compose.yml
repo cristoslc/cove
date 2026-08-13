@@ -217,6 +217,7 @@ services:
       PUID: "${SPEEDTEST_PUID:-1000}"
       PGID: "${SPEEDTEST_PGID:-1000}"
       TZ: "${SPEEDTEST_TZ:-America/New_York}"
+      DISPLAY_TIMEZONE: "${SPEEDTEST_TZ:-America/New_York}"
       APP_KEY: "${SPEEDTEST_APP_KEY:-}"
       APP_URL: https://speedtest.cove.local
       DB_CONNECTION: sqlite

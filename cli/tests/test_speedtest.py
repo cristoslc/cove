@@ -174,6 +174,24 @@ class TestComposeServiceDefinition:
             f"SPEEDTEST_SCHEDULE must have a non-empty default, got: {schedule!r}"
         )
 
+    def test_speedtest_display_timezone_matches_schedule(self):
+        """The app's DISPLAY_TIMEZONE must be set to the same zone as the
+        schedule's intent (America/New_York), NOT left at the UTC default.
+        Regression: compose only set TZ (container system time); the app's
+        display_timezone defaulted to UTC, so the cron schedule was evaluated
+        4h off — '7,9,11,13,15,17,19,21' UTC = 3pm/5pm/7pm/9pm/11pm/1am/3am/5am
+        EDT, and the UI showed the next run at 7:00pm instead of 3:00pm."""
+        data = _load_compose()
+        env = data["services"]["speedtest-tracker"].get("environment", {})
+        display_tz = str(env.get("DISPLAY_TIMEZONE", ""))
+        assert display_tz, (
+            "speedtest-tracker must set DISPLAY_TIMEZONE so the cron schedule "
+            "is evaluated in the operator's timezone, not UTC"
+        )
+        assert "${SPEEDTEST_TZ:-" in display_tz or "America/New_York" in display_tz, (
+            f"DISPLAY_TIMEZONE must match the schedule timezone, got: {display_tz!r}"
+        )
+
     def test_speedtest_image_pinned(self):
         data = _load_compose()
         image = str(data["services"]["speedtest-tracker"].get("image", ""))
@@ -611,6 +629,39 @@ class TestAppKeyAutoGen:
             f".env must not get a duplicate SPEEDTEST_APP_KEY line, got: {content}"
         )
         assert "SPEEDTEST_APP_KEY=base64:EXISTING" in content
+
+    def test_up_injects_admin_env_when_key_already_in_env(self, monkeypatch, tmp_path):
+        """When the APP_KEY is already in .env (idempotent re-run), `up` must
+        STILL inject SPEEDTEST_ADMIN_EMAIL/PASSWORD. Regression: the step-2
+        short-circuit returned early without _inject_admin_env(), so a re-run
+        left the admin identity unseeded in .env/container (only worked on a
+        fresh machine where the DB was already seeded)."""
+        from click.testing import CliRunner
+        import cove.speedtest as st
+        from cove.speedtest import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        env_file.write_text("SPEEDTEST_APP_KEY=base64:EXISTING\n")
+        # Cove Admin item cached in Vault.
+        monkeypatch.setattr(
+            st, "_vault_get",
+            lambda op_ref: {
+                st.SPEEDTEST_ADMIN_USERNAME_OP_REF: "admin@cove.local",
+                st.SPEEDTEST_ADMIN_PASSWORD_OP_REF: "breeze-canyon-garden-quartz",
+            }.get(op_ref),
+        )
+        runner = CliRunner()
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run):
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        content = env_file.read_text()
+        assert "SPEEDTEST_ADMIN_EMAIL=admin@cove.local" in content, (
+            f"admin email must be injected on re-run, got: {content}"
+        )
+        assert "SPEEDTEST_ADMIN_PASSWORD=breeze-canyon-garden-quartz" in content, (
+            f"admin password must be injected on re-run, got: {content}"
+        )
 
     def test_up_respects_operator_env_override(self, monkeypatch, tmp_path):
         """An operator-set SPEEDTEST_APP_KEY env var is honored and written to
