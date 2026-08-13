@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-08-12
+
+### Fixed
+- **idna Dependabot vulnerability** (GHSA-65pc-fj4g-8rjx, CVSS 5.3) — bumped transitive `idna` to `>=3.15` (resolves to 3.18) and added an explicit `idna>=3.15` constraint to `cli/pyproject.toml` as a regression guard.
+
 ## [0.4.0] — 2026-08-12
 
 ### Added
