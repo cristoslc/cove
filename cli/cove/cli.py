@@ -26,6 +26,26 @@ from cove.stateless import (
 from cove.state import ensure_host_vars
 
 
+def _detect_running_optional_profiles() -> list[str]:
+    """Return the compose profiles of optional services that are currently
+    running, so `cove up` can reconcile them (recreate with current config)
+    without starting stopped optionals."""
+    import json
+    from cove.status import OPTIONAL_SERVICES
+    result = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}}"],
+        capture_output=True, text=True, timeout=15,
+    )
+    if result.returncode != 0:
+        return []
+    running = set(result.stdout.strip().split("\n"))
+    profiles = []
+    for container_name, _label, profile in OPTIONAL_SERVICES:
+        if container_name in running and profile not in profiles:
+            profiles.append(profile)
+    return profiles
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="cove")
 def app():
@@ -134,6 +154,10 @@ def up(no_provision, no_upgrade, log):
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
     base_cmd.extend(["-e", f"@{host_vars_file}", "-K"])
+
+    running_profiles = _detect_running_optional_profiles()
+    if running_profiles:
+        base_cmd.extend(["-e", f"cove_profiles={','.join(running_profiles)}"])
 
     if not no_provision:
         click.echo("Pulling credentials from 1Password...")

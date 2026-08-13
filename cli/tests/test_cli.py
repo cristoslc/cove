@@ -271,7 +271,9 @@ class TestCoveUpCommand:
             "subprocess.run"
         ) as mock_run, patch("click.prompt", return_value="pw"), patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
-        ), patch("cove.status.check_all") as mock_check:
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
@@ -292,7 +294,9 @@ class TestCoveUpCommand:
             "subprocess.run"
         ) as mock_run, patch("click.prompt", return_value="pw"), patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
-        ), patch("cove.status.check_all") as mock_check:
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
@@ -324,6 +328,63 @@ class TestCoveUpCommand:
             call_4_args = [str(a) for a in all_args[4]]
             assert any("provision_forgejo.yml" in p for p in call_4_args), (
                  "fifth call must be provision_forgejo.yml"
+            )
+
+    def test_up_passes_running_optional_profiles_to_bringup(self, tmp_path, monkeypatch):
+        """cove up must detect running optional services and pass their compose
+        profiles to bringup.yml so they get reconciled (recreated with current
+        config). Stopped optionals must NOT be started."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("click.prompt", return_value="pw"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=["speedtest"]
+        ) as mock_detect:
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            cove.cli.up.callback(no_provision=True, no_upgrade=True, log=False)
+
+            mock_detect.assert_called_once()
+            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_args = [str(a) for a in bringup_call]
+            assert any("bringup.yml" in a for a in bringup_args), (
+                "first call must be bringup.yml"
+            )
+            assert any("cove_profiles" in a and "speedtest" in a for a in bringup_args), (
+                f"bringup must receive cove_profiles=speedtest, got: {bringup_args}"
+            )
+
+    def test_up_no_profiles_when_no_optionals_running(self, tmp_path, monkeypatch):
+        """When no optional services are running, cove up must not pass any
+        profiles (so it doesn't start stopped optionals)."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("click.prompt", return_value="pw"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            cove.cli.up.callback(no_provision=True, no_upgrade=True, log=False)
+
+            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_args = [str(a) for a in bringup_call]
+            assert not any("speedtest" in a for a in bringup_args), (
+                f"no profiles when nothing running, got: {bringup_args}"
             )
 
 
@@ -380,6 +441,40 @@ class TestCoveStatusCommand:
             result = runner.invoke(cove.cli.app, ["status"])
             assert result.exit_code != 0, "status should fail when a container is down"
             assert "✗" in result.output
+
+    def test_status_optional_not_running_shows_launch_hint(self):
+        """A stopped optional service must show as not-ok with a launch hint,
+        not a green ✓. The operator should see what's off and how to start it."""
+        from cove.status import _check_containers, CheckResult
+        with patch("cove.status._docker_ps", return_value={}):
+            results = _check_containers()
+        optional_results = [r for r in results if r.name == "Speedtest"]
+        assert optional_results, "Speedtest should be in results"
+        r = optional_results[0]
+        assert not r.ok, (
+            f"stopped optional service must be ok=False, got ok={r.ok}: {r.detail}"
+        )
+        assert r.hints, (
+            f"stopped optional service must have a launch hint, got hints={r.hints}"
+        )
+        assert any("cove speedtest up" in h for h in r.hints), (
+            f"launch hint must mention `cove speedtest up`, got: {r.hints}"
+        )
+
+    def test_status_optional_running_shows_ok(self):
+        """A running optional service must show as ok=True with its status."""
+        from cove.status import _check_containers
+        with patch("cove.status._docker_ps", return_value={
+            "cove-speedtest-tracker": {"Status": "Up 5 hours (healthy)"},
+            "cove-forgejo": {"Status": "Up 5 hours"},
+            "cove-nginx": {"Status": "Up 5 hours"},
+            "cove-vault": {"Status": "Up 5 hours (healthy)"},
+            "cove-dnsmasq": {"Status": "Up 5 hours"},
+            "cove-dnsproxy": {"Status": "Up 5 hours"},
+        }):
+            results = _check_containers()
+        r = [x for x in results if x.name == "Speedtest"][0]
+        assert r.ok and "Up 5 hours" in r.detail
 
 
 class TestCoveDownCommand:

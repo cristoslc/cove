@@ -993,7 +993,7 @@ class TestStatusOptionalServices:
 
     def test_speedtest_in_optional_services(self):
         from cove.status import OPTIONAL_SERVICES
-        names = [name for _, name in OPTIONAL_SERVICES]
+        names = [label for _, label, _ in OPTIONAL_SERVICES]
         assert "Speedtest" in names, "Speedtest must be in OPTIONAL_SERVICES"
 
     def test_speedtest_not_in_required_services(self):

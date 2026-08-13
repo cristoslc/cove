@@ -555,12 +555,12 @@ class TestStatusOptionalServices:
 
     def test_litellm_in_optional_services(self):
         from cove.status import OPTIONAL_SERVICES
-        names = [name for _, name in OPTIONAL_SERVICES]
+        names = [label for _, label, _ in OPTIONAL_SERVICES]
         assert "LiteLLM" in names, "LiteLLM must be in OPTIONAL_SERVICES"
 
     def test_headroom_in_optional_services(self):
         from cove.status import OPTIONAL_SERVICES
-        names = [name for _, name in OPTIONAL_SERVICES]
+        names = [label for _, label, _ in OPTIONAL_SERVICES]
         assert "Headroom" in names, "Headroom must be in OPTIONAL_SERVICES"
 
     def test_litellm_not_in_required_services(self):
