@@ -461,6 +461,39 @@ class TestCoveStatusCommand:
             f"launch hint must mention `cove speedtest up`, got: {r.hints}"
         )
 
+    def test_status_stopped_optional_does_not_fail_exit_code(self):
+        """A stopped optional service must NOT cause `cove status` to exit
+        non-zero — it's legitimately optional, not a failure."""
+        with patch("cove.status._check_containers") as mock_containers, patch(
+            "cove.status._check_nginx_ingress"
+        ) as mock_nginx, patch(
+            "cove.status._check_forgejo"
+        ) as mock_forgejo, patch(
+            "cove.status._check_vault"
+        ) as mock_vault, patch(
+            "cove.status._check_dns"
+        ) as mock_dns:
+            from cove.status import CheckResult
+            mock_containers.return_value = [
+                CheckResult(name="Forgejo", ok=True, detail="Up"),
+                CheckResult(name="nginx", ok=True, detail="Up"),
+                CheckResult(name="Vault", ok=True, detail="Up"),
+                CheckResult(name="dnsmasq", ok=True, detail="Up"),
+                CheckResult(name="dnsproxy", ok=True, detail="Up"),
+                CheckResult(name="Speedtest", ok=False, detail="not running (optional)",
+                            hints=["Run `cove speedtest up`"], optional=True),
+            ]
+            mock_nginx.return_value = CheckResult(name="nginx ingress", ok=True, detail="ok")
+            mock_forgejo.return_value = CheckResult(name="Forgejo API", ok=True, detail="ok")
+            mock_vault.return_value = CheckResult(name="Vault API", ok=True, detail="ok")
+            mock_dns.return_value = CheckResult(name="DNS resolution", ok=True, detail="ok")
+
+            runner = CliRunner()
+            result = runner.invoke(cove.cli.app, ["status"])
+            assert result.exit_code == 0, (
+                f"stopped optional must not fail exit code, got {result.exit_code}: {result.output}"
+            )
+
     def test_status_optional_running_shows_ok(self):
         """A running optional service must show as ok=True with its status."""
         from cove.status import _check_containers

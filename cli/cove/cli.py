@@ -173,7 +173,7 @@ def up(no_provision, no_upgrade, log):
     from cove.status import check_all, print_status
     results = check_all()
     print_status(results)
-    if not all(r.ok for r in results):
+    if not all(r.ok or r.optional for r in results):
         raise SystemExit(1)
     click.echo("Cove is up.")
 
@@ -192,7 +192,7 @@ def status():
     from cove.status import check_all, print_status
     results = check_all()
     print_status(results)
-    if not all(r.ok for r in results):
+    if not all(r.ok or r.optional for r in results):
         raise SystemExit(1)
 
 
