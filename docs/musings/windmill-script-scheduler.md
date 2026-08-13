@@ -10,9 +10,10 @@ Cove was a 5-service stack serving itself. Adding Dagu — a service that *runs 
 |-----------|---------|----------------|-------------|
 | Scheduled jobs | Dagu | Dagu itself | Cove internals, user apps |
 | Object storage | MinIO | Dagu backup workflows | Cove internals, user apps |
-| Push notifications | ntfy | Speedtest Tracker speed-drop alerts | Cove internals, user apps |
 
-All three land together, but **ntfy is a standalone service, not a Dagu dependency**. MinIO and ntfy are co-equal platform services that serve all Cove services and will serve `*.app.cove` user apps in the future. ntfy has its own independent bootstrap driver — Speedtest Tracker's speed-drop alert webhook — so it does not require Dagu (or MinIO) to be added. See the standalone ntfy musing.
+MinIO is a co-equal platform service, not a Dagu dependency. It serves all Cove services and will serve `*.app.cove` user apps in the future.
+
+**ntfy is no longer part of this musing.** ntfy was originally a co-passenger here ("Dagu needs ntfy for notifications"), but it stands alone as a notification service with its own driver (Speedtest Tracker alerts) and its own graduation path (Tier 1 under ADR-016). It is covered separately in `docs/musings/ntfy-notification-service.md` and does not depend on Dagu or MinIO.
 
 ## Why Dagu, Not Windmill or an Apache Project
 
@@ -137,7 +138,6 @@ This is a general platform tools image, not "the Dagu image." It's the runtime f
 dagu.cove     → dagu:8080
 s3.cove       → minio:9000
 console.s3.cove → minio:9001  (MinIO web console)
-notify.cove   → ntfy:8080
 ```
 
 ## Credential Bootstrapping
@@ -163,31 +163,29 @@ Dagu exposes a built-in MCP server at `http://dagu:8080/mcp`. AI agents (Claude 
 | The `.cove/dagu/` bind-mount convention | Per-project `.cove/dagu/` contents |
 | nginx routing to `dagu.cove` | — |
 | MinIO service at `s3.cove` | Buckets, objects |
-| ntfy service at `notify.cove` | Topics, subscriptions |
 
 Cove does not ship example DAGs, health-check DAGs, backup DAGs, or cert-renewal DAGs. Those are user workflows. The operator may choose to write DAGs that interact with Cove's APIs (Forgejo REST API, Vault HTTP API, MinIO S3 API) — that's their choice, not Cove's job.
 
 ## Relationship to Health Daemon Musing
 
-Dagu does **not** replace the health daemon. The health daemon musing (`docs/musings/cove-health-daemon.md`) proposes a process that detects failures and restarts containers. Dagu can't restart containers — it has no Docker socket. If the operator wants health monitoring via Dagu, they write their own health-check DAG that calls Cove HTTP APIs and publishes alerts to ntfy. That's a user workflow, not Cove infrastructure.
+Dagu does **not** replace the health daemon. The health daemon musing (`docs/musings/cove-health-daemon.md`) proposes a process that detects failures and restarts containers. Dagu can't restart containers — it has no Docker socket. If the operator wants health monitoring via Dagu, they write their own health-check DAG that calls Cove HTTP APIs and publishes alerts to ntfy (covered by the standalone ntfy musing). That's a user workflow, not Cove infrastructure.
 
 ## Future State: `*.apps.cove`
 
 The C4 diagrams at `docs/musings/parleys/2026-07-06-c4-diagrams.md` show the topology evolution:
 
 - **Current** (5 services): nginx, Forgejo, Vault, dnsmasq, dnsproxy
-- **Dagu MVP/v1** (8 services): + Dagu, MinIO, ntfy
+- **Dagu MVP/v1** (7 services): + Dagu, MinIO
 - **Future** (`*.apps.cove`): nginx routes user app subdomains to app containers; per-app provisioning creates MinIO buckets, ntfy topics+tokens, and Vault credentials; per-project `cove-dagu` containers for file-level scripting
 
-The MVP topology is forward-compatible — the future state extends it without rearchitecting the core. MinIO and ntfy serve Cove internals now, user apps later.
+The MVP topology is forward-compatible — the future state extends it without rearchitecting the core. MinIO serves Cove internals now, user apps later. (ntfy is a separate standalone service; see `ntfy-notification-service.md`.)
 
 ## Open Questions
 
 1. **Dagu version pinning?** Pin to a specific tag in docker-compose.yml rather than `latest` for stability.
-2. **ntfy auth for future state?** Authless for MVP. Per-topic tokens required before `*.app.cove` apps use ntfy. Not building this now.
-3. **MinIO console exposure?** `console.s3.cove` exposes the MinIO web UI. Behind nginx TLS, authless is fine for MVP. Add auth when user apps need it.
-4. **cove-tools image hosting?** Build in Cove's CI, push to Forgejo's OCI registry. Same pattern as other Cove images.
-5. **`*.apps.cove` as separate platform sashay?** Yes — it's a general platform feature (DNS, TLS, routing) that benefits all per-project services, not just Dagu. Mused separately when ready.
+2. **MinIO console exposure?** `console.s3.cove` exposes the MinIO web UI. Behind nginx TLS, authless is fine for MVP. Add auth when user apps need it.
+3. **cove-tools image hosting?** Build in Cove's CI, push to Forgejo's OCI registry. Same pattern as other Cove images.
+4. **`*.apps.cove` as separate platform sashay?** Yes — it's a general platform feature (DNS, TLS, routing) that benefits all per-project services, not just Dagu. Mused separately when ready.
 
 ## Related Artifacts
 
@@ -198,4 +196,5 @@ The MVP topology is forward-compatible — the future state extends it without r
 - `docs/musings/parleys/2026-07-06-c4-diagrams.md` — C4 diagrams (current, MVP/v1, future)
 - `docs/musings/cove-secrets-in-keychain.md` — keychain migration musing (separate sashay)
 - `docs/musings/asf-scheduling-landscape.md` — ASF project landscape research
+- `docs/musings/ntfy-notification-service.md` — ntfy as a standalone notification service (decoupled from Dagu)
 - `docs/troves/scheduling-orchestration-iaas/` — research trove on IaaS graduation for orchestrators
