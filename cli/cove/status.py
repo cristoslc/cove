@@ -30,9 +30,9 @@ SERVICES = [
 ]
 
 OPTIONAL_SERVICES = [
-    ("cove-litellm", "LiteLLM"),
-    ("cove-headroom", "Headroom"),
-    ("cove-speedtest-tracker", "Speedtest"),
+    ("cove-litellm", "LiteLLM", "litellm"),
+    ("cove-headroom", "Headroom", "litellm"),
+    ("cove-speedtest-tracker", "Speedtest", "speedtest"),
 ]
 
 NGINX_HTTPS_PORT = 8443
@@ -77,13 +77,14 @@ def _check_containers() -> list[CheckResult]:
                 ok=True,
                 detail=status,
             ))
-    for container_name, label in OPTIONAL_SERVICES:
+    for container_name, label, profile in OPTIONAL_SERVICES:
         info = containers.get(container_name)
         if info is None:
             results.append(CheckResult(
                 name=label,
-                ok=True,
+                ok=False,
                 detail=f"Container {container_name} is not running (optional)",
+                hints=[f"Run `cove {profile} up` to start it"],
             ))
         else:
             status = info.get("Status", "unknown")
