@@ -19,6 +19,7 @@ class CheckResult:
     ok: bool
     detail: str = ""
     hints: list[str] = field(default_factory=list)
+    optional: bool = False
 
 
 SERVICES = [
@@ -85,6 +86,7 @@ def _check_containers() -> list[CheckResult]:
                 ok=False,
                 detail=f"Container {container_name} is not running (optional)",
                 hints=[f"Run `cove {profile} up` to start it"],
+                optional=True,
             ))
         else:
             status = info.get("Status", "unknown")
