@@ -10,9 +10,9 @@ Cove was a 5-service stack serving itself. Adding Dagu — a service that *runs 
 |-----------|---------|----------------|-------------|
 | Scheduled jobs | Dagu | Dagu itself | Cove internals, user apps |
 | Object storage | MinIO | Dagu backup workflows | Cove internals, user apps |
-| Push notifications | ntfy | Dagu alert workflows | Cove internals, user apps |
+| Push notifications | ntfy | Speedtest Tracker speed-drop alerts | Cove internals, user apps |
 
-All three land together. MinIO and ntfy are co-equal platform services, not Dagu dependencies. They serve all Cove services and will serve `*.app.cove` user apps in the future.
+All three land together, but **ntfy is a standalone service, not a Dagu dependency**. MinIO and ntfy are co-equal platform services that serve all Cove services and will serve `*.app.cove` user apps in the future. ntfy has its own independent bootstrap driver — Speedtest Tracker's speed-drop alert webhook — so it does not require Dagu (or MinIO) to be added. See the standalone ntfy musing.
 
 ## Why Dagu, Not Windmill or an Apache Project
 
