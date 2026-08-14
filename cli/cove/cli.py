@@ -1,5 +1,6 @@
 """Click entrypoint and group registration."""
 
+import getpass
 import os
 import platform
 import shutil
@@ -153,7 +154,10 @@ def up(no_provision, no_upgrade, log):
             raise SystemExit(result.returncode)
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
-    base_cmd.extend(["-e", f"@{host_vars_file}", "-K"])
+    base_cmd.extend(["-e", f"@{host_vars_file}"])
+
+    become_pass = getpass.getpass("BECOME password: ")
+    ansible_env["ANSIBLE_BECOME_PASSWORD"] = become_pass
 
     running_profiles = _detect_running_optional_profiles()
     if running_profiles:

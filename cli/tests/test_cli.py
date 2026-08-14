@@ -242,7 +242,9 @@ class TestFindComposeDir:
 
 
 class TestCoveUpCommand:
-    def test_up_passes_ask_become_pass(self, tmp_path, monkeypatch):
+    def test_up_no_become_prompt_per_playbook(self, tmp_path, monkeypatch):
+        """cove up must NOT pass -K to ansible-playbook — it caches the BECOME
+        password once via getpass and passes it via ANSIBLE_BECOME_PASSWORD env."""
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -252,14 +254,46 @@ class TestCoveUpCommand:
             "subprocess.run"
         ) as mock_run, patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
-        ), patch("cove.status.check_all") as mock_check:
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch("cove.cli.getpass.getpass", return_value="secret"):
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
             cove.cli.up.callback(no_provision=True, no_upgrade=True, log=False)
 
-            args_list = [str(a) for a in mock_run.call_args[0][0]]
-            assert "-K" in args_list, "cove up must pass -K to ansible-playbook"
+            bringup_call = mock_run.call_args_list[0][0][0]
+            args_list = [str(a) for a in bringup_call]
+            assert "-K" not in args_list, (
+                "cove up must not pass -K (uses ANSIBLE_BECOME_PASSWORD env var instead)"
+            )
+
+    def test_up_prompts_become_password_once(self, tmp_path, monkeypatch):
+        """cove up must prompt for the BECOME password exactly once (via
+        getpass), not once per ansible-playbook invocation."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+        (compose_sub / "bootstrap_vault.yml").write_text("---\n")
+        (compose_sub / "provision_vault_user.yml").write_text("---\n")
+        (compose_sub / "provision_forgejo.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch("cove.cli.getpass.getpass", return_value="secret") as mock_getpass:
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            cove.cli.up.callback(no_provision=False, no_upgrade=True, log=False)
+
+            assert mock_getpass.call_count == 1, (
+                f"BECOME password must be prompted once, got {mock_getpass.call_count}"
+            )
 
     def test_no_provision_skips_forgejo(self, tmp_path, monkeypatch):
         compose_sub = tmp_path / "compose"
@@ -269,7 +303,7 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run, patch("click.prompt", return_value="pw"), patch(
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
         ), patch("cove.status.check_all") as mock_check, patch(
             "cove.cli._detect_running_optional_profiles", return_value=[]
@@ -292,7 +326,7 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run, patch("click.prompt", return_value="pw"), patch(
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
         ), patch("cove.status.check_all") as mock_check, patch(
             "cove.cli._detect_running_optional_profiles", return_value=[]
@@ -341,7 +375,7 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run, patch("click.prompt", return_value="pw"), patch(
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
         ), patch("cove.status.check_all") as mock_check, patch(
             "cove.cli._detect_running_optional_profiles", return_value=["speedtest"]
@@ -371,7 +405,7 @@ class TestCoveUpCommand:
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
             "subprocess.run"
-        ) as mock_run, patch("click.prompt", return_value="pw"), patch(
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
         ), patch("cove.status.check_all") as mock_check, patch(
             "cove.cli._detect_running_optional_profiles", return_value=[]
@@ -934,7 +968,9 @@ class TestNoUpgradeFlag:
             "subprocess.run"
         ) as mock_run, patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
-        ), patch("cove.cli.maybe_reextract") as mock_reextract, patch("cove.status.check_all") as mock_check:
+        ), patch("cove.cli.maybe_reextract") as mock_reextract, patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch("cove.cli.getpass.getpass", return_value="secret"):
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
             cove.cli.up.callback(
