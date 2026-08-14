@@ -79,6 +79,12 @@ So the answer to "SES from apps" is: **don't run an SES-compatible server.** Shi
 
 Cove ships the empty service. The speedtest→ntfy wiring is a configuration of Speedtest Tracker, not a Cove-built feature.
 
+## ADR treatment
+
+ADR-016 names ntfy a **Tier 1 core candidate** (HTTP-push contract, multi-vendor market, endpoint-swap graduation) but does not decide how ntfy is deployed — it only establishes the rubric. This musing's decisions (standalone service decoupled from Dagu/MinIO, containerized at `notify.cove`, mobile-push relay via `ntfy.sh`, and the "contract + endpoint-swap, don't run an SES-compatible server" answer for app email) are service-specific and do not belong in the rubric.
+
+**Recommendation: a new ADR (next number) locking in the standalone notification service**, not an amendment to ADR-016. The tiering already lives in ADR-016; the deployment decisions belong in a dedicated ADR that can be referenced by the eventual `*.app.cove` sashay. Amend ADR-016 only if the two-tier model itself changes.
+
 ## Open questions
 
 1. **Auth for MVP?** Authless for the speedtest bootstrap. Per-topic tokens before `*.app.cove` apps use ntfy — not building this now.
