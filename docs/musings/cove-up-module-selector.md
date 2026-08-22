@@ -58,20 +58,38 @@ Which cove modules should be running?
 - `cove up --all` / `--core-only` / `--yes` keep it scriptable; default with a TTY is
   the interactive list.
 
+## What selection means
+
+Selection **changes behavior**: only the modules you select get started / reconciled /
+provisioned. A checkbox that only confirms a fixed pipeline adds nothing — `cove up`
+already has `--yes` semantics if we want a non-interactive fixed run.
+
+Core modules (forgejo, nginx, vault, dnsmasq, dnsproxy) are always started; the checkbox
+reconciles and provisions. Optional modules only start/reconcile if checked. Crucially,
+**each optional module is provisioned by the same path its own `cove <module> up` uses** —
+e.g. selecting speedtest in `cove up` must run the same `_ensure_app_key()` flow that
+`cove speedtest up` runs, so a started speedtest is never launched with an empty
+`SPEEDTEST_APP_KEY`. The checkbox is an aggregation of the per-module `up` commands, not a
+new provisioning path.
+
+## Non-gap: optional modules' provisioning
+
+The speedtest APP_KEY being empty in `.env` after a plain `cove up` is **not a defect**.
+Speedtest is optional; its owner command `cove speedtest up` provisions the key into the
+compose `.env` and starts it. That's the correct, single entry point for an optional
+service — the incident was a stale empty `.env`, not a broken normal flow. The only time
+`cove up` must care is if it's allowed to *start* speedtest (i.e. the checkbox selects it);
+then it reuses the existing `_ensure_app_key()` path rather than introducing a second one.
+
 ## Questions this opens
 
-- Should selection change **behavior** (which playbooks run) or just confirm a fixed
-  pipeline? Currently `up` runs bringup + bootstrap_vault + provision_vault_user +
-  provision_forgejo unconditionally. Does selecting "speedtest" add its provisioning,
-  or does speedtest's env-key problem get fixed in bringup so the checkbox is purely
-  cosmetic?
-- The real bug from the session is that `cove up` doesn't provision optional modules'
-  secrets into the compose `.env` on re-runs (`.env` render is first-boot-only). That's
-  a defect independent of the UX idea — worth a separate fix/ADR regardless.
+- How does `cove up` know each module's "own" provisioning? Presumably a per-module
+  provider that both `cove <module> up` and the `up` selector call, so there's one
+  provisioning path per module, not two.
 - Relationship to the older `cove-default-command-ux.md` TUI musing: this is a lighter
-  ask (interactive confirm on `up`, not a full command center). Might be a stepping
-  stone — a checkbox confirm is a small Textual/`questionary` dependency, not the full
-  mode-based TUI.
+  ask (interactive confirm on `up`, not a full TUI). Might be a stepping stone — a
+  checkbox confirm is a small Textual/`questionary` dependency, not the full mode-based
+  TUI.
 
 ## Related
 
