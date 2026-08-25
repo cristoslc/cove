@@ -29,7 +29,7 @@ def litellm():
 def up():
     """Start the LiteLLM proxy and Headroom sidecar."""
     click.echo("Starting LiteLLM proxy...")
-    subprocess.run(_compose_cmd("--profile", "litellm", "up", "-d"), check=True)
+    subprocess.run(_compose_cmd("--profile", "litellm", "up", "-d", "--build"), check=True)
     click.echo("LiteLLM proxy is running at https://litellm.cove/")
 
 
