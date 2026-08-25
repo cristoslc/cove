@@ -16,16 +16,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Prisma Python client hardcodes binary paths to /root/.cache/prisma-python/...
-# Make /root accessible and copy binaries with litellm ownership
-RUN chmod 755 /root
-COPY --from=builder --chown=litellm:litellm /root/.cache/prisma-python /root/.cache/prisma-python
-
 RUN addgroup --system --gid 1000 litellm && \
     adduser --system --uid 1000 --ingroup litellm --home /home/litellm litellm && \
     mkdir -p /app /var/log/litellm /home/litellm && \
     chown -R litellm:litellm /app /var/log/litellm /home/litellm && \
     chown -R litellm:litellm /usr/local/lib/python3.13/site-packages/litellm/proxy/_experimental
+
+# Prisma Python client hardcodes binary paths to /root/.cache/prisma-python/...
+# Make /root accessible and copy binaries with litellm ownership
+RUN chmod 755 /root
+COPY --from=builder --chown=litellm:litellm /root/.cache/prisma-python /root/.cache/prisma-python
 
 USER litellm
 ENV HOME=/home/litellm
