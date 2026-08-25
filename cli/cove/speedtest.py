@@ -268,8 +268,7 @@ def down():
 def status():
     """Check Speedtest Tracker health."""
     result = subprocess.run(
-        _compose_cmd("ps", "--filter", "name=cove-speedtest-tracker",
-                     "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}"),
+        _compose_cmd("ps", "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}"),
         capture_output=True, text=True,
     )
     click.echo(result.stdout)
