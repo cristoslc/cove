@@ -1,0 +1,20 @@
+# Cove LiteLLM Proxy credential seed for 1Password.
+# Run: cove creds 1p-bulk-write compose/seeds/litellm-creds.yaml --execute
+# (cove litellm up does this automatically when no shared item exists.)
+# Copy to litellm-creds.yaml to pin values for your host.
+#
+# This item holds ONLY the LiteLLM master key, keyed to the
+# https://litellm.cove.local/ URL (NOT per-hostname). The UI username/password
+# come from the SHARED 'Cove Admin' item (keyed to https://cove.local/, ADR-017),
+# which is the unified Cove admin identity used across all Cove services.
+# `cove litellm up` checks for this item first and reuses it; it only
+# generates a new master key when no such item exists.
+
+items:
+  - title: "LiteLLM Proxy"
+    vault: Private
+    category: login
+    fields:
+      master_key[concealed]: "{{generate:32}}"
+      url[text]: "https://litellm.cove.local/"
+      purpose[text]: "LiteLLM proxy master key (UI identity is the shared Cove Admin item, ADR-017)"

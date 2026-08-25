@@ -12,7 +12,7 @@ Unit/integration tests (always runnable):
 
 E2E tests (require live stack, run with `pytest -m e2e`):
   - compose up --profile litellm starts both containers
-  - /health returns 200
+  - /health/readiness returns 200
   - /v1/models returns 200
   - /key/generate returns 403 (blocked at nginx)
   - /user/new returns 403 (blocked at nginx)
@@ -133,6 +133,10 @@ class TestComposeServiceDefinitions:
         assert hc is not None, "litellm must have a healthcheck"
         test_cmd = str(hc.get("test", ""))
         assert "/health" in test_cmd, "healthcheck must hit /health endpoint"
+        assert "/health/readiness" in test_cmd, (
+            "healthcheck must hit /health/readiness — /health requires a virtual key "
+            "(401 unauthenticated) and would report unhealthy permanently"
+        )
 
     def test_litellm_has_memory_limit(self):
         data = _load_compose()
@@ -514,8 +518,9 @@ class TestCLI:
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         with patch("cove.litellm.subprocess.run", side_effect=fake_subprocess_run):
-            runner = CliRunner()
-            result = runner.invoke(litellm, ["up"])
+            with patch("cove.litellm._ensure_master_key", return_value="sk-test"):
+                runner = CliRunner()
+                result = runner.invoke(litellm, ["up"])
 
         assert result.exit_code == 0, f"cove litellm up failed: {result.output}"
         assert captured, "no subprocess call captured"
@@ -543,6 +548,243 @@ class TestCLI:
         source = (PROJECT_ROOT / "cli" / "cove" / "litellm.py").read_text()
         assert "litellm.cove" in source, (
             "cove litellm status must check through nginx with Host: litellm.cove"
+        )
+
+
+SHARED_LITELLM_SEED = (
+    'items:\n  - title: "LiteLLM Proxy"\n'
+    "    vault: Private\n    category: login\n    fields:\n"
+    '      master_key[concealed]: "{{generate:32}}"\n'
+    '      url[text]: "https://litellm.cove.local/"\n'
+    '      purpose[text]: "LiteLLM proxy master key (UI identity is the shared Cove Admin item, ADR-017)"\n'
+)
+
+
+def _fake_provision_run(*args, **kwargs):
+    """Fake subprocess.run for the master-key auto-gen flow.
+
+    Returns a CompletedProcess that emits a master key for `vault-put`/`vault-get`
+    (the CLI resolves the secret via stdout), and succeeds for compose invocations.
+    """
+    import subprocess
+    argv = args[0] if args and isinstance(args[0], list) else []
+    argv_str = " ".join(str(a) for a in argv)
+    if "creds" in argv_str and "vault-put" in argv_str:
+        return subprocess.CompletedProcess(argv, 0, stdout="sk-TESTKEY")
+    if "creds" in argv_str and "vault-get" in argv_str:
+        # Return admin creds for the Cove Admin item, else not-cached.
+        if "Cove Admin" in argv_str and "username" in argv_str:
+            return subprocess.CompletedProcess(argv, 0, stdout="admin@cove.local")
+        if "Cove Admin" in argv_str and "password" in argv_str:
+            return subprocess.CompletedProcess(argv, 0, stdout="breeze-canyon-garden-quartz")
+        return subprocess.CompletedProcess(argv, 2, stdout="")  # not cached
+    return subprocess.CompletedProcess(argv, 0, stdout="")
+
+
+class TestMasterKeyAutoGen:
+    """cove litellm up must store the LiteLLM master key as a SINGLE SHARED
+    1Password item keyed by the `https://litellm.cove.local/` URL (NOT
+    per-hostname). On every `up` it checks for an existing shared item first
+    (via `cove creds vault-get` on the shared op_ref) and REUSES it if present
+    — so the same credentials work on all the operator's machines — and only
+    generates new ones if no such item exists."""
+
+    def _patch_env(self, monkeypatch, tmp_path):
+        import cove.litellm as ll
+        monkeypatch.delenv("LITELLM_MASTER_KEY", raising=False)
+        env_file = tmp_path / ".env"
+        monkeypatch.setattr(ll, "_compose_env_path", lambda: env_file)
+        seed = tmp_path / "litellm-creds.yaml.example"
+        seed.write_text(SHARED_LITELLM_SEED)
+        monkeypatch.setattr(ll, "_seed_example_path", lambda: seed)
+        return env_file
+
+    def test_op_ref_is_url_keyed_shared_not_hostname(self):
+        """The master key op_ref must be shared/URL-keyed (referencing
+        litellm.cove.local), NOT per-hostname — so the same item is reused on
+        every machine. It must contain no hostname templating."""
+        import cove.litellm as ll
+        assert "{" not in ll.MASTER_KEY_OP_REF, (
+            f"MASTER_KEY_OP_REF must be fully resolved (no templating), got: "
+            f"{ll.MASTER_KEY_OP_REF!r}"
+        )
+        assert "hostname" not in ll.MASTER_KEY_OP_REF.lower(), (
+            f"MASTER_KEY_OP_REF must NOT be per-hostname, got: {ll.MASTER_KEY_OP_REF!r}"
+        )
+        assert ll.LITELLM_URL == "https://litellm.cove.local/", (
+            "LITELLM_URL must be the shared litellm.cove.local URL"
+        )
+
+    def test_op_refs_share_one_item_for_master_key(self):
+        """The master key lives in the LiteLLM Proxy item; the UI username and
+        password live in the SHARED 'Cove Admin' item (keyed to cove.local,
+        ADR-017) — the unified Cove admin identity used across all Cove
+        services."""
+        import cove.litellm as ll
+        litellm_item = f"{ll.LITELLM_OP_VAULT}/{ll.LITELLM_ITEM_TITLE}"
+        cove_admin_item = f"{ll.LITELLM_OP_VAULT}/{ll.COVE_ADMIN_ITEM_TITLE}"
+        assert ll.MASTER_KEY_OP_REF.startswith(f"op://{litellm_item}/"), (
+            f"master key op_ref must be under the LiteLLM Proxy item, got: {ll.MASTER_KEY_OP_REF!r}"
+        )
+        assert ll.UI_USERNAME_OP_REF.startswith(f"op://{cove_admin_item}/"), (
+            f"UI username op_ref must be under the shared Cove Admin item, got: {ll.UI_USERNAME_OP_REF!r}"
+        )
+        assert ll.UI_PASSWORD_OP_REF.startswith(f"op://{cove_admin_item}/"), (
+            f"UI password op_ref must be under the shared Cove Admin item, got: {ll.UI_PASSWORD_OP_REF!r}"
+        )
+
+    def test_seed_defines_shared_item_with_master_key(self, monkeypatch, tmp_path):
+        """The rendered seed must define the LiteLLM Proxy item keyed to
+        https://litellm.cove.local/, with the master_key field (UI identity
+        comes from the shared Cove Admin item) — not a per-hostname item."""
+        import cove.litellm as ll
+        self._patch_env(monkeypatch, tmp_path)
+        rendered = ll._render_seed()
+        assert "LiteLLM Proxy" in rendered, "shared item title missing from seed"
+        assert "https://litellm.cove.local/" in rendered, (
+            "seed must key the item to the litellm.cove.local URL"
+        )
+        assert "master_key" in rendered, "seed must define the master_key"
+        assert "{{ hostname }}" not in rendered, "seed must not be hostname-templated"
+        assert "{{ ansible_hostname }}" not in rendered, (
+            "seed must not be ansible-hostname-templated"
+        )
+
+    def test_up_reuses_shared_item_no_generate(self, monkeypatch, tmp_path):
+        """When the shared item is already cached in Vault (vault-get on the
+        shared op_ref returns the master key), `up` must REUSE it — no
+        1p-bulk-write, no regeneration."""
+        from click.testing import CliRunner
+        import cove.litellm as ll
+        from cove.litellm import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        monkeypatch.setattr(ll, "_vault_get", lambda op_ref: "sk-FROMVAULT")
+        runner = CliRunner()
+        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        calls = [
+            c.args[0] for c in mock_run.call_args_list
+            if isinstance(c.args[0], list)
+        ]
+        assert not any("1p-bulk-write" in args for args in calls), (
+            "must NOT write to 1Password when the shared item already exists"
+        )
+        assert not any("vault-put" in args for args in calls), (
+            "must NOT re-cache in Vault when the shared item already exists"
+        )
+        assert "LITELLM_MASTER_KEY=sk-FROMVAULT" in env_file.read_text(), (
+            ".env must be populated from the reused shared item"
+        )
+
+    def test_up_generates_and_writes_shared_item_when_absent(self, monkeypatch, tmp_path):
+        """When no shared item exists (vault-get returns nothing), `up`
+        generates a master key, writes the shared item to 1Password
+        (1p-bulk-write), caches it in Vault, and injects it into .env."""
+        from click.testing import CliRunner
+        from cove.litellm import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        runner = CliRunner()
+        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        calls = [
+            c.args[0] for c in mock_run.call_args_list
+            if isinstance(c.args[0], list)
+        ]
+        assert any("1p-bulk-write" in args and "--execute" in args for args in calls), (
+            "expected cove creds 1p-bulk-write --execute to create the shared item"
+        )
+        assert any("vault-put" in args for args in calls), (
+            "expected cove creds vault-put call"
+        )
+        assert env_file.exists(), ".env must be written"
+        content = env_file.read_text()
+        assert "LITELLM_MASTER_KEY=sk-TESTKEY" in content, (
+            f".env must contain the generated master key, got: {content}"
+        )
+
+    def test_up_injects_admin_identity_into_env(self, monkeypatch, tmp_path):
+        """IaC: `cove litellm up` must inject LITELLM_UI_USERNAME and
+        LITELLM_UI_PASSWORD into the compose .env (sourced from the shared 1P
+        item) so a fresh deploy seeds the correct admin — not a default."""
+        from click.testing import CliRunner
+        import cove.litellm as ll
+        from cove.litellm import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        monkeypatch.setattr(
+            ll, "_vault_get",
+            lambda op_ref: {
+                ll.MASTER_KEY_OP_REF: "sk-TESTKEY",
+                ll.UI_USERNAME_OP_REF: "admin@cove.local",
+                ll.UI_PASSWORD_OP_REF: "breeze-canyon-garden-quartz",
+            }.get(op_ref),
+        )
+        runner = CliRunner()
+        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run):
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        content = env_file.read_text()
+        assert "LITELLM_UI_USERNAME=admin@cove.local" in content, (
+            f".env must contain LITELLM_UI_USERNAME, got: {content}"
+        )
+        assert "LITELLM_UI_PASSWORD=breeze-canyon-garden-quartz" in content, (
+            f".env must contain LITELLM_UI_PASSWORD, got: {content}"
+        )
+
+    def test_up_fails_loud_when_cove_admin_item_missing(self, monkeypatch, tmp_path):
+        """IaC/fail-loud: if the shared 'Cove Admin' item is absent (vault-get
+        returns nothing), `up` must FAIL LOUD — never run with a weak default
+        master key or admin identity."""
+        from click.testing import CliRunner
+        import cove.litellm as ll
+        from cove.litellm import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        monkeypatch.setattr(ll, "_vault_get", lambda op_ref: None)
+        runner = CliRunner()
+        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run):
+            result = runner.invoke(up)
+
+        assert result.exit_code != 0, (
+            "cove litellm up must fail loud when the Cove Admin item is missing"
+        )
+        assert "Cove Admin" in result.output or "admin" in result.output.lower(), (
+            f"error must reference the missing Cove Admin identity, got: {result.output}"
+        )
+
+    def test_up_reuses_env_key_no_duplicate(self, monkeypatch, tmp_path):
+        """A second `up` with the key already in .env must NOT regenerate,
+        write to 1Password, or cache in Vault again (idempotent)."""
+        from click.testing import CliRunner
+        from cove.litellm import up
+
+        env_file = self._patch_env(monkeypatch, tmp_path)
+        env_file.write_text("LITELLM_MASTER_KEY=sk-EXISTING\n")
+        runner = CliRunner()
+        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+            result = runner.invoke(up)
+
+        assert result.exit_code == 0, result.output
+        calls = [
+            c.args[0] for c in mock_run.call_args_list
+            if isinstance(c.args[0], list)
+        ]
+        assert not any("1p-bulk-write" in args for args in calls), (
+            "must not write to 1Password when key is cached"
+        )
+        assert not any("vault-put" in args for args in calls), (
+            "must not re-cache in Vault when key is cached"
+        )
+        content = env_file.read_text()
+        assert content.count("LITELLM_MASTER_KEY=") == 1, (
+            f".env must not get a duplicate LITELLM_MASTER_KEY line, got: {content}"
         )
 
 
@@ -619,6 +861,20 @@ class TestDockerfile:
             content = f.read()
         assert "COPY config.yaml" not in content, (
             "Dockerfile must not COPY config.yaml — it's mounted from COVE_DATA_ROOT"
+        )
+
+    def test_chown_copy_after_user_creation(self):
+        """The `--chown=litellm:litellm` COPY must come AFTER the adduser step —
+        Docker resolves the chown user in the target stage at COPY time, and a
+        COPY before user creation fails with 'no such user: litellm'.
+        Regression: cb90fea broke the build (image never built until fixed)."""
+        with open(LITELLM_DIR / "Dockerfile") as f:
+            content = f.read()
+        user_creation = content.index("adduser")
+        chown_copy = content.index("--chown=litellm:litellm")
+        assert chown_copy > user_creation, (
+            "chown COPY must come after adduser in the Dockerfile — "
+            "Docker resolves chown at COPY time and fails without the user"
         )
 
 
@@ -740,7 +996,7 @@ class TestE2ELitellmStack:
     def test_health_endpoint_returns_200(self):
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/health",
+            "https://127.0.0.1:8443/health/readiness",
             headers={"Host": "litellm.cove"},
             verify=False,
             timeout=10,
