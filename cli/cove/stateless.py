@@ -2,14 +2,42 @@
 
 import hashlib
 import os
+import platform
 import shutil
 import subprocess
+import sys
 from importlib.resources import files
 from pathlib import Path
 
 import click
 
 from cove import __version__
+
+
+def detect_hostname() -> str:
+    """Return a stable machine hostname for state/credential keying.
+
+    On macOS, prefers the kernel's LocalHostName (the name shown in
+    System Settings > General > About), which is stable across networks.
+    The kernel hostname (platform.node()) silently drifts to the
+    DHCP-assigned hostname whenever HostName is unset, breaking any
+    per-hostname lookup (host_vars file, 1Password op refs). Falls back
+    to platform.node() on other platforms or if scutil is unavailable.
+    """
+    if sys.platform == "darwin":
+        try:
+            res = subprocess.run(
+                ["scutil", "--get", "LocalHostName"],
+                capture_output=True, text=True, timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            pass
+        else:
+            if res.returncode == 0:
+                name = res.stdout.strip().split(".")[0]
+                if name:
+                    return name
+    return platform.node().split(".")[0]
 
 
 def _config_compose_dir() -> Path:
