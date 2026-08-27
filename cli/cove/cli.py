@@ -155,6 +155,11 @@ def up(no_provision, no_upgrade, log):
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
     base_cmd.extend(["-e", f"@{host_vars_file}"])
+    # Ansible gathers ansible_hostname from the kernel hostname, which on macOS
+    # drifts to the DHCP-assigned name when HostName is unset (e.g. 'Mac'). The
+    # CLI keys everything else (cert SANs, host_vars, 1Password op_refs) on the
+    # stable LocalHostName, so override the fact to keep Ansible consistent.
+    base_cmd.extend(["-e", f"ansible_hostname={host_vars_file.stem}"])
 
     become_pass = getpass.getpass("BECOME password: ")
     ansible_env["ANSIBLE_BECOME_PASSWORD"] = become_pass

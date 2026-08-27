@@ -30,6 +30,18 @@ import cove.cli
 from cove.stateless import resolve_compose_dir
 
 
+def _invoke_callback(command: str, **kwargs) -> object:
+    """Invoke a click command's callback, narrowing the Optional type.
+
+    ``click.Command.callback`` is typed ``Optional[Callable]``; calling it
+    directly trips the type checker ("None cannot be called"). This helper
+    narrows it so call sites in the test file stay type-clean.
+    """
+    callback = getattr(cove.cli, command).callback
+    assert callback is not None, f"command {command!r} has no callback"
+    return callback(**kwargs)
+
+
 class TestDeploymentManifests:
     def test_docker_compose_has_signing_env_vars(self):
         dc = COMPOSE_DIR / "docker-compose.yml"
@@ -242,6 +254,45 @@ class TestFindComposeDir:
 
 
 class TestCoveUpCommand:
+    def test_up_passes_stable_ansible_hostname_override(self, tmp_path, monkeypatch):
+        """cove up must pass `-e ansible_hostname=<stable>` so Ansible's
+        gathered fact (kernel hostname) cannot diverge from the stable hostname
+        used for cert SANs, host_vars, and 1Password op_refs. Without this
+        override, cert validation looks for the drifted kernel hostname while
+        the cert (and provisioned items) use the stable name, failing `cove up`."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        host_vars_file = tmp_path / "state" / "hosts" / "stable-host.yml"
+        host_vars_file.parent.mkdir(parents=True)
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
+            "cove.cli.ensure_host_vars", return_value=host_vars_file
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+
+            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_args = [str(a) for a in bringup_call]
+            assert any(
+                a == "-e" or a.startswith("ansible_hostname=") for a in bringup_args
+            ), "cove up must pass an -e ansible_hostname extra var"
+            hostname_override = next(
+                a for a in bringup_args if a.startswith("ansible_hostname=")
+            )
+            assert hostname_override == "ansible_hostname=stable-host", (
+                f"ansible_hostname must match the host_vars stem (stable), "
+                f"got: {hostname_override}"
+            )
+
     def test_up_no_become_prompt_per_playbook(self, tmp_path, monkeypatch):
         """cove up must NOT pass -K to ansible-playbook — it caches the BECOME
         password once via getpass and passes it via ANSIBLE_BECOME_PASSWORD env."""
@@ -260,7 +311,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            cove.cli.up.callback(no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
 
             bringup_call = mock_run.call_args_list[0][0][0]
             args_list = [str(a) for a in bringup_call]
@@ -289,7 +340,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            cove.cli.up.callback(no_provision=False, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=False, no_upgrade=True, log=False)
 
             assert mock_getpass.call_count == 1, (
                 f"BECOME password must be prompted once, got {mock_getpass.call_count}"
@@ -311,7 +362,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            cove.cli.up.callback(no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
             assert mock_run.call_count == 1
 
     def test_full_up_calls_all_in_correct_order(self, tmp_path, monkeypatch):
@@ -334,7 +385,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            cove.cli.up.callback(no_provision=False, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=False, no_upgrade=True, log=False)
             assert mock_run.call_count == 5
 
             all_args = [mock_run.call_args_list[i][0][0] for i in range(5)]
@@ -383,7 +434,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            cove.cli.up.callback(no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
 
             mock_detect.assert_called_once()
             bringup_call = mock_run.call_args_list[0][0][0]
@@ -413,7 +464,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            cove.cli.up.callback(no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
 
             bringup_call = mock_run.call_args_list[0][0][0]
             bringup_args = [str(a) for a in bringup_call]
@@ -555,7 +606,7 @@ class TestCoveDownCommand:
         ) as mock_run:
             mock_run.return_value.returncode = 0
 
-            cove.cli.down.callback(volumes=False)
+            _invoke_callback("down", volumes=False)
 
             assert mock_run.call_count == 1
             args = [str(a) for a in mock_run.call_args[0][0]]
@@ -572,7 +623,7 @@ class TestCoveDownCommand:
         ) as mock_run:
             mock_run.return_value.returncode = 0
 
-            cove.cli.down.callback(volumes=True)
+            _invoke_callback("down", volumes=True)
 
             args = [str(a) for a in mock_run.call_args[0][0]]
             assert "--volumes" in args, "cove down --volumes must pass --volumes to docker compose"
@@ -683,7 +734,7 @@ class TestCoveUninstallCommand:
         ), patch("subprocess.run") as mock_run, patch("shutil.rmtree"):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(all_=True, force=True, global_=False)
+            _invoke_callback("uninstall", all_=True, force=True, global_=False)
 
             compose_down_calls = [
                 c for c in mock_run.call_args_list
@@ -741,7 +792,7 @@ class TestCoveUninstallCommand:
         ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(all_=True, force=True, global_=False)
+            _invoke_callback("uninstall", all_=True, force=True, global_=False)
 
             remaining = agents_md.read_text()
             assert "cove-guidance" not in remaining
@@ -764,7 +815,7 @@ class TestCoveUninstallCommand:
         ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(all_=True, force=True, global_=False)
+            _invoke_callback("uninstall", all_=True, force=True, global_=False)
 
         assert not agents_md.exists(), "AGENTS.md with only guidance should be deleted"
 
@@ -906,7 +957,7 @@ class TestProgressiveDisclosure:
         ) as mock_run, patch("shutil.rmtree"), patch.object(cove.cli.Path, "cwd", return_value=tmp_path):
             mock_run.return_value.returncode = 0
 
-            cove.cli.uninstall.callback(all_=True, force=True, global_=False)
+            _invoke_callback("uninstall", all_=True, force=True, global_=False)
 
         remaining = agents_md.read_text()
         assert "cove-guidance" not in remaining
@@ -973,7 +1024,7 @@ class TestNoUpgradeFlag:
         ), patch("cove.cli.getpass.getpass", return_value="secret"):
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
-            cove.cli.up.callback(
+            _invoke_callback("up", 
                 no_provision=True, no_upgrade=True, log=False
             )
             mock_reextract.assert_not_called()
