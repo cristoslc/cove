@@ -2,7 +2,6 @@
 
 import json
 import os
-import platform
 import re
 import subprocess
 from pathlib import Path
@@ -10,7 +9,9 @@ from pathlib import Path
 import click
 import yaml
 
-_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9-]+$")
+from cove.stateless import detect_hostname
+
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def _state_hosts_dir() -> Path:
@@ -78,7 +79,7 @@ def _detect_values() -> dict:
 
 def ensure_host_vars() -> Path:
     hosts_dir = _state_hosts_dir()
-    hostname = platform.node().split(".")[0]
+    hostname = detect_hostname()
     if not _HOSTNAME_RE.match(hostname):
         raise click.ClickException(
             f"Hostname {hostname!r} contains invalid characters; "
