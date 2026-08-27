@@ -1,8 +1,6 @@
 """CLI commands for credential lifecycle management."""
 
 import os
-import platform
-import socket
 import stat
 import sys
 import tempfile
@@ -11,6 +9,7 @@ from pathlib import Path
 import click
 
 from cove import op_bulk_write, vault_cache
+from cove.stateless import detect_hostname
 
 
 OP_REFS = {
@@ -26,8 +25,16 @@ OP_REFS = {
     "speedtest_app_key": "op://Private/Speedtest Tracker/app_key",
 }
 
-HOSTNAME = platform.node().split(".")[0]
 USERNAME = os.environ.get("USER", "")
+
+
+def _hostname() -> str:
+    """Resolve the stable machine hostname (see detect_hostname).
+
+    Lazily resolved so importing this module (e.g. `cove` CLI startup) does
+    not spawn `scutil` for commands that never touch credentials.
+    """
+    return detect_hostname()
 
 
 @click.group()
@@ -187,14 +194,14 @@ def batch_pull_op(force_refresh: bool):
     if not force_refresh:
         cached = 0
         for ref_template in OP_REFS.values():
-            ref = ref_template.format(hostname=HOSTNAME, username=USERNAME)
+            ref = ref_template.format(hostname=_hostname(), username=USERNAME)
             if lc.get(ref) is not None:
                 cached += 1
         if cached == len(OP_REFS):
             click.echo("All refs already in local cache. Use --force-refresh to repull.")
             return
 
-    refs = [t.format(hostname=HOSTNAME, username=USERNAME) for t in OP_REFS.values()]
+    refs = [t.format(hostname=_hostname(), username=USERNAME) for t in OP_REFS.values()]
     try:
         result = lc.batch_pull(refs)
     except RuntimeError as e:

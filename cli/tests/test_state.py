@@ -9,7 +9,45 @@ import pytest
 import yaml
 
 from cove.state import ensure_host_vars
-from cove.stateless import resolve_compose_dir
+from cove.stateless import detect_hostname, resolve_compose_dir
+
+
+class TestDetectHostname:
+    def test_prefers_macos_local_hostname(self):
+        """On macOS, the stable LocalHostName wins over the DHCP-drifted
+        kernel hostname (platform.node)."""
+        result = MagicMock(returncode=0, stdout="hostname\n", stderr="")
+        with patch("cove.stateless.sys.platform", "darwin"), patch(
+            "cove.stateless.subprocess.run", return_value=result
+        ):
+            assert detect_hostname() == "hostname"
+
+    def test_strips_domain_suffix(self):
+        result = MagicMock(returncode=0, stdout="hostname.lan\n", stderr="")
+        with patch("cove.stateless.sys.platform", "darwin"), patch(
+            "cove.stateless.subprocess.run", return_value=result
+        ):
+            assert detect_hostname() == "hostname"
+
+    def test_scutil_failure_falls_back_to_platform_node(self):
+        result = MagicMock(returncode=1, stdout="", stderr="")
+        with patch("cove.stateless.sys.platform", "darwin"), patch(
+            "cove.stateless.subprocess.run", return_value=result
+        ), patch("cove.stateless.platform.node", return_value="testhost.lan"):
+            assert detect_hostname() == "testhost"
+
+    def test_scutil_empty_stdout_falls_back_to_platform_node(self):
+        result = MagicMock(returncode=0, stdout="   \n", stderr="")
+        with patch("cove.stateless.sys.platform", "darwin"), patch(
+            "cove.stateless.subprocess.run", return_value=result
+        ), patch("cove.stateless.platform.node", return_value="testhost.lan"):
+            assert detect_hostname() == "testhost"
+
+    def test_non_macos_uses_platform_node(self):
+        with patch("cove.stateless.sys.platform", "linux"), patch(
+            "cove.stateless.platform.node", return_value="linuxbox.example.com"
+        ):
+            assert detect_hostname() == "linuxbox"
 
 
 class TestEnsureHostVars:
@@ -18,7 +56,7 @@ class TestEnsureHostVars:
         state_hosts = home / ".config" / "cove" / "state" / "hosts"
         env = {"USER": "testuser"}
         with patch("cove.state.Path.home", return_value=home), patch(
-            "cove.state.platform.node", return_value="testhost"
+            "cove.state.detect_hostname", return_value="testhost"
         ), patch("cove.state.os.environ", env), patch(
             "cove.state.subprocess.run"
         ) as mock_run:
@@ -34,7 +72,7 @@ class TestEnsureHostVars:
         home = tmp_path
         env = {"USER": "testuser"}
         with patch("cove.state.Path.home", return_value=home), patch(
-            "cove.state.platform.node", return_value="testhost"
+            "cove.state.detect_hostname", return_value="testhost"
         ), patch("cove.state.os.environ", env), patch(
             "cove.state.subprocess.run"
         ) as mock_run:
@@ -55,7 +93,7 @@ class TestEnsureHostVars:
             "COVE_TS_DNS_NAME": "override.ts.net",
         }
         with patch("cove.state.Path.home", return_value=home), patch(
-            "cove.state.platform.node", return_value="testhost"
+            "cove.state.detect_hostname", return_value="testhost"
         ), patch("cove.state.os.environ") as mock_environ, patch(
             "cove.state.subprocess.run"
         ) as mock_run:
@@ -80,7 +118,7 @@ class TestEnsureHostVars:
         }))
         env = {"USER": "testuser"}
         with patch("cove.state.Path.home", return_value=home), patch(
-            "cove.state.platform.node", return_value="testhost"
+            "cove.state.detect_hostname", return_value="testhost"
         ), patch("cove.state.os.environ", env), patch(
             "cove.state.subprocess.run"
         ) as mock_run:
@@ -95,7 +133,7 @@ class TestEnsureHostVars:
         ts_json = '{"Self": {"DNSName": "myhost.example.ts.net."}}'
         env = {"USER": "testuser"}
         with patch("cove.state.Path.home", return_value=home), patch(
-            "cove.state.platform.node", return_value="testhost"
+            "cove.state.detect_hostname", return_value="testhost"
         ), patch("cove.state.os.environ", env), patch(
             "cove.state.subprocess.run"
         ) as mock_run:
@@ -110,7 +148,7 @@ class TestEnsureHostVars:
         home = tmp_path
         env = {"USER": "testuser"}
         with patch("cove.state.Path.home", return_value=home), patch(
-            "cove.state.platform.node", return_value="testhost"
+            "cove.state.detect_hostname", return_value="testhost"
         ), patch("cove.state.os.environ", env), patch(
             "cove.state.subprocess.run"
         ) as mock_run:
@@ -124,7 +162,7 @@ class TestEnsureHostVars:
     def test_invalid_hostname_raises(self, tmp_path):
         home = tmp_path
         with patch("cove.state.Path.home", return_value=home), patch(
-            "cove.state.platform.node", return_value="../evil"
+            "cove.state.detect_hostname", return_value="../evil"
         ):
             with pytest.raises(click.ClickException, match="invalid characters"):
                 ensure_host_vars()
