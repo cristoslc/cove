@@ -1,7 +1,7 @@
 ---
 title: "Pullfrog → Forgejo: what actually ports, what doesn't"
 created: 2026-08-28
-revised: 2026-08-28
+revised: 2026-08-28 (twice — corrected layer-4, then added the harness-agnostic constraint which flips the recommendation back)
 status: Draft
 ---
 
@@ -295,22 +295,95 @@ review-focused, but it already has a foot in non-GitHub CI — worth keeping in
 view as the fallback if openreview's Claude-only coupling turns out to be a
 constraint.
 
-## Recommendation (supersedes the PR-Agent recommendation)
+## New hard constraint: must run any agent harness (not Claude-only)
 
-For a Cove forge steward in the CodeRabbit/Pullfrog mold, **openreview is the
-v1** — fork it, retarget `lib/github.ts` + the webhook handler to Forgejo's
-Gitea-compatible API, run it as a Cove container behind nginx, point its LLM
-at `cove litellm`. The `.agents/skills` alignment means the operator's
-existing skill library lights up immediately. PR-Agent stays relevant only if
-the fixed-tools review posture is preferred over open-ended mention runs —
-and shippie is the fallback if multi-CI / provider-agnosticism matters more
-than openreview's tighter skill integration.
+The operator's requirement tightened: the forge steward must be able to
+drive **any agent harness** (Claude Code, OpenCode, Codex, Aider, …), not
+bake in one vendor's SDK. This is the constraint that flips the recommendation
+back. Re-verified both candidates against it:
 
-The pullfrog fork stays interesting only as a reference for the *open-ended
-agent* execution shape and the MCP-server-as-forge-API pattern — not as the
-thing to adapt. Its proprietary backend, GitHub-App token model, and signed-
-commits coupling make it the most expensive path to the same destination
-openreview reaches with a 5-file retarget.
+- **openreview is Claude-only.** `lib/agent.ts` is a bespoke agent loop on
+  `@workflow/ai/agent` (Vercel Chat SDK → Claude), with its own tools
+  (`lib/tools/bash.ts`, `read-file`, `write-file`, `reply`, `load-skill`).
+  It does **not** spawn an external harness — it *is* the harness, and the
+  harness is Claude-shaped. Making it harness-agnostic means ripping out the
+  `DurableAgent` core and replacing it with a harness-spawning abstraction
+  (subprocess + MCP bridge for tools). That is a **rewrite of the agent core**,
+  not the "~5-file retarget" the prior version of this musing claimed. That
+  retarget estimate was valid only under the assumption the Claude core stayed.
+  Under the harness-agnostic constraint, openview is the wrong base.
+- **shippie is single-harness.** Its "provider-agnostic" claim is
+  *model*-agnosticism (Anthropic/OpenAI/OpenRouter/CF Workers AI), not
+  *harness*-agnosticism. It runs its own flue-based agent loop. Same failure
+  mode as openreview under this constraint.
+
+## Why pullfrog is back as the right base
+
+Pullfrog's `agents/` directory is a clean harness-agnostic abstraction that
+precisely satisfies the new constraint:
+
+```ts
+// agents/index.ts
+import { claude } from "./claude.ts";
+import { codex } from "./codex.ts";
+import { opencode } from "./opencode.ts";
+import type { Agent } from "./shared.ts";
+export const agents = { claude, codex, opencode } satisfies Record<string, Agent>;
+```
+
+- Each harness (`claude.ts`, `codex.ts`, `opencode.ts`) is a driver that
+  **spawns the harness as a subprocess** and feeds it the MCP tool server.
+  The harness keeps its native file-editing, bash, reasoning — pullfrog
+  doesn't reimplement the agent, it *hosts* whichever one you point it at.
+- Selection is `PULLFROG_AGENT` env var with auto-select fallback
+  (`utils/agent.ts:152`). Adding a harness = one new file implementing the
+  `Agent` interface. **opencode is already first-class** (`agents/opencode.ts`,
+  `opencodePlugin.ts`) — the operator's harness is supported today. Adding
+  `pi` would be one more driver file.
+- The MCP tool server (the forge-API layer, layers 1 + 4a) is what gets
+  bridged to whichever harness is spawned. That's the harness-agnostic
+  contract: tools are exposed *to* the harness, the harness is swappable.
+
+This is the one constraint openreview and shippie can't meet without a
+rewrite, and pullfrog meets it for free. So the proprietary-backend caveat
+from the earlier analysis is real but **narrower than it first looked** under
+this constraint: the backend is needed for the managed-GitHub-App OAuth flow,
+billing, `similarIssues`, `plan-comment`, the dashboard, and OIDC token
+minting — *none of which the core harness-agnostic forge-bot loop needs*.
+A single-operator Cove replaces the GitHub-App flow with a Forgejo PAT
+(fine — the `roleMirror` leak-survivability invariant is a multi-user concern
+Cove doesn't share), drops billing/dashboard/`similarIssues`/`plan-comment`,
+and keeps the harness-agnostic execution layer + MCP tools intact.
+
+## Recommendation (final, under the harness-agnostic constraint)
+
+**Pullfrog is the base.** Fork it, drop the proprietary-backend tail
+(4b + OAuth/billing/dashboard), replace the GitHub-App ephemeral token model
+with a Forgejo PAT passed as a runner secret, point the `gh` MCP tool +
+Octokit `baseUrl` at Forgejo `/api/v1`, drop or rework the signed-commits
+(`apiCommit.ts`) Verified guarantee, and gate the `gh api graphql` ad. The
+harness-agnostic `agents/` layer and the MCP tool server run as-is — opencode
+works today, `pi` is one driver file.
+
+openview is out as a base (Claude-only; harness-agnosticism = rewrite).
+shippie is out as a base (single harness). **PR-Agent stays the fallback only
+if the operator ever decides fixed-tools is acceptable** — it's Gitea-native
+and self-hostable, but it's a single fixed-tool harness, not "run any harness."
+
+The real adaptation cost for pullfrog, ranked:
+1. **Gitea-vs-GitHub API endpoint mapping** across Octokit-direct tools (4a) —
+   the bulk of the work, and it's mechanical mapping, not architecture.
+2. **Token model** — swap GitHub-App installation tokens for a long-lived
+   Forgejo PAT (or Forgejo scoped tokens rotated per run by a Cove helper).
+   Accept the weaker per-run-revocation guarantee; fine for single-operator.
+3. **Signed commits** — drop the `apiCommit.ts` Verified path, or wire Forgejo
+   signing. Agent commits land as ordinary commits.
+4. **Drop 4b** — `similarIssues`, `plan-comment`, `upload`, dashboard trigger
+   links. Optionally reimplement `similarIssues` with a local embedding index.
+5. **Gate the `gh api graphql` string** in `mcp/gh.ts` (Forgejo has no GraphQL).
+
+The harness-agnostic layer — the part that actually makes it "run any agent" —
+costs nothing. That's why pullfrog wins under this constraint.
 
 ## Open question to sit with
 
