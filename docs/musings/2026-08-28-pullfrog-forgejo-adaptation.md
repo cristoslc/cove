@@ -383,7 +383,118 @@ The real adaptation cost for pullfrog, ranked:
 5. **Gate the `gh api graphql` string** in `mcp/gh.ts` (Forgejo has no GraphQL).
 
 The harness-agnostic layer — the part that actually makes it "run any agent" —
-costs nothing. That's why pullfrog wins under this constraint.
+costs nothing. That's why pullfrog wins *as the reference* under this
+constraint. But "wins as the reference" and "adapt wholesale" are different
+questions — and the next one is whether to adapt pullfrog at all, or build.
+
+## Build vs. adapt: is it easier to reimplement our own loops?
+
+This is the question that rebalances everything above. Answer: **for Cove,
+yes — a hybrid reimplementation is both less work and lower rugpull risk than
+adapting pullfrog wholesale**, and the reason is a clean decomposition of
+pullfrog's codebase into two halves with opposite properties.
+
+### The decomposition (verified, not assumed)
+
+I grepped the harness drivers for any import of the forge layer
+(`github`, `octokit`, `apiFetch`, `apiCommit`, `roleMirror`, `pullfrog.com`,
+`getApiUrl`) — **zero hits.** The drivers are purely harness-management:
+
+```text
+agents/claude.ts   1381 lines   — spawn claude-code, OAuth/refresh handling,
+agents/codex.ts     957 lines     session labeling, hang detection, teardown
+agents/opencode.ts 1585 lines   — spawn `opencode serve`, loopback HTTP SDK,
+agents/shared.ts    305 lines      event pumping, activity gating, MCP injection
+                  ~4200 lines total, MIT, forge-agnostic
+```
+
+Each driver spawns its harness as a subprocess and feeds it the MCP tool
+server (`mcp.<name> = { type: "remote", url }`). The harness keeps its native
+file-editing/bash/reasoning. The driver handles the *hard* parts: auth-token
+refresh races, session resume across gate retries, hang/activity detection,
+version-specific harness quirks, clean teardown. That's accumulated
+battle-scarring that is genuinely expensive to rediscover.
+
+Opposite half — the multi-tenant security bulk:
+
+```text
+roleMirror + token + gitAuthServer + apiCommit + secrets + credentialCheck  ~1343 lines
+crossagent + agnostic adversarial test suites                                ~1564 lines
+```
+
+This exists to make a multi-tenant GitHub App safe against **untrusted PR
+authors** — the role-mirror token scoping, the signed-commits Verified path,
+the cross-branch-clobber gate, the subagent tool gates, the untrusted-env
+filtering. **Cove is single-operator and trusted.** Most of this bulk solves a
+problem Cove doesn't have.
+
+### The hybrid
+
+- **Lift** pullfrog's harness drivers (`agents/*.ts`, MIT, forge-agnostic).
+  This is the expensive-to-reproduce part and it doesn't need the
+  GitHub→Gitea mapping — it never touches the forge. Attribution preserved;
+  the operator already owns `cristoslc/pullfrog-fork`, so the last-good MIT
+  commit is safe regardless of upstream's future direction.
+- **Rewrite** the forge layer fresh against Forgejo's `/api/v1` (we have the
+  swagger at `git.cove/swagger.v1.json`): an MCP tool server
+  (pr/issue/comment/review/checkout + a `gh`-shim if wanted), a webhook
+  listener, a mention router, a skill loader. Borrow the **shapes** — the
+  `Agent` interface contract, the MCP-tool-as-forge-API pattern (pullfrog),
+  `.agents/skills/` + `@mention` + webhook-handler structure (openreview),
+  Gitea endpoint knowledge (PR-Agent already speaks Gitea). The forge layer
+  is maybe 1–2k lines against a stable, documented API.
+- **Drop** the multi-tenant security bulk. Defer it until/unless Cove's threat
+  model grows (e.g., the forge accepts untrusted external contributions).
+
+### Why this is easier than adapting pullfrog wholesale
+
+Adapting wholesale means: carry ~10k+ lines, retarget the entire MCP tool
+server through a GitHub→Gitea translation layer (mapping tax on the whole tool
+surface), *and* strip ~2900 lines of multi-tenant machinery that's dead
+weight for a trusted operator — all while maintaining a large diff against an
+upstream whose business model (proprietary SaaS) diverges from OSS-needs. The
+mapping tax alone is the bulk of the work, and it applies to the part we'd
+rewrite fresh anyway.
+
+The hybrid sidesteps it: the liftable part (drivers) has no forge coupling, so
+no mapping tax; the rewrite part (forge layer) targets Forgejo's real API
+natively, so no translation layer. We never carry the dead multi-tenant bulk.
+
+### Why this is lower rugpull risk
+
+- **Forge layer:** ours, small, against a stable Forgejo API. Zero upstream.
+- **Harness drivers:** MIT, already forked at `cristoslc/pullfrog-fork`. A
+  future pullfrog relicense or deprecation can't reach the last-good commit we
+  hold. The maintenance rugpull (forever rebasing a large diff) disappears
+  because the drivers are the stable, forge-agnostic half — low churn, and
+  when they do change it's harness-version-driven, not business-model-driven.
+- **Patterns** (Agent interface, MCP-as-forge-API, skills) are ideas, not
+  code — unauditable to rugpull.
+
+The residual risk shifts from *upstream* rugpull to *self-maintenance* of a
+small owned codebase — which is the safer side of the trade for a project of
+this size.
+
+### Where wholesale-adapt would win instead (the honest conditional)
+
+If Cove's threat model ever grows to include **untrusted external PR authors**
+— the forge goes multi-user, or accepts outside contributions, or the steward
+processes mentions from arbitrary third parties — then pullfrog's adversarial
+suite (the ~2900 lines + 1564 lines of tests we'd drop) becomes valuable and
+hard to rebuild. At that point the calculus flips toward taking pullfrog
+wholesale (or at least lifting the security layer too). That's a future
+conditional gated on a threat-model change, not the current Cove shape.
+
+### Net
+
+Don't adapt pullfrog wholesale. Don't reimplement from a blank file. **Lift
+the harness drivers, rewrite the forge layer, borrow the patterns.** That
+gives a harness-agnostic, Forgejo-native, self-hostable steward that's smaller
+than a pullfrog fork, carries no dead multi-tenant bulk, and has no upstream
+whose business model can rugpull it. The `musing → plan → sashay` next step,
+if this holds up under a parley, is a plan that scopes the forge-layer rewrite
+and lists exactly which `agents/*.ts` files to lift and which `utils/*`
+security files to defer.
 
 ## Open question to sit with
 
