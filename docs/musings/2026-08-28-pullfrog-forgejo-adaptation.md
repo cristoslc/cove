@@ -176,6 +176,81 @@ with real API-mapping work (Gitea ≠ GitHub, but close); only a small backend-
 dependent tail is not self-hostable, and most of that tail is SaaS glue a
 single-operator Cove drops anyway.
 
+## Does a fully self-hosted version of pullfrog exist?
+
+No — not upstream. CONTRIBUTING.md says it outright: *"This repo
+(`pullfrog/pullfrog`) is the open-source GitHub Action that powers Pullfrog.
+The rest of the product (web app, API) is proprietary and lives elsewhere."*
+The `pullfrog.com` backend (dashboard, managed GitHub App, OAuth, billing,
+OIDC token minting, the similar-issues embedding index) is not in this fork
+and has no self-hostable release. Every "self-hosted" reference in the repo
+is about GitHub Actions *runners*, not self-hosting the pullfrog service.
+
+So the question becomes: is there a **different** project that does what
+pullfrog does (bring a coding agent into the forge for PR review / issue
+triage) but is fully self-hostable and Forgejo-compatible? Yes.
+
+## The fully self-hostable alternative: PR-Agent
+
+`The-PR-Agent/pr-agent` — MIT, ~12.8k★, recently donated by Qodo to a
+community-owned org (now being transferred to an open-source foundation).
+
+Why it fits Cove where pullfrog doesn't:
+
+- **Fully self-hostable, no proprietary backend.** A single Docker service +
+  webhooks. No `pullfrog.com`-equivalent. Nothing to rugpull.
+- **Explicit Gitea support.** The feature matrix lists Gitea ✅ for Describe,
+  Review, Improve, CLI, App/webhook, Agent skills (`SKILL.md`), and
+  `AGENTS.md` context files. Forgejo is a Gitea fork with a compatible REST
+  API → Gitea support = Forgejo support, modulo testing.
+- **LLM-agnostic.** Any OpenAI-compatible endpoint → point it at
+  `https://litellm.cove.local/v1`. Reuses the LiteLLM service Cove already
+  runs. Offline as long as the LLM provider is (Ollama via the proxy, etc.).
+- **Aligns with existing agent infra.** Reads `AGENTS.md` and `SKILL.md` —
+  the same conventions the operator's harnesses already use.
+
+What it gives up vs pullfrog:
+
+- **Fixed tools, not open-ended.** PR-Agent ships `/describe`, `/review`,
+  `/improve`, `/ask` — a closed toolset, not the "tag the bot and it does
+  anything" model. No `@pullfrog`-style arbitrary-prompt runs, no
+  auto-fix-on-CI-failure loop, no issue→PR generation.
+- **Some features are GitHub-only.** `Ask on code lines`, `Update CHANGELOG`,
+  Actions-runner mode, and the tagging bot are blank in the Gitea column.
+  Core review/describe/improve work on Gitea; the edges don't.
+- **No MCP server.** Pullfrog's MCP server *exposes tools to* a coding agent
+  (agent drives the forge). PR-Agent *is* the agent with fixed tools.
+  Different integration model — PR-Agent won't make OpenCode/Claude forge-
+  aware the way pullfrog's MCP tools do.
+
+## Other self-hostable candidates considered
+
+- **OpenHands** (`OpenHands/OpenHands`, MIT, ~86k★) — self-hostable "developer
+  control center for coding agents," but GitHub-centric (no Gitea/Forgejo in
+  the README; integrates Slack/GitHub/Datadog). Heavier than a forge bot and
+  the wrong shape for Cove.
+- **Aider** (`Aider-AI/aider`, Apache-2.0, ~49k★) — terminal pair
+  programmer, not a forge-integrated bot. Different category; complements
+  rather than replaces.
+
+## Recommendation shift
+
+The pullfrog adaptation is viable but costs API-mapping work (Gitea ≠
+GitHub) plus dropping the proprietary-backend tail — and what you get is an
+open-ended agent that still leans on GitHub-App-shaped assumptions (ephemeral
+tokens, signed commits) that don't map to Forgejo. **PR-Agent is the cheaper
+path to a Cove forge steward**: it already speaks Gitea, already self-hosts
+as one container, already targets an OpenAI-compatible endpoint, and needs
+no proprietary backend. The trade is capability breadth (fixed review tools
+vs open-ended agent runs).
+
+The decision to actually sit with: does Cove want a **focused PR review bot**
+(PR-Agent, fits today, less magic) or an **open-ended forge-aware agent**
+(pullfrog adapted, more magic, more work, more GitHub-shaped assumptions to
+shed)? That's a parley, not a binary — and PR-Agent may be the v1 while a
+pullfrog-style MCP layer is the v2 if the focused tools turn out to feel
+narrow.
+
 ## Open question to sit with
 
 The honest question isn't "can we adapt pullfrog for Forgejo" (yes, at the
