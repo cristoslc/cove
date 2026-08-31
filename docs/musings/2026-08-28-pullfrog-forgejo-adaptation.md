@@ -1,8 +1,10 @@
 ---
 title: "Pullfrog → Forgejo: what actually ports, what doesn't"
 created: 2026-08-28
-revised: 2026-08-28 (twice — corrected layer-4, then added the harness-agnostic constraint which flips the recommendation back)
-status: Draft
+revised: 2026-08-28 (three times — corrected layer-4; harness-agnostic
+constraint flips recommendation back to pullfrog; security re-accounting +
+fail-closed config gate + forge-layer synthesis)
+status: Decided
 ---
 
 # Pullfrog → Forgejo: what actually ports, what doesn't
@@ -507,6 +509,36 @@ where there's no multi-user permission mirror to enforce anyway. The
 single-operator Cove, the operator's PAT *is* the right scope, and the
 object-scoped layer may be solving a problem Cove doesn't have. Worth a
 parley before committing to the API-mapping work.
+
+---
+
+## Decision of record
+
+Operator consensus (2026-08-28) on the three open questions above:
+
+1. **Security — keep the prompt-injection defenses, drop only the multi-
+   tenant machinery; adopt fail-closed as the methodology.** The trimmed
+   posture (~2000 lines kept: pretool gate, fs-denies, push gate, env filter,
+   MCP-as-scope-enforcer; ~600 dropped: roleMirror fan-out, OIDC token
+   minting, OAuth) plus the Cove-specific repo-config gate (~150 lines,
+   fail-closed on misconfiguration). The fail-closed methodology is the load-
+   bearing principle: don't try to guarantee repos are configured correctly —
+   refuse to run when they aren't, naming the gap.
+2. **Patterns — scaffold from openreview, taxonomy + gates from pullfrog,
+   config gate is Cove's, impl fresh against Forgejo.** openreview's webhook-
+   app shape is the scaffold; pullfrog's MCP tool surface is the taxonomy; the
+   security gate layer sits between harness and MCP tools keeping pullfrog's
+   own seams; the repo-config gate is Cove-specific; all forge calls written
+   fresh against `/api/v1` with no GitHub→Gitea translation layer.
+3. **Build vs. adapt — hybrid reimplementation** (from the prior section):
+   lift pullfrog's `agents/*.ts` harness drivers (MIT, forge-agnostic,
+   battle-scarred), rewrite the forge layer, drop the multi-tenant bulk.
+
+Status moves to **Decided**. Next step is `musing → plan → sashay`: a plan
+that scopes the forge-layer rewrite, lists exactly which `agents/*.ts` to
+lift, which `utils/*` security files to keep-trimmed vs. drop, and specifies
+the repo-config gate's fail-closed checklist. That plan is the prerequisite
+to any sashay.
 
 ## Correction: the security bulk is not all multi-tenant dead weight
 
