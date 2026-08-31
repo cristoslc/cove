@@ -233,23 +233,84 @@ What it gives up vs pullfrog:
   programmer, not a forge-integrated bot. Different category; complements
   rather than replaces.
 
-## Recommendation shift
+## What the user actually wants: the CodeRabbit/Pullfrog category
 
-The pullfrog adaptation is viable but costs API-mapping work (Gitea ≠
-GitHub) plus dropping the proprietary-backend tail — and what you get is an
-open-ended agent that still leans on GitHub-App-shaped assumptions (ephemeral
-tokens, signed commits) that don't map to Forgejo. **PR-Agent is the cheaper
-path to a Cove forge steward**: it already speaks Gitea, already self-hosts
-as one container, already targets an OpenAI-compatible endpoint, and needs
-no proprietary backend. The trade is capability breadth (fixed review tools
-vs open-ended agent runs).
+Refined the target after the PR-Agent detour. The category is specifically:
+**an always-on, forge-integrated bot that auto-reviews PRs on open, responds
+to `@mention` with open-ended agent runs, and is fully self-hostable.**
+PR-Agent is fixed-tools (`/describe` `/review` `/improve` `/ask`), not
+open-ended — so it's adjacent, not in-category. OpenHands was the candidate
+question; it's the **wrong shape**: a general "developer control center for
+coding agents" (Agent Canvas UI, agent backends in Docker/VMs, automations
+that decompose GitHub issues into tasks on schedule/webhook). Heavyweight,
+GitHub+Slack+Linear-centric, no Gitea/Forgejo, and its automation model is
+"scheduled/event-driven task decomposition," not "always-on PR review bot
+that responds to `@mention`." Overkill and not purpose-built as a forge bot.
 
-The decision to actually sit with: does Cove want a **focused PR review bot**
-(PR-Agent, fits today, less magic) or an **open-ended forge-aware agent**
-(pullfrog adapted, more magic, more work, more GitHub-shaped assumptions to
-shed)? That's a parley, not a binary — and PR-Agent may be the v1 while a
-pullfrog-style MCP layer is the v2 if the focused tools turn out to feel
-narrow.
+## The answer: `vercel-labs/openreview`
+
+A near-direct CodeRabbit/Pullfrog clone that is fully self-hostable (~1.6k★,
+Vercel Labs).
+
+- **Mention-triggered, open-ended.** `@openreview` in a PR comment (optionally
+  with specific instructions) → a Claude agent reviews the diff, explores the
+  codebase, runs project tooling, posts inline suggestions. The
+  CodeRabbit/Pullfrog model, not fixed tools.
+- **Fully self-hostable.** A single Next.js app (webhook handler + agent).
+  Default deploy is Vercel, but it's just a Next.js app — runs in a Cove
+  container. No proprietary backend (the thing pullfrog has and won't release).
+- **Uses `.agents/skills/SKILL.md`.** Ships with built-in review skills and
+  loads custom skills from `.agents/skills/` at runtime — the *same* skill
+  convention the operator's harness already uses. Native alignment.
+- **GitHub-only today** — but the GitHub coupling is **concentrated in ~5
+  files**, and the agent core is forge-agnostic:
+
+  ```
+  lib/agent.ts      ← agent core (forge-agnostic)
+  lib/skills.ts     ← .agents/skills loader (forge-agnostic)
+  lib/tools/        ← agent tools (forge-agnostic)
+  lib/github.ts     ← GitHub API layer  ← swap to Gitea/Forgejo REST
+  lib/bot.ts        ← comment posting   ← retarget
+  app/api/webhooks/ ← webhook handler   ← accept Forgejo webhook payload
+  workflow/steps/get-github-token.ts, check-push-access.ts  ← retarget
+  ```
+
+  Extending to Forgejo is a **contained** project: rewrite `github.ts`
+  (octokit `baseUrl` → `/api/v1`, or swap to a Gitea client), swap the webhook
+  handler to consume Forgejo webhook payloads, adjust two workflow steps.
+  Agent core, skills, tools don't change. Categorically smaller than the
+  pullfrog adaptation — no proprietary backend to replace, no ephemeral
+  GitHub-App token model to shed, no signed-commits Verified guarantee to
+  lose. The operator already said they're fine extending a GitHub-only thing
+  to Gitea/Forgejo, and this is the cleanest such extension surface found.
+
+## Runner-up: `mattzcarey/shippie`
+
+MIT, ~2.5k★, "extendable code-review agent." Mention-triggered
+(`/shippie review`), provider-agnostic (Anthropic/OpenAI/OpenRouter/CF Workers
+AI), supports `MCP_SERVERS`, `AGENTS.md`/`CLAUDE.md` injection, Agent Skills,
+subagent delegation, and runs on GitHub Actions **or GitLab CI** (already
+multi-forge-ish). Slightly less open-ended than openreview and more
+review-focused, but it already has a foot in non-GitHub CI — worth keeping in
+view as the fallback if openreview's Claude-only coupling turns out to be a
+constraint.
+
+## Recommendation (supersedes the PR-Agent recommendation)
+
+For a Cove forge steward in the CodeRabbit/Pullfrog mold, **openreview is the
+v1** — fork it, retarget `lib/github.ts` + the webhook handler to Forgejo's
+Gitea-compatible API, run it as a Cove container behind nginx, point its LLM
+at `cove litellm`. The `.agents/skills` alignment means the operator's
+existing skill library lights up immediately. PR-Agent stays relevant only if
+the fixed-tools review posture is preferred over open-ended mention runs —
+and shippie is the fallback if multi-CI / provider-agnosticism matters more
+than openreview's tighter skill integration.
+
+The pullfrog fork stays interesting only as a reference for the *open-ended
+agent* execution shape and the MCP-server-as-forge-API pattern — not as the
+thing to adapt. Its proprietary backend, GitHub-App token model, and signed-
+commits coupling make it the most expensive path to the same destination
+openreview reaches with a 5-file retarget.
 
 ## Open question to sit with
 
