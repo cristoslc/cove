@@ -1,6 +1,7 @@
 ---
 title: "Pullfrog → Forgejo: what actually ports, what doesn't"
 created: 2026-08-28
+revised: 2026-08-28
 status: Draft
 ---
 
@@ -103,57 +104,86 @@ single-operator, localhost-only forge. (b) is probably fine for Cove's
 threat model — there's no multi-tenant leakage to worry about — but it's a
 conscious downgrade, not a free carry.
 
-## Layer 4 — the object-scoped MCP tools — HARD conflict with Cove offline-first
+## Layer 4 — the object-scoped MCP tools (corrected: two camps, not one)
 
-This is the one I didn't expect. `mcp/pr.ts`, `mcp/issue.ts`, `mcp/comment.ts`,
-`mcp/review.ts` etc. don't hit GitHub directly. They go through `apiFetch` →
-`getApiUrl()` → `utils/apiUrl.ts`, which resolves to **`https://pullfrog.com`**
-(Pullfrog's own hosted backend), not `api.github.com`. The backend brokers
-GitHub access on the action's behalf.
+> **Correction (2026-08-28).** The first version of this musing claimed the
+> object-scoped tools "route through `pullfrog.com`'s hosted backend." That
+> was wrong for the majority of them. Re-reading the code: the tools split
+> into two camps — most go **Octokit-direct to GitHub REST**, only a few go
+> through the proprietary backend.
 
-That's a hard dependency on an external hosted service. For Cove it's a
-non-starter as-is:
+The object-scoped MCP tools are **not** a monolith. They split:
 
-- PURPOSE.md: "No public forge dependency… The operator owns all instances
-  end-to-end." A tool whose object-scoped operations round-trip through
-  `pullfrog.com` is exactly the "third-party rugpull must not break core"
-  case Cove is chartered against.
-- The airplane test: with WiFi off, `apiFetch` to `pullfrog.com` returns
-  nothing. The object-scoped tools — which are the *below-triage* path, the
-  one that works without a `gh` token — go dark.
+### 4a — Octokit-direct (the majority): adaptable to Forgejo
 
-So adapting the object-scoped layer for Forgejo isn't "point gh at a new
-host." It's "replace the `pullfrog.com` backend with something that talks to
-the local Forgejo REST API directly." That's either a local shim that
-re-implements the backend's GitHub-proxy contract against Forgejo's `/api/v1`,
-or a fork of the MCP tools to call Forgejo directly. Either is the bulk of
-the adaptation work.
+`create_issue_comment`, `create_pull_request_review`, the `pr`/`issue`/
+`labels` operations all call `ctx.octokit.rest.*`. Octokit is constructed in
+`utils/github.ts:589` with **no `baseUrl` set** — so it defaults to
+`https://api.github.com`, but `baseUrl` *is* a supported option. Pointing it
+at Forgejo's `/api/v1` is a one-line config change. The real work is that
+Forgejo is **Gitea-API**, not GitHub-API: Octokit's `.rest.*` methods are
+generated from GitHub's OpenAPI spec, so the endpoint *paths* and *response
+shapes* overlap heavily with Gitea's REST API but are **not identical**
+(field names differ, some paths differ, pagination headers differ). That's
+endpoint-mapping work, not backend reimplementation.
 
-## So: viable, but the cost is in layer 4, not layer 1
+In these files `getApiUrl()` / `pullfrog.com` is only used to build dashboard
+*links* ("Implement plan ➔"), not to make the API call itself. Strip the
+links and the tool still functions against the forge directly.
+
+### 4b — backend-dependent (the minority): not self-hostable from this repo
+
+A handful of features genuinely route through `apiFetch` → `pullfrog.com`:
+
+- `similarIssues` → `/api/repo/.../issues/n/similar` — needs a server-side
+  embedding index for semantic issue retrieval.
+- `selectMode` plan-comment → `/api/repo/.../issue/n/plan-comment`.
+- `upload` → artifact upload to the backend.
+- the `${API_URL}/trigger/...` dashboard trigger links.
+
+The `pullfrog.com` backend (dashboard, managed GitHub App, OAuth, billing,
+OIDC token minting, the embedding index) is **not in this repo**. It is a
+proprietary hosted service. You cannot stand it up from this fork.
+
+For a single-operator offline Cove, most of 4b is droppable — the dashboard,
+billing, managed-App, and OAuth glue solve multi-tenant SaaS problems Cove
+doesn't have. The only one with real value is `similarIssues` (semantic
+duplicate detection), which would need a local embedding index to
+reimplement.
+
+## Is pullfrog self-hostable?
+
+**Partially, and where it counts for Cove, yes.** The action + CLI + MCP
+server (this repo) are open source and run inside *your own* runner (GHA or
+Forgejo Actions). The proprietary `pullfrog.com` backend is not in this fork
+and is needed only for the 4b features above. The bulk of the object-scoped
+layer (4a) is Octokit-direct and therefore adaptable to Forgejo.
+
+## So: viable, with the cost concentrated in API mapping, not backend reimpl
 
 | Layer | Ports to Forgejo? | Cost |
 |---|---|---|
 | `gh` MCP tool (generic CLI passthrough) | yes, with GraphQL caveat | small — gate the "graphql available" string, configure `GH_HOST` |
 | Signed commits (`apiCommit.ts`) | no cleanly | medium — drop Verified guarantee or wire Forgejo signing |
 | Ephemeral token model (`roleMirror`/`token`/`gitAuthServer`) | no architecturally | medium — long-lived PAT + accept weaker leak guarantee (fine for Cove's model) |
-| Object-scoped MCP tools (`pr`/`issue`/`comment`/`review` via `pullfrog.com`) | no — hosted backend dependency | **large — this is the actual project** |
+| Object-scoped tools — Octokit-direct (4a: comment/review/pr/issue/labels) | yes — set Octokit `baseUrl`; map Gitea-vs-GitHub API diffs | **medium — this is the real work now, and it's endpoint mapping, not a backend rewrite** |
+| Object-scoped tools — backend-dependent (4b: similarIssues/plan-comment/upload/dashboard) | no from this repo | drop for Cove, or reimplement `similarIssues` with a local index |
 
-The earlier musing's framing ("no new interface required, just configure
-`gh`") was wrong. It's true *only* for the `gh`-CLI tool layer. The
-object-scoped tools — the ones that actually make pullfrog *pullfrog* (PR
-review, issue triage, comment threading, the `@pullfrog` mention loop) —
-depend on a hosted backend that has to be replaced with a local
-Forgejo-talking equivalent. That's the adaptation work. Layer 1 is a
-warm-up; layer 4 is the job.
+The earlier framing ("no new interface required, just configure `gh`") was
+wrong in the *opposite* direction from the first correction. The truth: the
+`gh`-CLI layer ports trivially; the Octokit-direct object-scoped layer ports
+with real API-mapping work (Gitea ≠ GitHub, but close); only a small backend-
+dependent tail is not self-hostable, and most of that tail is SaaS glue a
+single-operator Cove drops anyway.
 
 ## Open question to sit with
 
 The honest question isn't "can we adapt pullfrog for Forgejo" (yes, at the
-cost above). It's whether the object-scoped tool layer is worth re-implementing
+cost above). It's whether the object-scoped tool layer is worth adapting
 against Forgejo's REST API, or whether the `gh`-CLI tool alone — agent drives
 `gh pr`, `gh issue`, `gh api` directly — is enough for a single-operator forge
 where there's no multi-user permission mirror to enforce anyway. The
 `roleMirror` machinery exists to constrain a *multi-user* GitHub App; in a
 single-operator Cove, the operator's PAT *is* the right scope, and the
 object-scoped layer may be solving a problem Cove doesn't have. Worth a
-parley before committing to re-implementing layer 4.
+parley before committing to the API-mapping work.
