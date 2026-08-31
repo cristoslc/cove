@@ -507,3 +507,137 @@ where there's no multi-user permission mirror to enforce anyway. The
 single-operator Cove, the operator's PAT *is* the right scope, and the
 object-scoped layer may be solving a problem Cove doesn't have. Worth a
 parley before committing to the API-mapping work.
+
+## Correction: the security bulk is not all multi-tenant dead weight
+
+The "drop ~2900 lines of multi-tenant security" line above was too glib, and
+the operator's pushback is right: "single-operator and trusted" is **not** a
+clean threat boundary. The trust boundary is around *repo/PR content*, not the
+operator. A mention-triggered agent reads attacker-controlled text — PR
+descriptions, commit messages, vendored code, dependency-update patches, AI-
+generated diffs — so the prompt-injection surface is live even for one trusted
+operator on their own repos. Re-reading the actual code re-accounts the bulk:
+
+**KEEP — prompt-injection defenses, transfer to single-operator Cove:**
+
+- `agents/claudePretoolGate.ts` + `subagentToolGates.ts` — block state-
+  mutating MCP tools from *subagents*. The motivating case is the 2026-05-18
+  zed/cloud incident: a review subagent called `checkout_pr` mid-review and
+  the orchestrator's next push clobbered an unrelated branch. Any harness with
+  subagent delegation has this surface. KEEP.
+- `agents/nativeFsDenies.ts` — block the harness's native FS tools
+  (Read/Write/Edit) from touching `.git/` (config, hooks, filters, aliases,
+  `credential.helper`). The comment is explicit: "a prompt-injected agent could
+  plant a git filter or hook via the native edit tool, bypassing the shell
+  sandbox entirely." This is the smallest, most directly transferable defense.
+  KEEP.
+- `utils/secrets.ts` `filterEnv()` / `filterEnvForUntrustedCode()` — strip the
+  PAT/webhook-secret/CI-secrets from the harness's subprocess env so a
+  prompt-injected `printenv` / `curl` can't exfiltrate them. KEEP.
+- `mcp/git.ts:92-118` push gate — block fully-qualified `refs/heads/...`
+  refspecs (which bypass default-branch protection), `:refs/heads/main`
+  (delete), `+main` (force-push). The cross-branch-clobber / push-escalation
+  defense. KEEP.
+- The **MCP-as-scope-enforcer pattern** itself — the agent never holds the raw
+  forge token; it acts only through the MCP tool server, which exposes scoped
+  verbs (comment, review, read-diff) and refuses unscoped ones (delete repo,
+  admin, push-to-protected). This is the foundation that makes prompt
+  injection survivable when the agent reads attacker-controlled PR text. KEEP.
+
+**DROP — genuinely multi-tenant:**
+
+- `roleMirror.ts` *the per-user permission fan-out* (we have one user; use a
+  fixed scoped Forgejo PAT, not a per-run mirror — but keep the minimal-scope
+  *invariant*).
+- `token.ts` GitHub-App OIDC ephemeral token minting (multi-tenant infra;
+  Forgejo has no equivalent anyway).
+- OAuth/`credentialCheck` for third-party sign-in.
+
+So the droppable set is ~600 lines, not ~2900. The other ~2000 are prompt-
+injection defenses Cove needs. The earlier accounting was wrong; corrected
+here.
+
+## The misconfiguration worry: fail closed, don't try to guarantee
+
+The operator's specific concern: "if we drop the security gates we need to be
+extra sure forgejo repos can't be misconfigured within cove. I'm not sure we
+can guarantee that, currently." The honest engineering answer is you don't
+*guarantee* a repo isn't misconfigured — you **fail closed when it is.** That's
+a gate neither pullfrog nor openreview has, because pullfrog runs inside GHA
+(GitHub's settings + GitHub-App scoping cover it) and openreview trusts its own
+Claude core. Cove on Forgejo can't assume either. A Cove-specific **repo-config
+gate** runs on webhook receipt, before the agent spawns:
+
+- **Webhook signature verifies** (Forgejo HMAC). If not → 401, no run. (pullfrog
+  doesn't have this — it's not a webhook server; Cove is.)
+- **Repo is on the allowlist** (explicitly onboarded). If not → ignore silently
+  (avoid SSRF / trigger-amplification from a forged payload).
+- **Branch protection is on for the default branch** (no force-push, no direct
+  push to main). If off → refuse, post a comment "steward disabled: enable
+  branch protection on <default>."
+- **The configured PAT is scoped** (comment/review/read), **not** admin / push-
+  to-protected. If over-scoped → refuse, post "steward disabled: rotate the
+  token to a read/comment/review scope."
+- **No CI/repo secrets are injected into the agent env.** (Cove controls this at
+  the runner level; the gate asserts it.)
+
+Any check failing → no agent spawn, a clear comment or log naming the gap.
+~150 lines, Cove-specific, and it's the direct answer to "can't guarantee repos
+aren't misconfigured": you don't prevent misconfiguration, you refuse to run on
+a misconfigured repo. That converts an unbounded worry into a finite checklist.
+
+## Forge-layer patterns: scaffold from openreview, taxonomy + gates from pullfrog
+
+The forge layer (MCP tool server + webhook + mention router + skill loader)
+has two reference sources with complementary strengths — neither is sufficient
+alone:
+
+- **openreview (Vercel) is the scaffold.** It's a clean single-purpose Next.js
+  webhook app at the *right size and shape* for a single-operator steward —
+  `app/api/webhooks/` (webhook handler), `lib/github.ts` (forge calls —
+  rewrite as `lib/forgejo.ts` against `/api/v1`), `lib/bot.ts` (mention detect
+  + reply/comment posting), `lib/skills.ts` (`.agents/skills` loader),
+  `workflow/` (mention → agent → reply flow). Start the scaffold from
+  openreview's structure, not pullfrog's (pullfrog is a multi-tenant GitHub
+  Action, the wrong shape). openreview contributes **nothing** to security,
+  though — it trusts its own Claude core, so it has no gate layer to borrow.
+- **pullfrog is the tool taxonomy + the security gate layer.** pullfrog's
+  `mcp/` gives the *tool surface* — what verbs a forge steward exposes (pr,
+  issue, comment, review, checkout, the `gh`-shim). Borrow that taxonomy,
+  implement against Forgejo. And pullfrog's pretool gate + fs-denies + push-
+  gate + env-filter (the prompt-injection defenses above) are the gate layer
+  that sits *between* the harness and the MCP tools. openreview has none of it.
+
+So the forge-layer synthesis composes cleanly:
+
+```text
+                    webhook (scaffold: openreview) ──┐
+                  repo-config gate (Cove-specific)    │ fails-closed check
+                                       │              │
+        harness drivers (lift: pullfrog agents/*.ts)  │
+                  │  via loopback MCP                  │
+        pretool-gate + fs-denies (lift: pullfrog)  ◀──┘ security layer
+                  │                                    (between harness & tools)
+        MCP tool server (taxonomy: pullfrog mcp/*;   
+                         impl: fresh vs Forgejo /api/v1)
+                  │ scoped verbs only
+        Forgejo /api/v1
+```
+
+- **Scaffold:** openreview's webhook-app shape.
+- **Tool taxonomy:** pullfrog's MCP tool surface.
+- **Security gates:** pullfrog's pretool gate + fs-denies + push-gate + env-
+  filter (prompt-injection defenses).
+- **Config gate:** Cove-specific fail-closed repo validation — the part that
+  answers the misconfiguration worry directly, which neither reference has.
+- **Harness drivers:** lift pullfrog's `agents/*.ts` (the battle-scarred,
+  forge-agnostic half from the previous section).
+- **Implementation:** all forge calls written fresh against Forgejo `/api/v1` —
+  no GitHub→Gitea translation layer anywhere.
+
+The composition point is clean: the lifted harness drivers connect to the MCP
+tool server (openreview-shaped scaffold + pullfrog taxonomy + Forgejo impl)
+*through* pullfrog's pretool-gate/fs-denies, which is exactly where that gate
+layer sits in pullfrog's own architecture. We're not inventing the seams — we're
+keeping pullfrog's seams and swapping the forge implementation on one side of
+them.
