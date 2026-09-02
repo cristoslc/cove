@@ -12,6 +12,7 @@ forgejo_domain: git.cove.local
 forgejo_root_url: "https://git.cove.local/"
 forgejo_api_url: "https://127.0.0.1:{{ nginx_https_port }}/"
 forgejo_ssh_domain: git.cove.local
+forgejo_webhook_allowed_host_list: "loopback"
 
 # --- Vault ---
 vault_image_tag: "1.20"

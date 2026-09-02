@@ -402,6 +402,7 @@
           FORGEJO_ROOT_URL=https://git.cove.local/
           FORGEJO_SSH_DOMAIN=git.cove.local
           FORGEJO_SSH_PORT={{ forgejo_ssh_port }}
+          FORGEJO_WEBHOOK_ALLOWED_HOST_LIST={{ forgejo_webhook_allowed_host_list | default('loopback') }}
           VAULT_IMAGE={{ vault_image }}
           VAULT_CONTAINER_NAME={{ vault_container_name }}
           NGINX_IMAGE={{ nginx_image }}
