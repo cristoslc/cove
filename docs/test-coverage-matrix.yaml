@@ -216,3 +216,17 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "forgejo webhook ALLOWED_HOST_LIST compose default (loopback)"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "bringup .env includes FORGEJO_WEBHOOK_ALLOWED_HOST_LIST"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: skip
+      corner: skip
