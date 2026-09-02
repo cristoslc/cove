@@ -53,3 +53,11 @@ Add an explicit, configurable allowlist to the forgejo compose env, defaulting t
 - `uv run --directory cli pytest -x -q -m "not e2e and not staging"` green.
 - Compose config renders with the new env var (`docker compose config` or YAML parse in tests).
 - Coverage matrix + docs + CHANGELOG updated.
+
+## Deployment note (wheel source-of-truth)
+
+`compose/` is dev-time source; the setting reaches running stacks only via the
+post-merge promote (sync compose → wheel build → `cove` reinstall). On
+reinstall, existing stacks need `docker compose up -d forgejo` (or the next
+`cove up`) to recreate the container with the new env. Do not hand-edit the
+deployed compose dir — it is a runtime copy.
