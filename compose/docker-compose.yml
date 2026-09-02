@@ -30,6 +30,7 @@ services:
       FORGEJO__repository.signing__INITIAL_COMMIT: "always"
       FORGEJO__repository.signing__DEFAULT_TRUST_MODEL: "committer"
       FORGEJO__server__LFS_START_SERVER: "true"
+      FORGEJO__webhook__ALLOWED_HOST_LIST: ${FORGEJO_WEBHOOK_ALLOWED_HOST_LIST:-loopback}
     volumes:
       - ${FORGEJO_DATA_ROOT}/forgejo/gitea:/data/gitea
       - ${FORGEJO_DATA_ROOT}/forgejo/git:/data/git
