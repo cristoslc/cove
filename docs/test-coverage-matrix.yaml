@@ -228,4 +228,5 @@ workflow_paths:
     coverage:
       happy: executable
       sad: executable
+      edge: skip
       corner: skip

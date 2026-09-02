@@ -54,12 +54,17 @@ The compose `.env` is rendered **on first boot only** (`compose/bringup.yml`, "R
 
 Options on an existing deployment:
 
-- Set `FORGEJO_WEBHOOK_ALLOWED_HOST_LIST` directly in the deployed `.env`, **or**
-- Recreate the container and let the compose default apply:
+- Change `forgejo_webhook_allowed_host_list` in `compose/group_vars/all.yml` and let the
+  post-merge promote (below) carry it into a fresh `.env`, **or**
+- Recreate the container and let the compose default apply (temporary stopgap, no hand-editing
+  of runtime files — the durable path is group_vars + promote):
 
   ```shell
-  docker compose up -d forgejo
+  cd ~/.config/cove/compose && docker compose up -d forgejo
   ```
+
+  This must run against the **deployed runtime copy** of the compose bundle (the directory the
+  wheel extracts), not the repo's dev-time `compose/` directory.
 
 The compose-level `:-loopback` default still applies whenever the variable is absent from `.env`.
 
@@ -68,7 +73,7 @@ The compose-level `:-loopback` default still applies whenever the variable is ab
 `compose/` in this repo is **dev-time source**. The setting reaches running stacks only via the post-merge promote: sync compose resources into the wheel, build, and reinstall `cove`. After a reinstall, recreate the forgejo container so it picks up the new env:
 
 ```shell
-docker compose up -d forgejo
+cd ~/.config/cove/compose && docker compose up -d forgejo
 ```
 
 Never hand-edit the deployed compose directory (`~/.config/cove/compose/`) — it is a runtime copy regenerated from the wheel.
