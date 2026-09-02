@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Forgejo webhook allowlist** (`webhook.ALLOWED_HOST_LIST`) — explicit, configurable compose env var defaulting to `loopback` (upstream default `external` blocked all loopback/private webhook delivery, breaking local receivers like tidesman). Widen per-receiver via `FORGEJO_WEBHOOK_ALLOWED_HOST_LIST=loopback,<host-or-cidr>`. See [docs/services/forgejo.md](docs/services/forgejo.md) and issue [#44](https://git.cove.local/cristos/cove/issues/44).
+
 ## [0.4.1] — 2026-08-12
 
 ### Fixed
