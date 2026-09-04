@@ -347,12 +347,57 @@
         - "{{ cove_data_root }}/speedtest"
 
     # TEMPLATES ----------------------------------------------------------------
+    # Docker bind-mounts auto-create missing host paths as DIRECTORIES. If a
+    # previous `docker compose up` ran before these files were rendered, the
+    # mount targets below become empty dirs and every later `template` write
+    # lands inside them, then nginx fails to start ("mount a directory onto a
+    # file"). Guard: fail loudly if any mount target exists as a directory.
+    - name: Assert nginx bind-mount targets are not directories
+      ansible.builtin.stat:
+        path: "{{ nginx_conf_dir }}/{{ item }}"
+      loop:
+        - default.conf
+        - landing.html
+        - pages.html
+        - cove-config-locations.conf
+        - cove-pages-locations.conf
+      register: nginx_mount_targets
+    - name: Fail if a Docker-created directory wedges an nginx mount
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.item }} exists as a DIRECTORY (Docker auto-created it during
+          a prior failed boot before the file was rendered). Remove it and
+          re-run: rm -rf {{ item.item }} && cove up
+      loop: "{{ nginx_mount_targets.results }}"
+      when: item.stat.isdir | default(false)
+      loop_control:
+        label: "{{ item.item }}"
+
     - name: Render nginx config from template
       ansible.builtin.template:
         src: "{{ nginx_conf_dir }}/default.conf.j2"
         dest: "{{ nginx_conf_dir }}/default.conf"
         mode: "0644"
       notify: Reload nginx
+
+    - name: Assert data-root bind-mount targets are not directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ cove_data_root }}/dnsmasq/cove.conf"
+        - "{{ cove_data_root }}/nginx/config.html"
+        - "{{ cove_data_root }}/litellm/config.yaml"
+      register: data_mount_targets
+    - name: Fail if a Docker-created directory wedges a data-root mount
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.item }} exists as a DIRECTORY (Docker auto-created it during
+          a prior failed boot before the file was rendered). Remove it and
+          re-run: rm -rf {{ item.item }} && cove up
+      loop: "{{ data_mount_targets.results }}"
+      when: item.stat.isdir | default(false)
+      loop_control:
+        label: "{{ item.item }}"
 
     - name: Render litellm config from template (first boot only)
       ansible.builtin.template:
