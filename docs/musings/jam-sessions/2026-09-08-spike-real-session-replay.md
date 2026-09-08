@@ -79,4 +79,14 @@ Dug into *why* 6.3%. Not a bug: three deliberate design layers each shave the ef
 
 **Spike-environment caveats:** `/health`'s `savings_profile` and `target_ratio` fields did not reflect env overrides in any of 5 launch configurations (CLI flag, `env` prefix, exported env, `create_app()` defaults, direct `ProxyConfig`) — possibly the fields report the *nominal* profile rather than the effective one, but the compression behavior (0% on XML-wrapped reads) was invariant across all launches, so the protection is in the content router, not the profile plumbing.
 
+## Addendum 3: root cause found — XML tag protection, not role protection
+
+Mechanically isolated (A/B on identical bytes, protections toggled):
+
+- **opencode's file-read format is three XML tags** — `<path>…</path>`, `<type>file</type>`, `<content>55K of file</content>`. Headroom's Rust tag protector (`protect_tags`) treats the whole payload as protected blocks: 55,129 chars → 56 chars of placeholders + byte-exact tag blocks restored after compression. The compressor sees a 56-char body, finds nothing worth compressing, and the net-cost gate emits `router:noop`. **The noop is tag-structure-induced, not a role rule** (earlier attribution corrected).
+- **Identical content, tags rewritten away** (`FILE: deploy.sh` prefix, no XML): **13,877 → 10,464 tokens, 25% compressed** via `router:code_aware:0.31`. So the code-aware compressor handles this exact content fine — the XML wrapper is what blocks it.
+- Also corrected: `HEADROOM_PROTECT_READS` defaults **off** ("0"); read-protection only engages for detected cat/sed/head read commands paired with tool_use history — irrelevant to our synthetic messages. The `HEADROOM_EXPERIMENTAL_READ_KEEP_RATIO=0.5` knob never fired because the exp path also requires read-command detection (`_protect_read_tool_ids`).
+
+**Efficiency answer, updated:** the highest-leverage lever is precisely this tag-protector interaction. For `<content>`-style tag blocks (whole-file payload inside one tag), byte-exact protection is the correct default for fresh reads, but a **lossless fold of the stale/superseded read bodies** (the read-lifecycle machinery already exists) would attack the 66% bucket without byte-risk on fresh ones. Untestable via env in this spike: `HEADROOM_EXPERIMENTAL_READ_KEEP_RATIO` requires read-command detection that replay traffic can't produce. The Cove-relevant ask upstream: extend `read_maturation`/lossless folding to cover opencode's `<path>/<content>` wire shape — that one feature converts Headroom from 6-7% to plausibly 25%+ (the bare-content rate) on this workload, without any custom compressor.
+
 Replay artifacts: `/var/folders/.../opencode/spike-replay/` (`session-owui-sso.json`, `replay-messages.json`, `replay-windows.json`), spike config in `/var/folders/.../opencode/spike-litellm-headroom/`.
