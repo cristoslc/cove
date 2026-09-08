@@ -45,18 +45,18 @@ The fix is config-or-small-patch scale inside the existing profile:
 2. Ship `trafilatura` in the image so the html strategy actually runs (today it silently no-ops)
 3. Keep fresh reads byte-exact by gating (1) behind the read-lifecycle state — fresh verbatim, stale/superseded folded
 4. Verify in the replay harness: target the 25% band (bare-content rate); 11.7% is the conservative floor
-5. If the gateway pipeline divergence (open item) blocks (1), file it upstream with our A/B evidence — the issue text is already written in the replay musing's addenda
+5. If the gateway pipeline divergence (open item) blocks (1), patch it locally in the Cove image — **no upstream filing** (operator constraint). The divergence root-cause work and any needed fix live in the profile's Dockerfile/patch set, kept in-repo.
 
 Why this beats both alternatives at metered economics:
 - **DCP-class build**: 1.5-3.4 yr payback even ignoring build cost; DCP itself is disqualified by the portability constraint (opencode-plugin-only); Sleev by self-hostability. The only portable DCP-class alternative left is the one we'd build — but the measured 25% band from Headroom's *existing* compressor, unlocked by config, captures the majority of the metered savings (25% of $7.4k/yr ≈ $1.8k/yr) for a fraction of the effort.
 - **Sleev**: disallowed — not self-hostable in Cove's sense (closed binary, license server, telemetry opt-out enterprise-only).
-- **Custom compressor**: still on the shelf. It becomes rational only if the config fix underdelivers AND upstream won't take the read-lifecycle gating patch — the same fork, with better evidence than yesterday's version.
+- **Custom compressor**: still on the shelf. It becomes rational only if the config fix underdelivers — the reopen trigger no longer includes upstream cooperation since we self-maintain the profile patches.
 
-**Certified:** config fix in the Cove Headroom profile; confidence medium-high (config field proven at library level; gateway-pipeline divergence is the open risk). Build-from-scratch reopens only if the profile fix fails in the replay harness or upstream refuses the lifecycle gating patch.
+**Certified:** config fix in the Cove Headroom profile with locally-maintained patches; confidence medium-high (config field proven at library level; gateway-pipeline divergence is the open risk). Build-from-scratch reopens only if the profile fix fails in the replay harness.
 
 ## Open items carried forward
 
-- Gateway `/v1/compress` vs library `apply()` divergence — root cause and fix (upstream issue candidate)
-- `compress_tagged_content` needs a read-lifecycle gate for byte-exact fresh reads (upstream patch candidate)
+- Gateway `/v1/compress` vs library `apply()` divergence — root cause and local fix in the Cove profile patch set
+- `compress_tagged_content` needs a read-lifecycle gate for byte-exact fresh reads — implemented as a local patch in the profile
 - Replay-vs-live gap: the agent-cooperative optimization path (Sleev-style toolkit injection) is unmeasured by our one-shot replay; a live harness A/B on a Cove session would close it
 - Bifrost contingency: unchanged, trigger = LiteLLM supply-chain event
