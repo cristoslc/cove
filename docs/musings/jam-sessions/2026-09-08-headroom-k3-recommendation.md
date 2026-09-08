@@ -343,3 +343,35 @@ profile intact throughout; it is never deleted until B is proven.
   template proxies all paths) means A's current security posture is weaker than
   documented — but that same drift exists to be fixed, and fixing it strengthens
   A without any replacement.
+
+## Addendum 2026-09-08: LiteLLM ships a native Headroom guardrail — Option B's premise weakened
+
+After this musing was certified, upstream research (same day) found that
+LiteLLM **v1.92.x+** ships Headroom as a first-class `pre_call` guardrail:
+one `guardrails:` block in `config.yaml`, attachable per virtual key or
+`default_on: true`, verified via `x-litellm-applied-guardrails`, guardrail
+latency visible in the Logs UI, and CCR's `retrieve_headroom` tool passed
+through automatically (docs.litellm.ai/docs/proxy/headroom;
+docs.litellm.ai/blog/headroom-integration; works on both
+`/v1/chat/completions` and `/v1/messages`).
+
+Cove's pin is `litellm==1.84.0` — the guardrail does not exist on it. The
+sidecar architecture this musing assumed (Headroom as a separate container
+because that was the only option) is now the *legacy* integration.
+
+**Impact on the certification:** Option B's core argument was "one service
+does routing + compression." That is no longer unique to standalone Headroom.
+Option A now has a cheaper path than previously assessed: pin bump to
+≥1.92.x + one config block + delete the sidecar container. This reshapes but
+does not automatically reverse the certification — the pin bump carries
+LiteLLM's usual CVE-watch discipline, and a dev-release user reported
+`ValueError: Unsupported guardrail: headroom` (BerriAI discussion #31816),
+so the stable-cut behavior must be verified on a real ≥1.92 release before
+the sidecar is retired.
+
+**Status of the certified recommendation:** superseded pending re-parley.
+Option B is downgraded from "adopt via migration" to "no longer the default
+candidate." The A-path (litellm + native guardrail) is the default candidate;
+spike to confirm the guardrail works against Cove's actual aliases and
+Ollama-Cloud upstream before any change to the deployed profile. See
+[spike result — to be linked].
