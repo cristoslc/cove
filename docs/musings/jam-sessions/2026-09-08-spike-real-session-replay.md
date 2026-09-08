@@ -60,4 +60,23 @@ This is the honest DCP-vs-Headroom head-to-head the July musing said nobody had 
 
 **Revised certified comparison:** DCP (already installed in this OpenCode via `@tarquinen/opencode-dcp`) delivers ~15× the context reduction of the LiteLLM+Headroom native guardrail on identical traffic. The proxy-compression premise — "transparent beats model-aware" — does not survive contact with measured tool-role data. Headroom standalone (Option B) keeps its CCR/memory/learn differentiators, but its compression layer is the weakest link for this workload.
 
+## Addendum 2: why headroom underperforms — and what would fix it
+
+Dug into *why* 6.3%. Not a bug: three deliberate design layers each shave the effective compression on opencode traffic.
+
+**1. opencode's file-read format is structurally protected.** The dominant payload in real sessions — 66% of tool bytes across the five windows — is `<path>…<type>file<content>1: …` structured read output. Headroom's content router recognizes this shape and no-ops it **by design**, regardless of role, tool-name exclusions, or profile (`coding`'s `protect_reads: True`; synthetic tests: same content bare → 10% compressed, XML-wrapped → 0%). Rationale: the agent byte-patches against exact file content; lossy compression of a Read is how you get corrupted edits. `DEFAULT_EXCLUDE_TOOLS` (Read/Glob/Grep/Write/Edit) plus the XML-structure guard enforce it. Our 12.6% best window compressed the 34% "other" bucket (bash output, prose) and nothing else.
+
+**2. Net-cost gate (#856).** Mutating a message deep in a conversation busts the provider prompt-cache prefix for everything after it. The router's break-even gate (`ΔT vs P_alive·(w−r)·S`) skips mutations whose cache-bust cost exceeds the saving — correct for cache-mode economics, and another reason whole-conversation replays see noops mid-window (`router:mixed:0.71` on one deep window: 23 tokens saved of 17,261).
+
+**3. Coding profile posture.** `savings_profile=coding` defaults: `protect_analysis_context=True`, `force_kompress=False`, delta-only cache mode. Each is individually defensible for interactive coding (fidelity + cache stability), and collectively they bound real-world savings far below the README's headline.
+
+**What would make it more efficient (ranked by measured leverage):**
+
+1. **Relax the file-read structure guard** — the single biggest lever (66% of payload bytes). A lossless path for reads (SmartCrusher-style line folding, or CCR-only truncation keeping head/tail) would attack the exact bytes that dominate. Upstream has the mechanism (`read_maturation` for stale/superseded reads) but leaves fresh reads fully protected. A Cove-tuned profile with `HEADROOM_PROTECT_READS=0` + lossless-only on reads is testable without code changes if the env var can be pinned — env-var propagation through the CLI re-exec needs confirming (the `/health` `savings_profile` field did not reflect env overrides in this spike).
+2. **Bigger `--target-ratio`** — the `general` profile + `--target-ratio 0.5` path is more aggressive than `coding`'s emergent 0.75-0.94 ratios; untested here because env vars didn't propagate, flagged for re-test.
+3. **`--lossless` mode** — no-CCR lossless compaction with marker-free SmartCrusher may find savings in bash output that the strict profile skips; also untested (flag exists, spike scope ended).
+4. **Accept the design**: if byte-exact reads matter (they do for coding), 6-13% may simply *be* the honest ceiling for transparent compression on agent traffic, and DCP's model-driven summarization is the only path to 90%+ reductions.
+
+**Spike-environment caveats:** `/health`'s `savings_profile` and `target_ratio` fields did not reflect env overrides in any of 5 launch configurations (CLI flag, `env` prefix, exported env, `create_app()` defaults, direct `ProxyConfig`) — possibly the fields report the *nominal* profile rather than the effective one, but the compression behavior (0% on XML-wrapped reads) was invariant across all launches, so the protection is in the content router, not the profile plumbing.
+
 Replay artifacts: `/var/folders/.../opencode/spike-replay/` (`session-owui-sso.json`, `replay-messages.json`, `replay-windows.json`), spike config in `/var/folders/.../opencode/spike-litellm-headroom/`.
