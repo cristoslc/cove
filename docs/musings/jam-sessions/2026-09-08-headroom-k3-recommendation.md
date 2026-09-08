@@ -374,4 +374,7 @@ Option B is downgraded from "adopt via migration" to "no longer the default
 candidate." The A-path (litellm + native guardrail) is the default candidate;
 spike to confirm the guardrail works against Cove's actual aliases and
 Ollama-Cloud upstream before any change to the deployed profile. See
-[spike result — to be linked].
+[spike result](./2026-09-08-spike-litellm-native-headroom-guardrail.md) —
+verified end-to-end on stable 1.100.0; adoption gated on tool-role savings
+measurement (content router no-ops `role: "tool"` rows) and the fail-open →
+fail-closed behavior change (proxy-down now 502s).
