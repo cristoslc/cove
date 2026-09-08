@@ -40,6 +40,20 @@ Context pressure compounds this: 3.7M avg tokens/session means several sessions 
 
 **The portability constraint flips the July musing's rejection of Sleev.** It is the only tool that is simultaneously portable-any-harness, DCP-class in reduction, and maintained by the DCP team. Its cost is governance, not engineering: closed source, EULA-governed, local-first but unauditable. Headroom is the open-source portable option but measured 6.3% on tool traffic.
 
+## Addendum: is Sleev actually self-hostable? (operator challenge, verified same hour)
+
+Partially — and the caveats are load-bearing. Verified from sleev.ai docs directly:
+
+- **The gateway runs locally** (localhost, install script `curl -fsSL https://sleev.ai/install.sh | bash`). Prompts, code, session history, model responses, and provider API keys are not collected; model traffic goes to providers directly. This is local-first in the sense that matters for data.
+- **But it is not self-hostable in Cove's sense.** Closed source (proprietary, Sleev Labs Inc, EULA). No source to audit, no compose file we can pin, no digest to verify. "Self-hostable" for a binary blob is just "runs on my machine."
+- **Phone-home is not off-switchable at personal tier.** Offline licensing (no telemetry at all) is **enterprise-only**. Regular installs report usage/savings metrics to Sleev's servers; the docs' "limited internet" page confirms telemetry opt-out requires the enterprise offline license.
+- **Account/licensing gate.** Account-free mode: 500 premium requests/mo. Free account: 2,000. Pricing Sept 15+: $5 Starter (10k), $20 Pro (unlimited), Enterprise (offline licenses). "Premium" is a hand-picked model list that can change over time — but **GLM 5.3 is on the free list**, which is Cove's primary model, so Cove's workload would sit in the free tier today. No guarantee it stays there.
+- **Claimed savings: 65% average session reduction** (their dashboard example: 329.9K → 114.4K) — consistent with the DCP-class numbers we measured structurally (92-98% ceiling, realized lower in-session).
+
+**Revised verdict on Sleev:** usable for a *pilot* (account-free, 500 free premium requests, GLM-5.3 free-tier) to validate the reduction claim on our replay harness — but it fails Cove's IaC-first / offline-first bar for deployment as a harbor service: no source, no compose, telemetry not disableable without enterprise terms, license server dependency. A closed-source, license-server-gated proxy is a dependency posture Cove has never accepted (contrast: every current service is pinned, digest-verified, source-auditable).
+
+**This strengthens the custom/port path:** a DCP-core port (deterministic dedup + range summarize + the net-cost cache-bust gate, as a standalone proxy) is no longer competing against a free-forever open-source alternative — it is competing against *licensing into a blob*. Payback math at metered pricing: 1.5-3.4 yr at current usage, 0.9-1.5 yr at 4×. The DCP prompt corpus is open (in the DCP repo); the deterministic layers are our own spike-proven patterns. The honest sequencing is now: **(1) Sleev pilot to validate proxy-layer reduction and steal its eval harness, (2) decide build-vs-license with those numbers, (3) if building, port DCP-core as `cove`'s own compose profile — fully IaC, fully auditable.**
+
 ## Verdict
 
 **Do not build from scratch.** Even at 4× current usage, a from-scratch compressor pays back in 1.4-2.4 years — the build cost ($15-24k) swamps the metered savings at realistic adoption. The compressed-context quality question (summary fidelity gating everything downstream) is also solved by DCP's prompt corpus, not by writing new ones.
