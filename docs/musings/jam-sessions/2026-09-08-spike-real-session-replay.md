@@ -37,4 +37,27 @@ Latency: 1.5-10.5s added per request for compression decisions. On the 237 KB wi
 
 **Certified:** native-guardrail A-path is mechanically sound but **not currently worth the pin bump for token savings alone** (6.3% ≪ 60-95% claimed). The decision for Cove should be driven by the other guardrail capabilities (CCR retrieval, spend accounting, guardrail observability in the Logs UI), not compression ROI. Keep LiteLLM at 1.84.0 + sidecar, or retire compression entirely until upstream improves tool-role routing. Re-test on a future Headroom release that routes tool content.
 
+## Addendum same day: head-to-head with DCP (standalone test function)
+
+Ran DCP's algorithm shape as a standalone test function on the **same five windows**: deduplication first (0% — the real session has no exact-duplicate tool calls), then DCP's `compress` path — the window serialized and summarized by a real model (MiniMax M2.7:cloud via Ollama Cloud, $0.20/1M, the cheapest available; the July musing's 50-70% DCP claim context) using DCP's actual `compress-range.ts` system prompt, summary written back in place of the range.
+
+| window | original | DCP prompt cost | DCP summary | DCP net ctx | DCP reduction | headroom replay |
+|---|---|---|---|---|---|---|
+| 0 | 60,822 | 79,692 | 938 | 1,188 | **98%** | 12.6% |
+| 1 | 22,394 | 27,349 | 672 | 922 | **96%** | 2.4% |
+| 2 | 38,137 | 48,361 | 1,214 | 1,464 | **96%** | 2.3% |
+| 3 | 27,026 | 35,152 | 1,777 | 2,027 | **92%** | 2.2% |
+| 4 | 16,986 | 22,360 | 966 | 1,216 | **93%** | 5.0% |
+| **avg** | | | | | **95%** | **6.3%** |
+
+This is the honest DCP-vs-Headroom head-to-head the July musing said nobody had published.
+
+**Reading it fairly, three caveats:**
+
+1. **DCP's number is the structural ceiling, not a free win.** 95% is what replacing 40 messages with one summary achieves; DCP's model-driven selection in real sessions triggers later (nudges at 60% context per this repo's `dcp.json`), so realized-session savings are lower. But even discounted 3-5×, DCP compresses an order of magnitude more.
+2. **The compress pass itself is not free.** 213K prompt tokens to summarize 5 windows (~$0.049 at MiniMax pricing — cheap, but nonzero, and the summary model's quality gates what survives). Headroom's compression is $0 local compute with no quality-chokepoint model, but it only removes 6.3%.
+3. **The mechanisms are complementary, not competing.** DCP's lossy summary dominates context reduction; Headroom's guardrail is transparent, zero-cost, and needs no model awareness. The July musing's "DCP for short sessions, Headroom for long" inverted here: on Cove's actual tool-heavy sessions, the transparent proxy is the weak performer and the model-aware plugin is the strong one.
+
+**Revised certified comparison:** DCP (already installed in this OpenCode via `@tarquinen/opencode-dcp`) delivers ~15× the context reduction of the LiteLLM+Headroom native guardrail on identical traffic. The proxy-compression premise — "transparent beats model-aware" — does not survive contact with measured tool-role data. Headroom standalone (Option B) keeps its CCR/memory/learn differentiators, but its compression layer is the weakest link for this workload.
+
 Replay artifacts: `/var/folders/.../opencode/spike-replay/` (`session-owui-sso.json`, `replay-messages.json`, `replay-windows.json`), spike config in `/var/folders/.../opencode/spike-litellm-headroom/`.
