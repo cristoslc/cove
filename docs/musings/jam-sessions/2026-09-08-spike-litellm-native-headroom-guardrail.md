@@ -67,4 +67,6 @@ The native guardrail is **real, stable, and mechanically verified end-to-end** �
 
 **Certified:** A-path feasible, confidence medium — blocked on tool-role savings measurement, not on integration mechanics.
 
+**Update same day:** the measurement ran ([real-session replay](./2026-09-08-spike-real-session-replay.md)) — **6.3%** on actual OpenCode tool traffic, not 60-95%. Adoption verdict revised in that follow-up.
+
 Environment: `/var/folders/.../opencode/spike-litellm-headroom/` (ephemeral; config inline above is the complete working setup).
