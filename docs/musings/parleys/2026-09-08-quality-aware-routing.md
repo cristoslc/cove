@@ -39,3 +39,14 @@ Headroom's effort router is Anthropic-path-only today. OpenCode traffic is OpenA
 ## Resolutions
 
 (none yet)
+### T-1 RESOLUTION (2026-09-08, operator): hard disagree on "don't rewrite"
+
+Operator position: build a **`cove-auto` router alias** — opt-in by selection. Any harness pointing at the Cove LLM gateway can *choose* it like any other model. Consent problem dissolved by architecture: the router never overrides a named model; it only acts when the harness deliberately asked for `cove-auto`. Default-alias traffic stays untouched; deliberate auto-routing is explicit.
+
+This inverts the design assumption: the router is not a silent interceptor but a **first-class model choice**. Harnesses that want cost optimization point at `cove-auto`; harnesses that want a specific model keep naming it. No distinction detection needed (the T-1 worry about "default vs deliberate" vanishes — the harness signals its intent by which alias it calls).
+
+Consequences:
+- Rewrite authority is scoped to `cove-auto` traffic only — the fail-closed posture
+- The eval problem remains (T-3), but now bounded: bad rewrites only affect sessions that opted in
+- Portability: any OpenAI/Anthropic-compatible harness gets `cove-auto` for free — it's just another model name on `/v1/models`
+- Quality-cost ladder lives *inside* the `cove-auto` resolution logic (the hook now must exist — it's the implementation of the alias, not an interceptor)
