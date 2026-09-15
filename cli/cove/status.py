@@ -34,6 +34,7 @@ OPTIONAL_SERVICES = [
     ("cove-litellm", "LiteLLM", "litellm"),
     ("cove-headroom", "Headroom", "litellm"),
     ("cove-speedtest-tracker", "Speedtest", "speedtest"),
+    ("cove-forgejo-runner", "Runner", "runner"),
 ]
 
 NGINX_HTTPS_PORT = 8443
