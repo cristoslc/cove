@@ -379,6 +379,7 @@
       no_log: true
       retries: 3
       delay: 5
+      until: runner_reg_token.status == 200
 
     - name: Register forgejo-runner non-interactively
       when:
