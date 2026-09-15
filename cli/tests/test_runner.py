@@ -10,6 +10,8 @@ Run unit:  pytest cli/tests/test_runner.py -m "not e2e and not staging"
 """
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -64,9 +66,9 @@ class TestComposeServiceDefinition:
 
     def test_runner_has_no_ports(self):
         data = _load_compose()
-        ports = data["services"]["forgejo-runner"].get("ports", [])
+        ports = data["services"]["forgejo-runner"].get("ports")
         assert ports is None or ports == [], (
-            "forgejo-runner must have no exposed ports (outbound-only)"
+            f"forgejo-runner must have no exposed ports, got: {ports}"
         )
 
     def test_runner_has_memory_limit(self):
@@ -93,12 +95,12 @@ class TestComposeServiceDefinition:
             "forgejo-runner must mount the Docker socket for job containers"
         )
 
-    def test_runner_data_volume_from_data_root(self):
+    def test_runner_data_volume_uses_cove_data_root(self):
         data = _load_compose()
         volumes = data["services"]["forgejo-runner"].get("volumes", [])
         volume_strs = [str(v) for v in volumes]
-        assert any("forgejo-runner" in v and "/data" in v for v in volume_strs), (
-            "forgejo-runner must mount data volume to /data under FORGEJO_RUNNER_DATA_ROOT"
+        assert any("${COVE_DATA_ROOT" in v and "forgejo-runner" in v for v in volume_strs), (
+            "forgejo-runner must mount data volume using ${COVE_DATA_ROOT} (not FORGEJO_RUNNER_DATA_ROOT)"
         )
 
     def test_runner_container_name_cove_prefix(self):
@@ -124,6 +126,11 @@ class TestComposeServiceDefinition:
         assert "unix:///var/run/docker.sock" in str(env.get("DOCKER_HOST", "")), (
             f"DOCKER_HOST must point to the mounted socket, got: {env.get('DOCKER_HOST')!r}"
         )
+
+    def test_runner_has_healthcheck(self):
+        data = _load_compose()
+        hc = data["services"]["forgejo-runner"].get("healthcheck")
+        assert hc is not None, "forgejo-runner must have a healthcheck defined"
 
 
 class TestCLI:
@@ -169,8 +176,6 @@ class TestCLI:
         subcommand. `cove runner up` must pass `--profile runner` before `up`."""
         from click.testing import CliRunner
         from cove.runner import runner
-        from unittest.mock import patch
-        from types import SimpleNamespace
 
         captured = []
 
@@ -202,6 +207,61 @@ class TestCLI:
             "cove runner down must use 'stop' command, not 'down'"
         )
 
+    def test_runner_status_targets_service(self):
+        """`cove runner status` must target the forgejo-runner service."""
+        from click.testing import CliRunner
+        from cove.runner import runner
+
+        captured = []
+
+        def fake_subprocess_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="NAME\tSTATUS\tPORTS\n", stderr="")
+
+        with patch("cove.runner.subprocess.run", side_effect=fake_subprocess_run):
+            runner_obj = CliRunner()
+            result = runner_obj.invoke(runner, ["status"])
+
+        assert result.exit_code == 0, f"cove runner status failed: {result.output}"
+        compose_cmds = [c for c in captured if c and c[0] == "docker" and len(c) > 1 and c[1] == "compose"]
+        assert compose_cmds, f"no docker compose call captured: {captured}"
+        assert "forgejo-runner" in compose_cmds[0], (
+            f"status must target forgejo-runner service, got: {compose_cmds[0]}"
+        )
+
+    def test_runner_logs_targets_service(self):
+        """`cove runner logs` must target the forgejo-runner service."""
+        from click.testing import CliRunner
+        from cove.runner import runner
+
+        captured = []
+
+        def fake_subprocess_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("cove.runner.subprocess.run", side_effect=fake_subprocess_run):
+            runner_obj = CliRunner()
+            result = runner_obj.invoke(runner, ["logs"])
+
+        assert result.exit_code == 0, f"cove runner logs failed: {result.output}"
+        compose_cmds = [c for c in captured if c and c[0] == "docker" and len(c) > 1 and c[1] == "compose"]
+        assert compose_cmds, f"no docker compose call captured: {captured}"
+        assert "forgejo-runner" in compose_cmds[0], (
+            f"logs must target forgejo-runner service, got: {compose_cmds[0]}"
+        )
+
+    def test_runner_py_has_no_dead_code(self):
+        """Dead code (_compose_dir, _compose_env_path, _upsert_env) must
+        not exist in runner.py as standalone function definitions."""
+        source = (PROJECT_ROOT / "cli" / "cove" / "runner.py").read_text()
+        lines = source.splitlines()
+        func_defs = [l for l in lines if l.startswith("def ")]
+        func_names = [l.split("(")[0].replace("def ", "") for l in func_defs]
+        assert "_compose_dir" not in func_names, "_compose_dir helper must be removed (dead code)"
+        assert "_compose_env_path" not in func_names, "_compose_env_path helper must be removed (dead code)"
+        assert "_upsert_env" not in func_names, "_upsert_env helper must be removed (dead code)"
+
 
 class TestBringupIntegration:
     """Validate bringup.yml includes runner vars and data directory."""
@@ -215,20 +275,41 @@ class TestBringupIntegration:
         assert "FORGEJO_RUNNER_CONTAINER_NAME" in content, (
             "bringup.yml .env must include FORGEJO_RUNNER_CONTAINER_NAME"
         )
-        assert "FORGEJO_RUNNER_DATA_ROOT" in content, (
-            "bringup.yml .env must include FORGEJO_RUNNER_DATA_ROOT"
+        assert "FORGEJO_RUNNER_DATA_ROOT" not in content, (
+            "bringup.yml .env must NOT include FORGEJO_RUNNER_DATA_ROOT (uses COVE_DATA_ROOT)"
         )
+
+    def test_bringup_creates_runner_data_dir_restricted(self):
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        runner_dir_tasks = [
+            t for t in tasks
+            if isinstance(t, dict)
+            and "forgejo-runner" in (t.get("name", "") or "").lower()
+            and "restricted" in (t.get("name", "") or "").lower()
+        ]
+        assert runner_dir_tasks, "forgejo-runner data dir must be created with mode 0700"
+        for t in runner_dir_tasks:
+            file_args = t.get("ansible.builtin.file", {})
+            mode = file_args.get("mode") or t.get("mode")
+            assert mode == "0700", (
+                f"forgejo-runner data dir must have mode 0700, got: {mode}"
+            )
 
     def test_bringup_creates_runner_data_dir(self):
         bringup = _load_bringup()
         tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
-        data_dir_tasks = [
-            t for t in tasks
+        dir_loops = [
+            t.get("loop", []) for t in tasks
             if isinstance(t, dict) and "data" in (t.get("name", "") or "").lower()
         ]
-        assert data_dir_tasks, "No data directory task found in bringup.yml"
-        loop = data_dir_tasks[0].get("loop", [])
-        assert any("forgejo-runner" in str(item) for item in loop), (
+        runner_in_loop = any("forgejo-runner" in str(item) for loop in dir_loops for item in loop)
+        runner_separate_task = any(
+            "forgejo-runner" in (t.get("name", "") or "").lower()
+            for t in tasks
+            if isinstance(t, dict) and "restricted" in (t.get("name", "") or "").lower()
+        )
+        assert runner_in_loop or runner_separate_task, (
             "bringup.yml must create the forgejo-runner data directory"
         )
 
@@ -277,6 +358,60 @@ class TestProvisionRunner:
         content = _load_provision()
         assert "http://forgejo:3000/" in content, (
             "provision_forgejo.yml must register the runner with http://forgejo:3000/"
+        )
+
+    def test_provision_register_task_has_no_log(self):
+        content = _load_provision()
+        assert "no_log: true" in content, (
+            "provision_forgejo.yml register task must have no_log: true"
+        )
+
+    def test_provision_register_uses_dynamic_container_name(self):
+        content = _load_provision()
+        assert "forgejo_runner_container_name" in content, (
+            "provision_forgejo.yml register task must use dynamic container name"
+        )
+
+    def test_provision_container_check_anchors_name(self):
+        content = _load_provision()
+        assert "name=^/" in content, (
+            "provision_forgejo.yml container check must anchor the docker ps name filter"
+        )
+
+    def test_provision_register_changed_when_is_true(self):
+        content = _load_provision()
+        assert "changed_when: true" in content, (
+            "provision_forgejo.yml register task must use changed_when: true"
+        )
+
+    def test_provision_register_when_uses_not_skipped(self):
+        content = _load_provision()
+        assert "runner_reg_token is not skipped" in content, (
+            "provision_forgejo.yml register task when must use 'is not skipped'"
+        )
+
+    def test_provision_token_fetch_has_retries(self):
+        content = _load_provision()
+        assert "retries: 3" in content, (
+            "provision_forgejo.yml token fetch must have retries: 3"
+        )
+        assert "delay: 5" in content, (
+            "provision_forgejo.yml token fetch must have delay: 5"
+        )
+
+    def test_provision_stat_uses_cove_data_root(self):
+        content = _load_provision()
+        assert "{{ cove_data_root }}/forgejo-runner/.runner" in content, (
+            "provision_forgejo.yml stat check must use {{ cove_data_root }} directly"
+        )
+        assert "forgejo_runner_data_root" not in content, (
+            "provision_forgejo.yml must not reference forgejo_runner_data_root"
+        )
+
+    def test_provision_summary_gated_on_registration(self):
+        content = _load_provision()
+        assert "runner_registration_check.stat.exists" in content, (
+            "provision_forgejo.yml summary must be gated on runner_registration_check"
         )
 
 
@@ -346,11 +481,3 @@ class TestAuthPosture:
             assert "forgejo-runner" not in content, (
                 "forgejo-runner must NOT have a nginx route (outbound-only service)"
             )
-
-    def test_runner_no_exposed_ports(self):
-        """The runner must not expose any ports to the host."""
-        data = _load_compose()
-        ports = data["services"]["forgejo-runner"].get("ports")
-        assert ports is None or ports == [], (
-            f"forgejo-runner must have no exposed ports, got: {ports}"
-        )

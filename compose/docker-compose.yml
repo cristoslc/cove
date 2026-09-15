@@ -211,11 +211,16 @@ services:
     container_name: ${FORGEJO_RUNNER_CONTAINER_NAME:-cove-forgejo-runner}
     restart: unless-stopped
     volumes:
-      - ${FORGEJO_RUNNER_DATA_ROOT:-/data}/forgejo-runner:/data
+      - ${COVE_DATA_ROOT:-/data}/forgejo-runner:/data
       - /var/run/docker.sock:/var/run/docker.sock
       - ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites
     environment:
       DOCKER_HOST: unix:///var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "forgejo-runner --version || exit 1"]
+      interval: 30s
+      start_period: 10s
+      retries: 3
     deploy:
       resources:
         limits:
