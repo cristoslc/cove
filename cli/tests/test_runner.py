@@ -117,6 +117,15 @@ class TestComposeServiceDefinition:
             f"forgejo-runner must have restart: unless-stopped, got: {restart}"
         )
 
+    def test_runner_runs_daemon_command(self):
+        """The forgejo-runner image prints help and exits without an explicit
+        `daemon` command; the service must set command: ["daemon"]."""
+        data = _load_compose()
+        command = data["services"]["forgejo-runner"].get("command")
+        assert command == ["/bin/forgejo-runner", "daemon"], (
+            f"forgejo-runner must run the daemon subcommand, got: {command}"
+        )
+
     def test_runner_docker_host_env(self):
         data = _load_compose()
         env = data["services"]["forgejo-runner"].get("environment", {})
