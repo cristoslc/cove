@@ -355,11 +355,11 @@
 
     - name: Check if forgejo-runner is already registered
       ansible.builtin.stat:
-        path: "{{ forgejo_runner_data_root | default(cove_data_root) }}/forgejo-runner/.runner"
+        path: "{{ cove_data_root }}/forgejo-runner/.runner"
       register: runner_registration_check
 
     - name: Check if forgejo-runner container is running
-      ansible.builtin.command: docker ps -q -f name=cove-forgejo-runner
+      ansible.builtin.command: docker ps -q -f name=^/{{ forgejo_runner_container_name | default('cove-forgejo-runner') }}$
       register: runner_container_check
       changed_when: false
       failed_when: false
@@ -374,19 +374,22 @@
           Host: git.cove
           Authorization: "token {{ api_token }}"
         validate_certs: false
+        status_code: 200
       register: runner_reg_token
       no_log: true
+      retries: 3
+      delay: 5
 
     - name: Register forgejo-runner non-interactively
       when:
         - not runner_registration_check.stat.exists
         - runner_container_check.stdout | length > 0
-        - runner_reg_token is defined
+        - runner_reg_token is not skipped
       ansible.builtin.command:
         argv:
           - docker
           - exec
-          - cove-forgejo-runner
+          - "{{ forgejo_runner_container_name | default('cove-forgejo-runner') }}"
           - forgejo-runner
           - register
           - --no-interactive
@@ -397,7 +400,8 @@
           - --labels
           - "ubuntu-latest:docker://data.forgejo.org/oci/ubuntu:latest,docker:docker://data.forgejo.org/oci/node:lts"
       register: runner_register_result
-      changed_when: runner_register_result.rc == 0
+      changed_when: true
+      no_log: true
 
     - name: Print ready summary
       ansible.builtin.debug:
@@ -410,7 +414,7 @@
             git remote add cove {{ forgejo_root_url }}{{ repo_owner }}/{{ repo_name }}
             git push -u cove main
 
-          {% if runner_container_check.stdout | length > 0 %}
+          {% if runner_registration_check.stat.exists or (runner_register_result.rc | default(1)) == 0 %}
           Forgejo Actions runner is registered and online.
           {% else %}
           Forgejo Actions runner profile is not active. To enable:
