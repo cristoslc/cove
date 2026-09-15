@@ -114,7 +114,7 @@ The Docker daemon is the host/Colima daemon and is not part of the Cove Stack.
 | Data directory | Hardened | Mode 0700 (not world-readable) |
 | **Host Docker socket** | **NOT hardened** | Docker socket mount is root-equivalent; sibling jobs can escape |
 | **Job-label images** | **NOT hardened** | Not pinned by digest; only trusted repos should target this runner |
-| **Healthcheck** | **NOT hardened** | No healthcheck yet (process check only) |
+| **Healthcheck** | Partial | `forgejo-runner --version` process check; does not verify runner daemon liveness |
 | **Pages mount** | **NOT hardened** | Mount exists but inert until `valid_volumes` is configured in runner config |
 
 Only trusted repositories should target this runner.
