@@ -210,6 +210,9 @@ services:
     image: ${FORGEJO_RUNNER_IMAGE:-data.forgejo.org/forgejo/runner:11}
     container_name: ${FORGEJO_RUNNER_CONTAINER_NAME:-cove-forgejo-runner}
     restart: unless-stopped
+    # The image has no entrypoint (Cmd = the binary) and prints help with no
+    # args; invoke the daemon subcommand explicitly.
+    command: ["/bin/forgejo-runner", "daemon"]
     volumes:
       - ${COVE_DATA_ROOT:-/data}/forgejo-runner:/data
       - /var/run/docker.sock:/var/run/docker.sock
