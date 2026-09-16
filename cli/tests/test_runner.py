@@ -122,8 +122,33 @@ class TestComposeServiceDefinition:
         `daemon` command; the service must set command: ["daemon"]."""
         data = _load_compose()
         command = data["services"]["forgejo-runner"].get("command")
-        assert command == ["/bin/forgejo-runner", "daemon"], (
-            f"forgejo-runner must run the daemon subcommand, got: {command}"
+        assert command == ["/bin/forgejo-runner", "-c", "/config.yml", "daemon"], (
+            f"forgejo-runner must run the daemon subcommand with the config file, got: {command}"
+        )
+
+    def test_runner_config_mounted(self):
+        data = _load_compose()
+        volumes = [str(v) for v in data["services"]["forgejo-runner"].get("volumes", [])]
+        assert any("config.yml" in v and "/config.yml" in v for v in volumes), (
+            f"runner config must be mounted read-only, got: {volumes}"
+        )
+
+    def test_runner_config_joins_compose_network(self):
+        """Job containers are siblings on the host daemon; without
+        container.network they land on a bridge where forgejo:3000 is
+        unreachable (verified live: smoke workflow failed to report)."""
+        config = (COMPOSE_DIR / "forgejo-runner" / "config.yml").read_text()
+        assert 'network: "cove_default"' in config, (
+            "runner config must set container.network to the compose network"
+        )
+
+    def test_runner_group_add_docker_gid(self):
+        """The image runs as 1000:1000 but the Colima docker socket is gid 991
+        (mode 660); without group_add the daemon cannot spawn job containers."""
+        data = _load_compose()
+        group_add = data["services"]["forgejo-runner"].get("group_add", [])
+        assert any("FORGEJO_RUNNER_DOCKER_GID" in str(g) or str(g) == "991" for g in group_add), (
+            f"forgejo-runner must add the docker socket gid, got: {group_add}"
         )
 
     def test_runner_docker_host_env(self):
@@ -351,10 +376,34 @@ class TestProvisionRunner:
             "provision_forgejo.yml must fetch the registration token from the Forgejo API"
         )
 
+    def test_provision_uses_admin_registration_endpoint(self):
+        """The user-level endpoint 404s on Forgejo; only the admin-scoped
+        endpoint returns the instance-wide registration token (verified live)."""
+        content = _load_provision()
+        assert "api/v1/admin/actions/runners/registration-token" in content, (
+            "provision_forgejo.yml must use the admin-scoped registration endpoint"
+        )
+        assert "api/v1/actions/runners/registration-token" not in content.replace(
+            "api/v1/admin/actions/runners/registration-token", ""
+        ), (
+            "provision_forgejo.yml must not use the user-level (404) endpoint"
+        )
+
     def test_provision_registers_no_interactive(self):
         content = _load_provision()
         assert "--no-interactive" in content, (
             "provision_forgejo.yml must register the runner non-interactively"
+        )
+
+    def test_provision_labels_use_existing_images(self):
+        """data.forgejo.org/oci/* does not exist (verified live: job pull
+        fails with 'not found'); jobs must use gitea/runner-images."""
+        content = _load_provision()
+        assert "data.forgejo.org/oci" not in content, (
+            "provision_forgejo.yml must not reference the nonexistent data.forgejo.org/oci images"
+        )
+        assert "gitea/runner-images:ubuntu-latest" in content, (
+            "provision_forgejo.yml must map ubuntu-latest to gitea/runner-images:ubuntu-latest"
         )
 
     def test_provision_skip_if_registered_idempotent(self):
