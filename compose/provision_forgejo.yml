@@ -353,6 +353,67 @@
         create: true
         mode: "0600"
 
+    - name: Check if forgejo-runner is already registered
+      ansible.builtin.stat:
+        path: "{{ cove_data_root }}/forgejo-runner/.runner"
+      register: runner_registration_check
+
+    - name: Check if forgejo-runner container is running
+      ansible.builtin.command: docker ps -q -f name=^/{{ forgejo_runner_container_name | default('cove-forgejo-runner') }}$
+      register: runner_container_check
+      changed_when: false
+      failed_when: false
+
+    - name: Fetch Forgejo Actions registration token
+      when:
+        - not runner_registration_check.stat.exists
+        - runner_container_check.stdout | length > 0
+      ansible.builtin.uri:
+        url: "{{ forgejo_api_url }}api/v1/admin/actions/runners/registration-token"
+        headers:
+          Host: git.cove
+          Authorization: "token {{ api_token }}"
+        validate_certs: false
+        status_code: 200
+      register: runner_reg_token
+      no_log: true
+      retries: 3
+      delay: 5
+      until: runner_reg_token.status == 200
+
+    - name: Register forgejo-runner (one-shot container)
+      when:
+        - not runner_registration_check.stat.exists
+        - runner_container_check.stdout | length > 0
+        - runner_reg_token is not skipped
+      # A fresh unregistered daemon crash-loops in <1s cycles, so
+      # `docker exec` cannot reliably land in a running window, and a
+      # `container:<name>` netns attach races the same loop. Register via a
+      # one-shot container on the compose network; the .runner file lands in
+      # the shared data volume and the daemon picks it up on its next restart.
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - --network
+          - cove_default
+          - -v
+          - "{{ cove_data_root }}/forgejo-runner:/data"
+          - "{{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}"
+          - /bin/forgejo-runner
+          - register
+          - --no-interactive
+          - --instance
+          - "http://forgejo:3000/"
+          - --token
+          - "{{ runner_reg_token.json.token }}"
+          - --labels
+          - "ubuntu-latest:docker://gitea/runner-images:ubuntu-latest,docker:docker://gitea/runner-images:ubuntu-latest"
+      register: runner_register_result
+      changed_when: true
+      no_log: true
+
     - name: Print ready summary
       ansible.builtin.debug:
         msg: |
@@ -363,3 +424,10 @@
           To add as remote and push:
             git remote add cove {{ forgejo_root_url }}{{ repo_owner }}/{{ repo_name }}
             git push -u cove main
+
+          {% if runner_registration_check.stat.exists or (runner_register_result.rc | default(1)) == 0 %}
+          Forgejo Actions runner is registered and online.
+          {% else %}
+          Forgejo Actions runner profile is not active. To enable:
+            cove runner up
+          {% endif %}

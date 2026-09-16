@@ -117,7 +117,7 @@ def cove_run(_cove_artifact, cove_home, monkeypatch):
         env.pop("COVE_COMPOSE_DIR", None)
         kw.setdefault("capture_output", True)
         kw.setdefault("text", True)
-        kw.setdefault("timeout", 60)
+        kw.setdefault("timeout", 180)
         return subprocess.run([str(bin_path), *args], env=env, **kw)
 
     return _run

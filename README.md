@@ -10,6 +10,7 @@ A local development platform running on Docker Compose — a sheltered harbor wh
 | **HashiCorp Vault** | Secrets store with Shamir auto-unseal | `https://vault.cove.local/` |
 | **nginx** | TLS termination and reverse proxy for all `*.cove.local` subdomains | `127.0.0.1:8443` (HTTPS), `:8080` (HTTP) |
 | **dnsmasq** | Wildcard DNS resolver for offline `.cove.local` resolution | `127.0.0.1:5353` |
+| **Forgejo Actions Runner** | CI runner for Forgejo Actions workflows (optional, outbound-only) | No ingress |
 | **Speedtest Tracker** | Monitors the operator's WAN link (uptime/latency/bandwidth) | `https://speedtest.cove.local/` (optional) |
 | **Observability** | Prometheus + Grafana metrics backend with OTLP ingestion for apps | `https://otel.cove.local/` |
 
@@ -76,5 +77,6 @@ Cove uses Forgejo as its Git forge. The `fj` CLI manages repositories, pull requ
 
 - [Architecture](docs/architecture.md) — system boundaries, bounded contexts, service topology, DNS strategy, data persistence
 - [Abstractions](docs/abstractions.md) — domain concepts: project, pipeline, secret, image, site, deployment, identity, workspace
+- [Forgejo Runner](docs/services/forgejo-runner.md) — optional CI runner for Forgejo Actions workflows
 - [Pages](docs/services/pages.md) — static site hosting via Forgejo Actions and nginx
 - [Data Inventory](docs/architecture/data-inventory.md) — every piece of state Cove holds, classified by source-of-truth and durability

@@ -230,3 +230,38 @@ workflow_paths:
       sad: executable
       edge: skip
       corner: skip
+  - path: "cove runner up"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "cove runner down"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove runner status"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "Runner registration on cove up"
+    blast_radius: high
+    coverage:
+      happy: manual
+      sad: manual
+      edge: manual
+      corner: skip
+  - path: "forgejo-runner compose definition (profile, pinned image, socket mount, memory limit)"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
