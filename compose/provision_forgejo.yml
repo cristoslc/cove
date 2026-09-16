@@ -369,7 +369,7 @@
         - not runner_registration_check.stat.exists
         - runner_container_check.stdout | length > 0
       ansible.builtin.uri:
-        url: "{{ forgejo_api_url }}api/v1/actions/runners/registration-token"
+        url: "{{ forgejo_api_url }}api/v1/admin/actions/runners/registration-token"
         headers:
           Host: git.cove
           Authorization: "token {{ api_token }}"
@@ -381,17 +381,27 @@
       delay: 5
       until: runner_reg_token.status == 200
 
-    - name: Register forgejo-runner non-interactively
+    - name: Register forgejo-runner (one-shot container)
       when:
         - not runner_registration_check.stat.exists
         - runner_container_check.stdout | length > 0
         - runner_reg_token is not skipped
+      # A fresh unregistered daemon crash-loops in <1s cycles, so
+      # `docker exec` cannot reliably land in a running window, and a
+      # `container:<name>` netns attach races the same loop. Register via a
+      # one-shot container on the compose network; the .runner file lands in
+      # the shared data volume and the daemon picks it up on its next restart.
       ansible.builtin.command:
         argv:
           - docker
-          - exec
-          - "{{ forgejo_runner_container_name | default('cove-forgejo-runner') }}"
-          - forgejo-runner
+          - run
+          - --rm
+          - --network
+          - cove_default
+          - -v
+          - "{{ cove_data_root }}/forgejo-runner:/data"
+          - "{{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}"
+          - /bin/forgejo-runner
           - register
           - --no-interactive
           - --instance
@@ -399,7 +409,7 @@
           - --token
           - "{{ runner_reg_token.json.token }}"
           - --labels
-          - "ubuntu-latest:docker://data.forgejo.org/oci/ubuntu:latest,docker:docker://data.forgejo.org/oci/node:lts"
+          - "ubuntu-latest:docker://gitea/runner-images:ubuntu-latest,docker:docker://gitea/runner-images:ubuntu-latest"
       register: runner_register_result
       changed_when: true
       no_log: true

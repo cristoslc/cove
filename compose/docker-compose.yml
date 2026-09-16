@@ -211,12 +211,18 @@ services:
     container_name: ${FORGEJO_RUNNER_CONTAINER_NAME:-cove-forgejo-runner}
     restart: unless-stopped
     # The image has no entrypoint (Cmd = the binary) and prints help with no
-    # args; invoke the daemon subcommand explicitly.
-    command: ["/bin/forgejo-runner", "daemon"]
+    # args; invoke the daemon subcommand explicitly. The config joins job
+    # containers to the compose network so they can resolve forgejo.
+    command: ["/bin/forgejo-runner", "-c", "/config.yml", "daemon"]
+    # The image runs as 1000:1000; the Colima docker socket is gid 991 with
+    # mode 660. Add that gid so the daemon can spawn job containers.
+    group_add:
+      - "${FORGEJO_RUNNER_DOCKER_GID:-991}"
     volumes:
       - ${COVE_DATA_ROOT:-/data}/forgejo-runner:/data
       - /var/run/docker.sock:/var/run/docker.sock
       - ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites
+      - ./forgejo-runner/config.yml:/config.yml:ro
     environment:
       DOCKER_HOST: unix:///var/run/docker.sock
     healthcheck:
