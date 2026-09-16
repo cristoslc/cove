@@ -29,8 +29,12 @@ The runner registers with these labels:
 
 | Label | Image |
 |---|---|
-| `ubuntu-latest` | `data.forgejo.org/oci/ubuntu:latest` |
-| `docker` | `data.forgejo.org/oci/node:lts` |
+| `ubuntu-latest` | `gitea/runner-images:ubuntu-latest` |
+| `docker` | `gitea/runner-images:ubuntu-latest` |
+
+Both labels point at the same runner image; the `docker` label exists so
+workflows that say `runs-on: docker` work. `data.forgejo.org/oci/*` does not
+resolve (jobs fail the image pull), so avoid it in workflow images.
 
 Jobs can target these labels in their `runs-on` field:
 
@@ -48,7 +52,8 @@ with the runner profile active, the playbook:
 1. Checks whether the runner is already registered (`.runner` file exists in
    the runner data directory)
 2. If not registered, fetches an instance-wide registration token via the
-   Forgejo admin API (`GET /api/v1/actions/runners/registration-token`)
+   Forgejo admin API (`GET /api/v1/admin/actions/runners/registration-token`;
+   the user-level `api/v1/actions/...` endpoint 404s on this Forgejo version)
 3. Runs `forgejo-runner register --no-interactive` inside the runner container
 4. Skips registration when the runner container is not running (profile
    inactive)
