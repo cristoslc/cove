@@ -174,7 +174,7 @@ A wildcard DNS resolver plus static file server that replicates GitHub Pages:
 
 ### CI Runners
 
-Forgejo's built-in runner dispatches CI jobs to Docker containers on the same network. No separate runner container is deployed yet.
+An optional Forgejo Actions Runner container (`cove runner up`) dispatches CI jobs to Docker sibling containers on the host. It is outbound-only (no nginx route), polls Forgejo on `http://forgejo:3000/`, and mounts the host Docker socket. Registration is IaC via `provision_forgejo.yml`. Only trusted repos should target this runner (see [docs/services/forgejo-runner.md](../services/forgejo-runner.md)).
 
 ### Container Registry
 
@@ -202,6 +202,8 @@ All persistent state lives under `~/Documents/cove-data/`:
 │   ├── gitea/           # Forgejo database and config
 │   ├── git/             # Git repositories
 │   └── ssh/             # SSH host keys
+├── forgejo-runner/
+│   └── .runner          # Runner registration state
 ├── vault/
 │   ├── data/            # Vault Raft storage
 │   └── logs/            # Vault audit logs
@@ -267,6 +269,7 @@ provision_pages.yml
 | nginx | `127.0.0.1:8443`, `:8080` | Internal Docker network | TLS termination, host-header routing |
 | Forgejo HTTP | Via nginx only | `forgejo:3000` | No published host port |
 | Forgejo SSH | `0.0.0.0:2222` | `forgejo:22` | Direct, not proxied |
+| Forgejo Runner | None (outbound-only) | `forgejo:3000` | Polls Forgejo, no host port |
 | Vault | Via nginx only | `vault:8200` | No host port mapping |
 | dnsmasq | None | `127.0.0.1:5353` | Only resolves to `127.0.0.1` |
 | Pages static files | Via nginx only | Internal volume | Read-only from nginx container |

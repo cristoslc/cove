@@ -1,0 +1,3 @@
+**Responding to:** PR #49 code-review findings (HIGH H1-H5, MEDIUM M1-M12, LOW L1-L3)
+
+Intent: fix all review findings on the forgejo-actions-runner branch before merge. Changes span provision_forgejo.yml (no_log, data-root, container name, token retries, no-op guard, summary honesty, changed_when), docker-compose.yml (data volume, healthcheck), bringup.yml (env var, data dir mode), runner.py (dead code removal, status/logs service targeting), test_runner.py (data-root test, duplicate test, import hoist, service-name assertions), docs (admin URL, Mermaid diagram, pages mount, hardened table, quick start, index entries), and trailing newlines. Will commit in batches grouped by concern, push, and post checkpoint chronicle.

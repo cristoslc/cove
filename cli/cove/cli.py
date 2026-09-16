@@ -15,6 +15,7 @@ from cove.certs import ca_path, ensure_ca, root_ca_pem, sign_cert
 from cove.creds import creds
 from cove.litellm import litellm
 from cove.speedtest import speedtest
+from cove.runner import runner
 from cove.project import (
     _inject, _strip, _container_env, _render_context, _render_guidance,
     _render_agents_block, _write_detail_cove, _write_fj_detail, _write_gh_detail,
@@ -247,6 +248,7 @@ def sign(sans, key_file, cert_file):
 app.add_command(creds)
 app.add_command(litellm)
 app.add_command(speedtest)
+app.add_command(runner)
 
 
 @app.command()

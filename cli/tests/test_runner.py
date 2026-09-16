@@ -1,0 +1,541 @@
+"""Tests for Forgejo Actions Runner: compose config, CLI module,
+bringup greps, provision greps, and resource sync integrity.
+
+Per the plan (`docs/plans/forgejo-actions-runner.md`), the runner is an optional
+profiled Cove service (`profile: runner`) that polls Forgejo for Actions
+workflows. It mirrors the litellm/speedtest pattern for optional services.
+
+Run all:   pytest cli/tests/test_runner.py
+Run unit:  pytest cli/tests/test_runner.py -m "not e2e and not staging"
+"""
+
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+import yaml
+
+
+def _project_root() -> Path:
+    start = Path(__file__).resolve().parent
+    for _ in range(6):
+        if (start / "compose" / "inventory.yml").exists():
+            return start
+        start = start.parent
+    raise RuntimeError(f"Cannot find project root from {__file__}")
+
+
+PROJECT_ROOT = _project_root()
+COMPOSE_DIR = PROJECT_ROOT / "compose"
+RESOURCES_COMPOSE_DIR = (
+    PROJECT_ROOT / "cli" / "cove" / "resources" / "compose"
+)
+
+
+def _load_compose() -> dict:
+    with open(COMPOSE_DIR / "docker-compose.yml") as f:
+        return yaml.safe_load(f)
+
+
+def _load_bringup() -> dict:
+    with open(COMPOSE_DIR / "bringup.yml") as f:
+        return yaml.safe_load(f)
+
+
+def _load_provision() -> str:
+    with open(COMPOSE_DIR / "provision_forgejo.yml") as f:
+        return f.read()
+
+
+class TestComposeServiceDefinition:
+    """Validate the forgejo-runner service definition in docker-compose.yml."""
+
+    def test_runner_service_exists(self):
+        data = _load_compose()
+        assert "forgejo-runner" in data["services"], (
+            "forgejo-runner service missing from compose"
+        )
+
+    def test_runner_has_profile(self):
+        data = _load_compose()
+        profiles = data["services"]["forgejo-runner"].get("profiles", [])
+        assert "runner" in profiles, (
+            "forgejo-runner service must have profiles: [\"runner\"]"
+        )
+
+    def test_runner_has_no_ports(self):
+        data = _load_compose()
+        ports = data["services"]["forgejo-runner"].get("ports")
+        assert ports is None or ports == [], (
+            f"forgejo-runner must have no exposed ports, got: {ports}"
+        )
+
+    def test_runner_has_memory_limit(self):
+        data = _load_compose()
+        deploy = data["services"]["forgejo-runner"].get("deploy", {})
+        limits = deploy.get("resources", {}).get("limits", {})
+        assert "memory" in limits, "forgejo-runner must have a memory limit"
+
+    def test_runner_image_pinned(self):
+        data = _load_compose()
+        image = str(data["services"]["forgejo-runner"].get("image", ""))
+        assert ":latest" not in image, (
+            f"forgejo-runner image must be version-pinned, got: {image}"
+        )
+        assert ":" in image, (
+            f"forgejo-runner image must have a version tag, got: {image}"
+        )
+
+    def test_runner_docker_socket_mount(self):
+        data = _load_compose()
+        volumes = data["services"]["forgejo-runner"].get("volumes", [])
+        volume_strs = [str(v) for v in volumes]
+        assert any("/var/run/docker.sock" in v for v in volume_strs), (
+            "forgejo-runner must mount the Docker socket for job containers"
+        )
+
+    def test_runner_data_volume_uses_cove_data_root(self):
+        data = _load_compose()
+        volumes = data["services"]["forgejo-runner"].get("volumes", [])
+        volume_strs = [str(v) for v in volumes]
+        assert any("${COVE_DATA_ROOT" in v and "forgejo-runner" in v for v in volume_strs), (
+            "forgejo-runner must mount data volume using ${COVE_DATA_ROOT} (not FORGEJO_RUNNER_DATA_ROOT)"
+        )
+
+    def test_runner_container_name_cove_prefix(self):
+        data = _load_compose()
+        name = str(data["services"]["forgejo-runner"].get("container_name", ""))
+        assert "cove-" in name, (
+            f"container_name must default to cove- prefix, got: {name}"
+        )
+
+    def test_runner_restart_policy(self):
+        data = _load_compose()
+        restart = data["services"]["forgejo-runner"].get("restart", "")
+        assert restart == "unless-stopped", (
+            f"forgejo-runner must have restart: unless-stopped, got: {restart}"
+        )
+
+    def test_runner_runs_daemon_command(self):
+        """The forgejo-runner image prints help and exits without an explicit
+        `daemon` command; the service must set command: ["daemon"]."""
+        data = _load_compose()
+        command = data["services"]["forgejo-runner"].get("command")
+        assert command == ["/bin/forgejo-runner", "-c", "/config.yml", "daemon"], (
+            f"forgejo-runner must run the daemon subcommand with the config file, got: {command}"
+        )
+
+    def test_runner_config_mounted(self):
+        data = _load_compose()
+        volumes = [str(v) for v in data["services"]["forgejo-runner"].get("volumes", [])]
+        assert any("config.yml" in v and "/config.yml" in v for v in volumes), (
+            f"runner config must be mounted read-only, got: {volumes}"
+        )
+
+    def test_runner_config_joins_compose_network(self):
+        """Job containers are siblings on the host daemon; without
+        container.network they land on a bridge where forgejo:3000 is
+        unreachable (verified live: smoke workflow failed to report)."""
+        config = (COMPOSE_DIR / "forgejo-runner" / "config.yml").read_text()
+        assert 'network: "cove_default"' in config, (
+            "runner config must set container.network to the compose network"
+        )
+
+    def test_runner_group_add_docker_gid(self):
+        """The image runs as 1000:1000 but the Colima docker socket is gid 991
+        (mode 660); without group_add the daemon cannot spawn job containers."""
+        data = _load_compose()
+        group_add = data["services"]["forgejo-runner"].get("group_add", [])
+        assert any("FORGEJO_RUNNER_DOCKER_GID" in str(g) or str(g) == "991" for g in group_add), (
+            f"forgejo-runner must add the docker socket gid, got: {group_add}"
+        )
+
+    def test_runner_docker_host_env(self):
+        data = _load_compose()
+        env = data["services"]["forgejo-runner"].get("environment", {})
+        assert "DOCKER_HOST" in env, (
+            "forgejo-runner must set DOCKER_HOST environment variable"
+        )
+        assert "unix:///var/run/docker.sock" in str(env.get("DOCKER_HOST", "")), (
+            f"DOCKER_HOST must point to the mounted socket, got: {env.get('DOCKER_HOST')!r}"
+        )
+
+    def test_runner_has_healthcheck(self):
+        data = _load_compose()
+        hc = data["services"]["forgejo-runner"].get("healthcheck")
+        assert hc is not None, "forgejo-runner must have a healthcheck defined"
+
+
+class TestCLI:
+    """Validate the cove runner CLI module."""
+
+    def test_runner_group_imports(self):
+        from cove.runner import runner
+        assert runner is not None
+
+    def test_runner_group_registered(self):
+        from cove.cli import app
+        commands = list(app.commands.keys())
+        assert "runner" in commands, "runner group must be registered in cli.py"
+
+    def test_runner_has_up_command(self):
+        from cove.runner import runner
+        commands = list(runner.commands.keys())
+        assert "up" in commands
+
+    def test_runner_has_down_command(self):
+        from cove.runner import runner
+        commands = list(runner.commands.keys())
+        assert "down" in commands
+
+    def test_runner_has_status_command(self):
+        from cove.runner import runner
+        commands = list(runner.commands.keys())
+        assert "status" in commands
+
+    def test_runner_has_logs_command(self):
+        from cove.runner import runner
+        commands = list(runner.commands.keys())
+        assert "logs" in commands
+
+    def test_runner_up_uses_profile_flag(self):
+        source = (PROJECT_ROOT / "cli" / "cove" / "runner.py").read_text()
+        assert "--profile" in source and "runner" in source, (
+            "cove runner up must use --profile runner"
+        )
+
+    def test_runner_up_profile_before_subcommand(self):
+        """docker compose requires --profile as a GLOBAL flag BEFORE the
+        subcommand. `cove runner up` must pass `--profile runner` before `up`."""
+        from click.testing import CliRunner
+        from cove.runner import runner
+
+        captured = []
+
+        def fake_subprocess_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("cove.runner.subprocess.run", side_effect=fake_subprocess_run):
+            runner_obj = CliRunner()
+            result = runner_obj.invoke(runner, ["up"])
+
+        assert result.exit_code == 0, f"cove runner up failed: {result.output}"
+        assert captured, "no subprocess call captured"
+        compose_cmds = [c for c in captured if c and c[0] == "docker" and len(c) > 1 and c[1] == "compose"]
+        assert compose_cmds, f"no docker compose call captured: {captured}"
+        cmd = compose_cmds[0]
+        up_idx = cmd.index("up")
+        assert "--profile" in cmd, f"--profile missing from compose cmd: {cmd}"
+        prof_idx = cmd.index("--profile")
+        assert prof_idx < up_idx, (
+            f"--profile must precede 'up' (global flag), got cmd: {cmd}"
+        )
+
+    def test_runner_down_uses_stop(self):
+        """cove runner down must use 'stop' not 'down' to avoid stopping
+        core Cove services."""
+        source = (PROJECT_ROOT / "cli" / "cove" / "runner.py").read_text()
+        assert '"stop"' in source or "'stop'" in source, (
+            "cove runner down must use 'stop' command, not 'down'"
+        )
+
+    def test_runner_status_targets_service(self):
+        """`cove runner status` must target the forgejo-runner service."""
+        from click.testing import CliRunner
+        from cove.runner import runner
+
+        captured = []
+
+        def fake_subprocess_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="NAME\tSTATUS\tPORTS\n", stderr="")
+
+        with patch("cove.runner.subprocess.run", side_effect=fake_subprocess_run):
+            runner_obj = CliRunner()
+            result = runner_obj.invoke(runner, ["status"])
+
+        assert result.exit_code == 0, f"cove runner status failed: {result.output}"
+        compose_cmds = [c for c in captured if c and c[0] == "docker" and len(c) > 1 and c[1] == "compose"]
+        assert compose_cmds, f"no docker compose call captured: {captured}"
+        assert "forgejo-runner" in compose_cmds[0], (
+            f"status must target forgejo-runner service, got: {compose_cmds[0]}"
+        )
+
+    def test_runner_logs_targets_service(self):
+        """`cove runner logs` must target the forgejo-runner service."""
+        from click.testing import CliRunner
+        from cove.runner import runner
+
+        captured = []
+
+        def fake_subprocess_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("cove.runner.subprocess.run", side_effect=fake_subprocess_run):
+            runner_obj = CliRunner()
+            result = runner_obj.invoke(runner, ["logs"])
+
+        assert result.exit_code == 0, f"cove runner logs failed: {result.output}"
+        compose_cmds = [c for c in captured if c and c[0] == "docker" and len(c) > 1 and c[1] == "compose"]
+        assert compose_cmds, f"no docker compose call captured: {captured}"
+        assert "forgejo-runner" in compose_cmds[0], (
+            f"logs must target forgejo-runner service, got: {compose_cmds[0]}"
+        )
+
+    def test_runner_py_has_no_dead_code(self):
+        """Dead code (_compose_dir, _compose_env_path, _upsert_env) must
+        not exist in runner.py as standalone function definitions."""
+        source = (PROJECT_ROOT / "cli" / "cove" / "runner.py").read_text()
+        lines = source.splitlines()
+        func_defs = [l for l in lines if l.startswith("def ")]
+        func_names = [l.split("(")[0].replace("def ", "") for l in func_defs]
+        assert "_compose_dir" not in func_names, "_compose_dir helper must be removed (dead code)"
+        assert "_compose_env_path" not in func_names, "_compose_env_path helper must be removed (dead code)"
+        assert "_upsert_env" not in func_names, "_upsert_env helper must be removed (dead code)"
+
+
+class TestBringupIntegration:
+    """Validate bringup.yml includes runner vars and data directory."""
+
+    def test_bringup_env_includes_runner_vars(self):
+        with open(COMPOSE_DIR / "bringup.yml") as f:
+            content = f.read()
+        assert "FORGEJO_RUNNER_IMAGE" in content, (
+            "bringup.yml .env must include FORGEJO_RUNNER_IMAGE"
+        )
+        assert "FORGEJO_RUNNER_CONTAINER_NAME" in content, (
+            "bringup.yml .env must include FORGEJO_RUNNER_CONTAINER_NAME"
+        )
+        assert "FORGEJO_RUNNER_DATA_ROOT" not in content, (
+            "bringup.yml .env must NOT include FORGEJO_RUNNER_DATA_ROOT (uses COVE_DATA_ROOT)"
+        )
+
+    def test_bringup_creates_runner_data_dir_restricted(self):
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        runner_dir_tasks = [
+            t for t in tasks
+            if isinstance(t, dict)
+            and "forgejo-runner" in (t.get("name", "") or "").lower()
+            and "restricted" in (t.get("name", "") or "").lower()
+        ]
+        assert runner_dir_tasks, "forgejo-runner data dir must be created with mode 0700"
+        for t in runner_dir_tasks:
+            file_args = t.get("ansible.builtin.file", {})
+            mode = file_args.get("mode") or t.get("mode")
+            assert mode == "0700", (
+                f"forgejo-runner data dir must have mode 0700, got: {mode}"
+            )
+
+    def test_bringup_creates_runner_data_dir(self):
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        dir_loops = [
+            t.get("loop", []) for t in tasks
+            if isinstance(t, dict) and "data" in (t.get("name", "") or "").lower()
+        ]
+        runner_in_loop = any("forgejo-runner" in str(item) for loop in dir_loops for item in loop)
+        runner_separate_task = any(
+            "forgejo-runner" in (t.get("name", "") or "").lower()
+            for t in tasks
+            if isinstance(t, dict) and "restricted" in (t.get("name", "") or "").lower()
+        )
+        assert runner_in_loop or runner_separate_task, (
+            "bringup.yml must create the forgejo-runner data directory"
+        )
+
+    def test_bringup_env_render_is_first_boot_only(self):
+        """The compose .env render must be conditional (`when: not exists`) so
+        a subsequent `cove up` does NOT clobber the FORGEJO_RUNNER vars."""
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        env_tasks = [
+            t for t in tasks
+            if isinstance(t, dict)
+            and "env" in (t.get("name", "") or "").lower()
+            and "FORGEJO_RUNNER" in str(t.get("ansible.builtin.copy", {}).get("content", ""))
+        ]
+        assert env_tasks, "No .env render task with FORGEJO_RUNNER vars found in bringup.yml"
+        for t in env_tasks:
+            when = t.get("when", "")
+            assert "is exists" in str(when) and "not" in str(when), (
+                "compose .env render must be conditional `when: not (...) is exists` "
+                f"(first boot only); got when={when!r}"
+            )
+
+
+class TestProvisionRunner:
+    """Validate provision_forgejo.yml includes runner registration tasks."""
+
+    def test_provision_fetches_registration_token(self):
+        content = _load_provision()
+        assert "registration-token" in content, (
+            "provision_forgejo.yml must fetch the registration token from the Forgejo API"
+        )
+
+    def test_provision_uses_admin_registration_endpoint(self):
+        """The user-level endpoint 404s on Forgejo; only the admin-scoped
+        endpoint returns the instance-wide registration token (verified live)."""
+        content = _load_provision()
+        assert "api/v1/admin/actions/runners/registration-token" in content, (
+            "provision_forgejo.yml must use the admin-scoped registration endpoint"
+        )
+        assert "api/v1/actions/runners/registration-token" not in content.replace(
+            "api/v1/admin/actions/runners/registration-token", ""
+        ), (
+            "provision_forgejo.yml must not use the user-level (404) endpoint"
+        )
+
+    def test_provision_registers_no_interactive(self):
+        content = _load_provision()
+        assert "--no-interactive" in content, (
+            "provision_forgejo.yml must register the runner non-interactively"
+        )
+
+    def test_provision_labels_use_existing_images(self):
+        """data.forgejo.org/oci/* does not exist (verified live: job pull
+        fails with 'not found'); jobs must use gitea/runner-images."""
+        content = _load_provision()
+        assert "data.forgejo.org/oci" not in content, (
+            "provision_forgejo.yml must not reference the nonexistent data.forgejo.org/oci images"
+        )
+        assert "gitea/runner-images:ubuntu-latest" in content, (
+            "provision_forgejo.yml must map ubuntu-latest to gitea/runner-images:ubuntu-latest"
+        )
+
+    def test_provision_skip_if_registered_idempotent(self):
+        content = _load_provision()
+        assert "runner_registration_check" in content, (
+            "provision_forgejo.yml must check for existing registration (idempotent skip)"
+        )
+
+    def test_provision_runner_registers_with_forgejo_url(self):
+        content = _load_provision()
+        assert "http://forgejo:3000/" in content, (
+            "provision_forgejo.yml must register the runner with http://forgejo:3000/"
+        )
+
+    def test_provision_register_task_has_no_log(self):
+        content = _load_provision()
+        assert "no_log: true" in content, (
+            "provision_forgejo.yml register task must have no_log: true"
+        )
+
+    def test_provision_register_uses_dynamic_container_name(self):
+        content = _load_provision()
+        assert "forgejo_runner_container_name" in content, (
+            "provision_forgejo.yml register task must use dynamic container name"
+        )
+
+    def test_provision_container_check_anchors_name(self):
+        content = _load_provision()
+        assert "name=^/" in content, (
+            "provision_forgejo.yml container check must anchor the docker ps name filter"
+        )
+
+    def test_provision_register_changed_when_is_true(self):
+        content = _load_provision()
+        assert "changed_when: true" in content, (
+            "provision_forgejo.yml register task must use changed_when: true"
+        )
+
+    def test_provision_register_when_uses_not_skipped(self):
+        content = _load_provision()
+        assert "runner_reg_token is not skipped" in content, (
+            "provision_forgejo.yml register task when must use 'is not skipped'"
+        )
+
+    def test_provision_token_fetch_has_retries(self):
+        content = _load_provision()
+        assert "retries: 3" in content, (
+            "provision_forgejo.yml token fetch must have retries: 3"
+        )
+        assert "delay: 5" in content, (
+            "provision_forgejo.yml token fetch must have delay: 5"
+        )
+
+    def test_provision_stat_uses_cove_data_root(self):
+        content = _load_provision()
+        assert "{{ cove_data_root }}/forgejo-runner/.runner" in content, (
+            "provision_forgejo.yml stat check must use {{ cove_data_root }} directly"
+        )
+        assert "forgejo_runner_data_root" not in content, (
+            "provision_forgejo.yml must not reference forgejo_runner_data_root"
+        )
+
+    def test_provision_summary_gated_on_registration(self):
+        content = _load_provision()
+        assert "runner_registration_check.stat.exists" in content, (
+            "provision_forgejo.yml summary must be gated on runner_registration_check"
+        )
+
+
+class TestStatusOptionalServices:
+    """Validate status.py includes the runner as an optional service."""
+
+    def test_runner_in_optional_services(self):
+        from cove.status import OPTIONAL_SERVICES
+        names = [label for _, label, _ in OPTIONAL_SERVICES]
+        assert "Runner" in names, "Runner must be in OPTIONAL_SERVICES"
+
+    def test_runner_not_in_required_services(self):
+        from cove.status import SERVICES
+        names = [name for _, name in SERVICES]
+        assert "Runner" not in names, (
+            "Runner must NOT be in required SERVICES — it's optional"
+        )
+
+
+class TestResourcesSync:
+    """Validate the bundled compose resources reflect the compose/ source
+    (integrity/drift guard). The resources dir is a build artifact synced via
+    cli/scripts/sync_compose_resources.py."""
+
+    def test_resources_tree_in_sync(self):
+        if not RESOURCES_COMPOSE_DIR.is_dir():
+            pytest.skip(
+                "cli/cove/resources/compose/ missing — run "
+                "python3 cli/scripts/sync_compose_resources.py"
+            )
+        excluded_names = {".env", "default.conf", "cove.conf"}
+        for rel in [
+            "docker-compose.yml",
+            "bringup.yml",
+            "provision_forgejo.yml",
+        ]:
+            src = COMPOSE_DIR / rel
+            dst = RESOURCES_COMPOSE_DIR / rel
+            if src.name in excluded_names:
+                continue
+            if not dst.exists():
+                pytest.fail(
+                    f"bundled resources missing {rel} — run sync_compose_resources.py"
+                )
+            assert src.read_bytes() == dst.read_bytes(), (
+                f"bundled resources out of sync for {rel} — run sync_compose_resources.py"
+            )
+
+
+class TestAuthPosture:
+    """Adversarial/security assertions for the runner."""
+
+    def test_auth_posture_documented(self):
+        doc = PROJECT_ROOT / "docs" / "services" / "forgejo-runner.md"
+        assert doc.exists(), "docs/services/forgejo-runner.md must exist"
+        content = doc.read_text().lower()
+        assert "auth" in content, "docs/services/forgejo-runner.md must state the auth posture"
+        assert "registration" in content, (
+            "docs/services/forgejo-runner.md must document registration (IaC)"
+        )
+
+    def test_runner_has_no_nginx_route(self):
+        """The runner must NOT have a nginx route (outbound-only service)."""
+        nginx_dir = COMPOSE_DIR / "nginx"
+        if (nginx_dir / "default.conf.j2").exists():
+            content = (nginx_dir / "default.conf.j2").read_text()
+            assert "forgejo-runner" not in content, (
+                "forgejo-runner must NOT have a nginx route (outbound-only service)"
+            )

@@ -7,6 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Forgejo Actions Runner service** (`cove runner up|down|status|logs`) — optional profiled CI runner that polls Forgejo for Actions workflows and executes them in Docker sibling containers. Outbound-only, no nginx route, no 1Password seed. Registration handled by `provision_forgejo.yml` IaC. See [docs/services/forgejo-runner.md](docs/services/forgejo-runner.md).
 - **Forgejo webhook allowlist** (`webhook.ALLOWED_HOST_LIST`) — explicit, configurable compose env var defaulting to `loopback` (upstream default `external` blocked all loopback/private webhook delivery, breaking local receivers like tidesman). Widen per-receiver via `FORGEJO_WEBHOOK_ALLOWED_HOST_LIST=loopback,<host-or-cidr>`. See [docs/services/forgejo.md](docs/services/forgejo.md) and issue [#44](https://git.cove.local/cristos/cove/issues/44).
 
 ## [0.4.1] — 2026-08-12

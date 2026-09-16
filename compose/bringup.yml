@@ -346,6 +346,12 @@
         - "{{ cove_data_root }}/litellm"
         - "{{ cove_data_root }}/speedtest"
 
+    - name: Create forgejo-runner data directory (restricted)
+      ansible.builtin.file:
+        path: "{{ cove_data_root }}/forgejo-runner"
+        state: directory
+        mode: "0700"
+
     # TEMPLATES ----------------------------------------------------------------
     # Docker bind-mounts auto-create missing host paths as DIRECTORIES. If a
     # previous `docker compose up` ran before these files were rendered, the
@@ -469,6 +475,9 @@
           SPEEDTEST_CONTAINER_NAME={{ speedtest_container_name | default('cove-speedtest-tracker') }}
           SPEEDTEST_PORT={{ speedtest_port | default('8982') }}
           SPEEDTEST_APP_KEY={{ speedtest_app_key | default('') }}
+          FORGEJO_RUNNER_IMAGE={{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}
+          FORGEJO_RUNNER_CONTAINER_NAME={{ forgejo_runner_container_name | default('cove-forgejo-runner') }}
+          FORGEJO_RUNNER_MEM_LIMIT={{ forgejo_runner_mem_limit | default('512M') }}
       when: not (compose_dir ~ "/.env") is exists
 
     # CONTAINERS -------------------------------------------------------------
