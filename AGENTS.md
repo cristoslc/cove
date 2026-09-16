@@ -11,6 +11,7 @@ Read **[PURPOSE.md](PURPOSE.md)** for this project's identity, worldview, and fo
 - **`fj`** is the Forgejo CLI. See [docs/guides/fj-guide.md](docs/guides/fj-guide.md) for draft PR workflow, WIP title conventions, and Cove-specific usage rules.
 - **`cove litellm`** manages the optional LiteLLM proxy service (hardened LLM proxy with Headroom compression). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://litellm.cove/` through nginx ingress. Security posture: version-pinned, nginx route-whitelisted, read-only container, env-var-only credentials. See [docs/services/litellm-proxy.md](docs/services/litellm-proxy.md).
 - **`cove speedtest`** manages the optional Speedtest Tracker service (WAN-link monitor). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://speedtest.cove/` through nginx ingress. The admin identity comes from the shared **`Cove Admin`** 1Password item (keyed to `https://cove.local/`, ADR-017); the APP_KEY lives in the `Speedtest Tracker` item keyed to `https://speedtest.cove.local/`. Both reused across all machines. See [docs/services/speedtest.md](docs/services/speedtest.md).
+- **`cove runner`** manages the optional Forgejo Actions Runner (CI runner). Subcommands: `up`, `down`, `status`, `logs`. No ingress URL (outbound-only service). Registration is IaC: `cove runner up` starts the container but does NOT register; `cove up` with the runner profile active registers it. See [docs/services/forgejo-runner.md](docs/services/forgejo-runner.md).
 
 ## IaC bias
 
