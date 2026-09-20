@@ -53,6 +53,15 @@ Cove is a portable, offline-capable local developer platform. It runs Forgejo (G
 - `/etc/hosts` entries and `/etc/resolver/` configuration
 - OS keychain entries for Vault unseal keys and root token
 
+### Upgrading from builds with the pf shim
+
+Machines that ran `cove up` before 2026-09-19 may still hold leftovers from the old 443 to 8443 shim:
+
+- A stale pf rdr anchor (`cove-https`) forwarding loopback 443 to 8443. It survives until reboot. Clear it with `sudo pfctl -a cove-https -F all`.
+- A `tailscale serve` config forwarding tailnet 443 to `127.0.0.1:8443`, stored in tailscaled state. Clear it with `tailscale serve off`.
+
+Both point at the dead 8443 port and break the new direct `0.0.0.0:443` binding. Remove them before running `cove up` on an upgraded machine.
+
 ### What Cove Does Not Own
 
 - The container runtime (Colima on macOS, Docker Engine on Linux)
