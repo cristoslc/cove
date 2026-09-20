@@ -115,9 +115,9 @@ def _check_nginx_ingress() -> CheckResult:
     return CheckResult(
         name="nginx ingress",
         ok=False,
-        detail="Connection refused on 127.0.0.1:443",
+        detail=f"Connection refused on 127.0.0.1:{NGINX_HTTPS_PORT}",
         hints=[
-            "Is port 443 free? Run `lsof -i :443`",
+            f"Is port {NGINX_HTTPS_PORT} free? Run `lsof -i :{NGINX_HTTPS_PORT}`",
             "Check nginx: `docker logs cove-nginx`",
             "Is nginx up? Run `cove up`",
         ],

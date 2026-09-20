@@ -3,7 +3,7 @@
 Builds the wheel once per session, installs it into an isolated venv, and
 yields a handle that invokes the *built* `cove` binary against a temp HOME.
 This exercises the branch's packaged resources (cove.resources/compose/)
-end-to-end without relying on whatever stack happens to be on 127.0.0.1:8443.
+end-to-end without relying on whatever stack happens to be on 127.0.0.1:443.
 
 Per `~/.agents/agents-md-detail/test-driven-design.md` E2E Protocol:
   - single command: `pytest tests/` runs these by default (no -m flag needed)
