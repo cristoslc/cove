@@ -7,6 +7,7 @@ import tempfile
 import click
 
 from cove.stateless import resolve_compose_dir
+from cove.status import NGINX_HTTPS_PORT
 
 
 LITELLM_URL = "https://litellm.cove.local/"
@@ -234,7 +235,7 @@ def status():
     click.echo("Checking /health/readiness through nginx...")
     for host in ("litellm.cove.local", "litellm.cove"):
         health = subprocess.run(
-            ["curl", "-sf", "-H", f"Host: {host}", "https://127.0.0.1:443/health/readiness"],
+            ["curl", "-sf", "-H", f"Host: {host}", f"https://127.0.0.1:{NGINX_HTTPS_PORT}/health/readiness"],
             capture_output=True, text=True, timeout=10,
         )
         if health.returncode == 0:

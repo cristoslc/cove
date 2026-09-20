@@ -39,7 +39,9 @@ OPTIONAL_SERVICES = [
 
 # Host port nginx publishes for HTTPS. Must match the hardcoded 0.0.0.0:443:443
 # publish in compose/docker-compose.yml; the compose publish does not follow
-# this constant.
+# this constant. cli/cove/litellm.py and cli/cove/speedtest.py now import this
+# constant for their curl probes, so a port change must update this file and
+# the compose publish in lockstep.
 NGINX_HTTPS_PORT = 443
 NGINX_HTTP_PORT = 8080
 
