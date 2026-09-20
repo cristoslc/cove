@@ -37,7 +37,7 @@ OPTIONAL_SERVICES = [
     ("cove-forgejo-runner", "Runner", "runner"),
 ]
 
-NGINX_HTTPS_PORT = 8443
+NGINX_HTTPS_PORT = 443
 NGINX_HTTP_PORT = 8080
 
 
@@ -115,11 +115,11 @@ def _check_nginx_ingress() -> CheckResult:
     return CheckResult(
         name="nginx ingress",
         ok=False,
-        detail="Connection refused on 127.0.0.1:8443",
+        detail="Connection refused on 127.0.0.1:443",
         hints=[
-            "Is port 8443 free? Run `lsof -i :8443`",
+            "Is port 443 free? Run `lsof -i :443`",
             "Check nginx: `docker logs cove-nginx`",
-            "Run `cove up` with sudo to configure pf 443→8443",
+            "Is nginx up? Run `cove up`",
         ],
     )
 
