@@ -278,7 +278,7 @@ def status():
     click.echo("Checking speedtest.cove through nginx...")
     for host in ("speedtest.cove.local", "speedtest.cove"):
         health = subprocess.run(
-            ["curl", "-sf", "-H", f"Host: {host}", "https://127.0.0.1:8443/"],
+            ["curl", "-sf", "-H", f"Host: {host}", "https://127.0.0.1:443/"],
             capture_output=True, text=True, timeout=10,
         )
         if health.returncode == 0:

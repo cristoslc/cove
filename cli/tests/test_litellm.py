@@ -960,10 +960,12 @@ class TestAdversarial:
         """The CLI status check must go through nginx, not direct port 4000.
         This prevents bypassing the route whitelist."""
         source = (PROJECT_ROOT / "cli" / "cove" / "litellm.py").read_text()
-        # Must use 8443 (nginx) not 4000 (direct)
-        assert "8443" in source, "status must check through nginx (8443), not direct port"
+        # Must use 443 (nginx) not 4000 (direct)
+        assert "https://127.0.0.1:443/" in source, (
+            "status must check through nginx on 443, not direct port"
+        )
         # Port 4000 may appear in comments or compose, but the status command
-        # should use 8443 for the health check
+        # should use 443 for the health check
         assert "litellm.cove" in source, (
             "status must reference litellm.cove Host header"
         )
