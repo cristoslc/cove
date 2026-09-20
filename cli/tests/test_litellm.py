@@ -992,13 +992,13 @@ class TestE2ELitellmStack:
     These tests require:
     1. Cove stack running (cove up)
     2. LiteLLM profile started (cove litellm up)
-    3. nginx ingress accessible at https://127.0.0.1:8443
+    3. nginx ingress accessible at https://127.0.0.1:443
     """
 
     def test_health_endpoint_returns_200(self):
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/health/readiness",
+            "https://127.0.0.1:443/health/readiness",
             headers={"Host": "litellm.cove"},
             verify=False,
             timeout=10,
@@ -1008,7 +1008,7 @@ class TestE2ELitellmStack:
     def test_models_endpoint_returns_200(self):
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/v1/models",
+            "https://127.0.0.1:443/v1/models",
             headers={"Host": "litellm.cove"},
             verify=False,
             timeout=10,
@@ -1019,7 +1019,7 @@ class TestE2ELitellmStack:
         """Admin route /key/generate must be blocked at nginx layer."""
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/key/generate",
+            "https://127.0.0.1:443/key/generate",
             headers={"Host": "litellm.cove"},
             verify=False,
             timeout=10,
@@ -1032,7 +1032,7 @@ class TestE2ELitellmStack:
         """Admin route /user/new must be blocked at nginx layer."""
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/user/new",
+            "https://127.0.0.1:443/user/new",
             headers={"Host": "litellm.cove"},
             verify=False,
             timeout=10,
@@ -1045,7 +1045,7 @@ class TestE2ELitellmStack:
         """SSTI-vulnerable route /prompts/test must be blocked at nginx layer."""
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/prompts/test",
+            "https://127.0.0.1:443/prompts/test",
             headers={"Host": "litellm.cove"},
             verify=False,
             timeout=10,
@@ -1081,7 +1081,7 @@ class TestE2ELitellmStack:
         import requests
         with pytest.raises(requests.exceptions.ConnectionError):
             requests.get(
-                "https://127.0.0.1:8443/health",
+                "https://127.0.0.1:443/health",
                 headers={"Host": "evil.example.com"},
                 verify=False,
                 timeout=10,

@@ -262,7 +262,7 @@ provision_pages.yml
 
 | Service | External Access | Internal Access | Notes |
 |---------|----------------|-----------------|-------|
-| nginx | `127.0.0.1:443`, `:8080` | Internal Docker network | TLS termination, host-header routing |
+| nginx | `0.0.0.0:443`, `0.0.0.0:8080` | Internal Docker network | TLS termination, host-header routing |
 | Forgejo HTTP | Via nginx only | `forgejo:3000` | No published host port |
 | Forgejo SSH | `0.0.0.0:2222` | `forgejo:22` | Direct, not proxied |
 | Forgejo Runner | None (outbound-only) | `forgejo:3000` | Polls Forgejo, no host port |

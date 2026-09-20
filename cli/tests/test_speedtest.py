@@ -1124,7 +1124,7 @@ class TestE2ESpeedtestStack:
         reaches the app; login is enforced by the app itself)."""
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/",
+            "https://127.0.0.1:443/",
             headers={"Host": "speedtest.cove"},
             verify=False,
             timeout=10,
@@ -1139,7 +1139,7 @@ class TestE2ESpeedtestStack:
         bare 200 serving dashboard content."""
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/",
+            "https://127.0.0.1:443/",
             headers={"Host": "speedtest.cove"},
             verify=False,
             timeout=10,

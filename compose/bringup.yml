@@ -430,7 +430,6 @@
           DNSMASQ_CONTAINER_NAME={{ dnsmasq_container_name }}
           DNSPROXY_CONTAINER_NAME={{ dnsproxy_container_name }}
           DNSMASQ_PORT={{ dnsmasq_port }}
-          NGINX_HTTPS_PORT={{ nginx_https_port }}
           NGINX_HTTP_PORT={{ nginx_http_port }}
           LITELLM_IMAGE={{ litellm_image | default('cove-litellm:1.84.0') }}
           LITELLM_CONTAINER_NAME={{ litellm_container_name | default('cove-litellm') }}
