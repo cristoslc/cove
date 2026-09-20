@@ -37,6 +37,9 @@ OPTIONAL_SERVICES = [
     ("cove-forgejo-runner", "Runner", "runner"),
 ]
 
+# Host port nginx publishes for HTTPS. Must match the hardcoded 0.0.0.0:443:443
+# publish in compose/docker-compose.yml; the compose publish does not follow
+# this constant.
 NGINX_HTTPS_PORT = 443
 NGINX_HTTP_PORT = 8080
 
