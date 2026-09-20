@@ -70,6 +70,8 @@ services:
       # ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites (read-write) so the
       # action can write site files that nginx serves read-only here.
     ports:
+      # Hardcoded 443: nginx owns 443 directly (no pf 443→8443 shim;
+      # shim dropped 2026-09-19). NGINX_HTTPS_PORT env is deliberately gone.
       - "0.0.0.0:443:443"
       - "0.0.0.0:${NGINX_HTTP_PORT:-8080}:80"
       - "0.0.0.0:80:80"

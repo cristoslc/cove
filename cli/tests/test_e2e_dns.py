@@ -451,7 +451,7 @@ class TestE2EDNSEndpoints:
       - Templates rendered via bringup.yml
     """
 
-    COVE_HTTPS_PORT = int(os.environ.get("COVE_HTTPS_PORT", "8443"))
+    COVE_HTTPS_PORT = int(os.environ.get("COVE_HTTPS_PORT", "443"))
     COVE_HTTP_PORT = int(os.environ.get("COVE_HTTP_PORT", "8080"))
     COVE_DNS_PORT = int(os.environ.get("COVE_DNS_PORT", "5353"))
     BASE_URL = os.environ.get("COVE_BASE_URL", "https://git.cove")
