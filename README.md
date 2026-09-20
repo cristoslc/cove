@@ -8,7 +8,7 @@ A local development platform running on Docker Compose — a sheltered harbor wh
 |---------|---------|--------|
 | **Forgejo** | Self-hosted Git forge with built-in OCI registry and commit signing | `https://git.cove.local/` |
 | **HashiCorp Vault** | Secrets store with Shamir auto-unseal | `https://vault.cove.local/` |
-| **nginx** | TLS termination and reverse proxy for all `*.cove.local` subdomains | `127.0.0.1:443` (HTTPS), `:8080` (HTTP) |
+| **nginx** | TLS termination and reverse proxy for all `*.cove.local` subdomains | `0.0.0.0:443` (HTTPS), `0.0.0.0:8080` (HTTP) |
 | **dnsmasq** | Wildcard DNS resolver for offline `.cove.local` resolution | `127.0.0.1:5353` |
 | **Forgejo Actions Runner** | CI runner for Forgejo Actions workflows (optional, outbound-only) | No ingress |
 | **Speedtest Tracker** | Monitors the operator's WAN link (uptime/latency/bandwidth) | `https://speedtest.cove.local/` (optional) |

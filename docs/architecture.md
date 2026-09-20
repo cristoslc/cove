@@ -57,8 +57,9 @@ Cove is a portable, offline-capable local developer platform. It runs Forgejo (G
 
 Machines that ran `cove up` before 2026-09-19 may still hold leftovers from the old 443 to 8443 shim:
 
-- A stale pf rdr anchor (`cove-https`) forwarding loopback 443 to 8443. It survives until reboot. Clear it with `sudo pfctl -a cove-https -F all`.
-- A `tailscale serve` config forwarding tailnet 443 to `127.0.0.1:8443`, stored in tailscaled state. Clear it with `tailscale serve off`.
+- A stale pf rdr rule forwarding loopback 443 to 8443. The shim wrote this rule into the main pf ruleset (via `pfctl -ef -`), not into the `cove-https` anchor, so it survives until reboot or ruleset reload. Clear it by reloading the default ruleset: `sudo pfctl -f /etc/pf.conf`.
+- A `tailscale serve` config forwarding tailnet 443 to `127.0.0.1:8443`, stored in tailscaled state. Clear it with `tailscale serve reset`.
+- Git remotes and GCM keychain entries keyed to `https://cove.local:8443` (see the data inventory). Update each remote with `git remote set-url <name> https://cove.local/<repo>` and expect a one-time credential re-prompt; delete stale `git:https://cove.local:8443` keychain entries if re-auth loops.
 
 Both point at the dead 8443 port and break the new direct `0.0.0.0:443` binding. Remove them before running `cove up` on an upgraded machine.
 

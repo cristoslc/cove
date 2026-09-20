@@ -8,6 +8,7 @@ import subprocess
 import click
 
 from cove.stateless import resolve_compose_dir
+from cove.status import NGINX_HTTPS_PORT
 
 
 SPEEDTEST_URL = "https://speedtest.cove.local/"
@@ -278,7 +279,7 @@ def status():
     click.echo("Checking speedtest.cove through nginx...")
     for host in ("speedtest.cove.local", "speedtest.cove"):
         health = subprocess.run(
-            ["curl", "-sf", "-H", f"Host: {host}", "https://127.0.0.1:443/"],
+            ["curl", "-sf", "-H", f"Host: {host}", f"https://127.0.0.1:{NGINX_HTTPS_PORT}/"],
             capture_output=True, text=True, timeout=10,
         )
         if health.returncode == 0:
