@@ -18,7 +18,7 @@ cove litellm status
 # Point your tools at https://litellm.cove.local/
 ```
 
-The proxy is accessible at `https://litellm.cove.local/` through Cove's nginx ingress (port 8443 → 443 via pf). The container itself binds to `127.0.0.1:4000` only — no external network exposure.
+The proxy is accessible at `https://litellm.cove.local/` through Cove's nginx ingress (nginx binds port 443 directly). The container itself binds to `127.0.0.1:4000` only — no external network exposure.
 
 ## What's Hardened
 
@@ -138,8 +138,8 @@ Headroom downloads a compression model on first start. If it fails:
 ### OpenCode can't connect
 
 ```shell
-curl -H "Host: litellm.cove.local" https://127.0.0.1:8443/health
-curl -H "Host: litellm.cove.local" https://127.0.0.1:8443/v1/models
+curl -H "Host: litellm.cove.local" https://127.0.0.1:443/health
+curl -H "Host: litellm.cove.local" https://127.0.0.1:443/v1/models
 ```
 
 If both work, configure OpenCode to use the proxy by setting the environment variable:

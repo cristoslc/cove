@@ -21,7 +21,7 @@ Cove is a portable, offline-capable local developer platform. It runs Forgejo (G
 │                                                             │
 │  ┌─── Docker Compose ────────────────────────────────────┐  │
 │  │                                                        │  │
-│  │  nginx (:8080 → 301, :8443 TLS)   dnsmasq (:5353)    │  │
+│  │  nginx (:8080 → 301, :443 TLS)     dnsmasq (:5353)    │  │
 │  │   ├─ git.cove       → forgejo:3000                    │  │
 │  │   ├─ vault.cove     → vault:8200                      │  │
 │  │   ├─ hc.cove        → health check                    │  │
@@ -34,8 +34,7 @@ Cove is a portable, offline-capable local developer platform. It runs Forgejo (G
 │  │    forgejo/ vault/ pages/ certs/ nginx/ dnsmasq/        │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                                                             │
-│  pf NAT: 127.0.0.1:443 → 127.0.0.1:8443                    │
-│  Tailscale Serve → https://127.0.0.1:443 (if tailnet)      │
+│  nginx binds 0.0.0.0:443 directly (no pf shim)             │
 │                                                             │
 │  Cove PKI             OS Keychain                            │
 │   └─ *.cove, localhost  └─ cove/vault/unseal-{1..5}        │
@@ -53,7 +52,6 @@ Cove is a portable, offline-capable local developer platform. It runs Forgejo (G
 - Cove PKI certificates for `*.cove` subdomains
 - `/etc/hosts` entries and `/etc/resolver/` configuration
 - OS keychain entries for Vault unseal keys and root token
-- pf NAT rule forwarding `localhost:443` → `localhost:8443`
 
 ### What Cove Does Not Own
 
@@ -147,7 +145,7 @@ Serves static sites. Owns site artifacts, subdomain routing, and the deploy-publ
 
 ### Reverse Proxy (nginx)
 
-The single entry point for all HTTP/HTTPS traffic. Terminates TLS on port 8443 (host) using Cove PKI certificates, redirects HTTP on port 8080 to HTTPS. pf NAT forwards `localhost:443` → `8443`. Routes by `Host` header:
+The single entry point for all HTTP/HTTPS traffic. Terminates TLS on port 443 (host, bound directly via compose) using Cove PKI certificates, redirects HTTP on port 8080 to HTTPS. Routes by `Host` header:
 
 | Host Pattern | Target |
 |---|---|
@@ -184,13 +182,13 @@ Forgejo's built-in OCI-compatible container registry at the `/v2/` path. Pipelin
 
 ### Online
 
-All `*.cove` domains resolve via `/etc/hosts` to `127.0.0.1`. Tailscale MagicDNS resolves the Tailscale FQDN to the machine's Tailscale IP; Tailscale Serve forwards HTTPS to `https://127.0.0.1:8443`.
+All `*.cove` domains resolve via `/etc/hosts` to `127.0.0.1`. Tailscale MagicDNS resolves the Tailscale FQDN to the machine's Tailscale IP; nginx's `0.0.0.0:443` publish makes it reachable from the tailnet directly.
 
 ### Offline
 
 - `/etc/hosts` maps `cove`, `git.cove`, `vault.cove`, `hc.cove` to `127.0.0.1`.
 - `/etc/resolver/cove` routes subdomain queries to `dnsmasq:5353`, which has a wildcard rule resolving `*.cove` → `127.0.0.1`.
-- nginx at `127.0.0.1:8443` uses Cove PKI certs — valid TLS, CA-accepted, no warnings.
+- nginx at `127.0.0.1:443` uses Cove PKI certs — valid TLS, CA-accepted, no warnings.
 
 ## Data Persistence
 
@@ -234,8 +232,6 @@ bringup.yml
   ├─ Configures Cove PKI TLS for *.cove
   ├─ Creates data directories
   ├─ Configures /etc/hosts
-  ├─ Configures pf NAT (443 → 8443)
-  ├─ Configures Tailscale Serve (if tailnet)
   ├─ Renders .env + nginx + dnsmasq configs
   ├─ docker compose up (forgejo, vault, nginx, dnsmasq)
   └─ Waits for health
@@ -266,7 +262,7 @@ provision_pages.yml
 
 | Service | External Access | Internal Access | Notes |
 |---------|----------------|-----------------|-------|
-| nginx | `127.0.0.1:8443`, `:8080` | Internal Docker network | TLS termination, host-header routing |
+| nginx | `127.0.0.1:443`, `:8080` | Internal Docker network | TLS termination, host-header routing |
 | Forgejo HTTP | Via nginx only | `forgejo:3000` | No published host port |
 | Forgejo SSH | `0.0.0.0:2222` | `forgejo:22` | Direct, not proxied |
 | Forgejo Runner | None (outbound-only) | `forgejo:3000` | Polls Forgejo, no host port |
