@@ -961,7 +961,7 @@ class TestAdversarial:
         This prevents bypassing the route whitelist."""
         source = (PROJECT_ROOT / "cli" / "cove" / "litellm.py").read_text()
         # Must use 443 (nginx) not 4000 (direct), via the NGINX_HTTPS_PORT constant
-        assert "from cove.status import NGINX_HTTPS_PORT" in source, (
+        assert "from cove.constants import NGINX_HTTPS_PORT" in source, (
             "status must source the port from cove.status (single port authority)"
         )
         assert "f\"https://127.0.0.1:{NGINX_HTTPS_PORT}/health/readiness\"" in source, (

@@ -9,6 +9,8 @@ from pathlib import Path
 
 import requests
 
+from cove.constants import NGINX_HTTP_PORT, NGINX_HTTPS_PORT
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.getLogger("urllib3").setLevel(logging.ERROR)
 
@@ -37,13 +39,12 @@ OPTIONAL_SERVICES = [
     ("cove-forgejo-runner", "Runner", "runner"),
 ]
 
-# Host port nginx publishes for HTTPS. Must match the hardcoded 0.0.0.0:443:443
-# publish in compose/docker-compose.yml; the compose publish does not follow
-# this constant. cli/cove/litellm.py and cli/cove/speedtest.py now import this
-# constant for their curl probes, so a port change must update this file and
-# the compose publish in lockstep.
-NGINX_HTTPS_PORT = 443
-NGINX_HTTP_PORT = 8080
+# The HTTPS port constant lives in cove.constants and is re-exported here for
+# existing importers. Port coupling points that must stay equal to it:
+#   - compose/docker-compose.yml (hardcoded 0.0.0.0:443:443 publish)
+#   - compose/group_vars/all.yml (nginx_https_port, Ansible-rendered probe URLs)
+NGINX_HTTPS_PORT = NGINX_HTTPS_PORT
+NGINX_HTTP_PORT = NGINX_HTTP_PORT
 
 
 def _docker_ps() -> dict[str, dict]:
@@ -122,7 +123,8 @@ def _check_nginx_ingress() -> CheckResult:
         ok=False,
         detail=f"Connection refused on 127.0.0.1:{NGINX_HTTPS_PORT}",
         hints=[
-            f"Is port {NGINX_HTTPS_PORT} free? Run `lsof -i :{NGINX_HTTPS_PORT}`",
+            f"Is port {NGINX_HTTPS_PORT} free? Run `sudo lsof -i :{NGINX_HTTPS_PORT}` "
+            "(unprivileged lsof cannot see root listeners like tailscaled)",
             "Check nginx: `docker logs cove-nginx`",
             "Is nginx up? Run `cove up`",
         ],
