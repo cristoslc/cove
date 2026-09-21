@@ -167,15 +167,17 @@ class TestDeploymentManifests:
 
     def test_e2e_staging_tests_target_443(self):
         """Staging/e2e-marked tests must hit 127.0.0.1:443, not the dropped
-        8443 publish."""
+        8443 publish. This guard's own file (test_cli.py) carries the literal
+        '8443' only inside its assertion messages, so it is excluded."""
         tests_dir = PROJECT_ROOT / "cli" / "tests"
         offenders = []
-        for name in ("test_e2e_dns.py", "test_litellm.py", "test_speedtest.py"):
-            text = (tests_dir / name).read_text()
-            if "8443" in text:
-                offenders.append(name)
+        for path in sorted(tests_dir.glob("test_*.py")):
+            if path.name == "test_cli.py":
+                continue
+            if "8443" in path.read_text():
+                offenders.append(path.name)
         assert not offenders, (
-            f"e2e/staging test files still reference 8443: {offenders} "
+            f"test files still reference 8443: {offenders} "
             "(nginx owns 443 directly)"
         )
 

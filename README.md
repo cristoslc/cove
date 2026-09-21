@@ -33,7 +33,7 @@ Releases are listed at <https://github.com/cristoslc/cove/releases>. The wheel f
 ## Quick Start
 
 ```bash
-cove up --no-sudo        # Bring up containers, bootstrap Vault, provision Forgejo
+cove up                 # Bring up containers, bootstrap Vault, provision Forgejo
 cove up --no-provision   # Bring up containers only (skip Forgejo setup)
 cove down                # Stop containers, keep data
 cove down --volumes      # Stop containers and remove volumes
@@ -45,7 +45,6 @@ cove uninstall --yes     # Destroy everything: containers, data, keychain, cache
 | Command | Purpose |
 |---------|---------|
 | `cove up` | Full pipeline: batch-pull → bringup → bootstrap Vault → provision Forgejo |
-| `cove up --no-sudo` | Same as above, skips `/etc/hosts` elevation |
 | `cove up --no-provision` | Bring up containers only |
 | `cove down` | Stop containers (data preserved) |
 | `cove down --volumes` | Stop containers and remove volumes |

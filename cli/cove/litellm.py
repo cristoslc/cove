@@ -6,8 +6,8 @@ import tempfile
 
 import click
 
+from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import resolve_compose_dir
-from cove.status import NGINX_HTTPS_PORT
 
 
 LITELLM_URL = "https://litellm.cove.local/"
