@@ -375,7 +375,7 @@ class TestCLI:
         assert "speedtest.cove" in source, (
             "cove speedtest status must reference speedtest.cove Host header"
         )
-        assert "from cove.status import NGINX_HTTPS_PORT" in source, (
+        assert "from cove.constants import NGINX_HTTPS_PORT" in source, (
             "cove speedtest status must source the port from cove.status"
         )
         assert "f\"https://127.0.0.1:{NGINX_HTTPS_PORT}/\"" in source, (
@@ -1075,11 +1075,11 @@ class TestAuthPosture:
         assert "proxy_pass" not in default_block
 
     def test_no_direct_port_access_in_cli(self):
-        """The CLI status check must go through nginx on 443, not a direct port."""
+        """The CLI status check must go through nginx on 443, not a direct port.
+        The URL-substring assertion lives in
+        test_speedtest_status_checks_through_nginx; this test adds only the
+        Host-header check."""
         source = (PROJECT_ROOT / "cli" / "cove" / "speedtest.py").read_text()
-        assert "f\"https://127.0.0.1:{NGINX_HTTPS_PORT}/\"" in source, (
-            "status must check through nginx (443), not direct port"
-        )
         assert "speedtest.cove" in source, (
             "status must reference speedtest.cove Host header"
         )

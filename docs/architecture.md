@@ -61,7 +61,7 @@ Machines that ran `cove up` before 2026-09-19 may still hold leftovers from the 
 - A `tailscale serve` config forwarding tailnet 443 to `127.0.0.1:8443`, stored in tailscaled state. Clear it with `tailscale serve reset`.
 - Git remotes and GCM keychain entries keyed to `https://cove.local:8443` (see the data inventory). Update each remote with `git remote set-url <name> https://cove.local/<repo>` and expect a one-time credential re-prompt; delete stale `git:https://cove.local:8443` keychain entries if re-auth loops.
 
-Both point at the dead 8443 port and break the new direct `0.0.0.0:443` binding. Remove them before running `cove up` on an upgraded machine.
+All three point at the dead 8443 port and break the new direct `0.0.0.0:443` binding. Remove them before running `cove up` on an upgraded machine.
 
 ### What Cove Does Not Own
 
