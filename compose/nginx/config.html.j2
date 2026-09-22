@@ -22,6 +22,21 @@
      Windows: <code>certutil -addstore Root cove-root-ca.pem</code><br>
      iOS: use <a href="/config/dns/ios">/config/dns/ios</a> for one-tap profile install.</p>
 
+  <h3>Node.js / Electron clients</h3>
+  <p>Node.js and Electron use their bundled CA list and do not read the OS trust
+     store. Point Node at the root CA:</p>
+  <p><code>export NODE_EXTRA_CA_CERTS=~/Documents/cove-data/certs/rootCA.pem</code>
+     (then restart the Node process).</p>
+  <p>If the file is not on this machine, download it first:</p>
+  <p><code>curl -o cove-root-ca.pem https://ca.cove/config/ca</code></p>
+  <p><code>export NODE_EXTRA_CA_CERTS=./cove-root-ca.pem</code></p>
+  <p>Durable alternative — add the root CA to the OS trust store:</p>
+  <p>macOS: <code>sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain cove-root-ca.pem</code><br>
+     Linux: <code>sudo cp cove-root-ca.pem /usr/local/share/ca-certificates/cove-root-ca.crt && sudo update-ca-certificates</code></p>
+  <p>Note: <code>launchctl setenv NODE_EXTRA_CA_CERTS</code> does not survive reboot
+     and is per-machine. For a durable per-app setting, set the variable in each
+     app's packaging (launchd plist / systemd unit / Electron main).</p>
+
   <h2>Reach this machine</h2>
   <p>Once DNS is configured, these names resolve to this machine:</p>
   <ul>
