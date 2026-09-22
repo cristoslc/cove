@@ -202,7 +202,7 @@ def _share_private(target: str, share_token: str) -> str:
 
 
 def _list_shares() -> list[str]:
-    result = _zrok2_exec_capture("agent", "status", check=False)
+    result = _zrok2_exec_capture("list", "shares", check=False)
     return result.stdout.splitlines() if result.returncode == 0 else []
 
 
