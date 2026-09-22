@@ -26,3 +26,7 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   cli/tests/test_tunnel.py; full non-e2e suite 479 passed, 25 deselected. Docs at
   docs/services/tunnel.md (onboarding journey, v2 naming, private shares,
   interstitial caveat, cost ladder, localhost.run fallback).
+- 2026-09-22 (implementation): `tunnel ls` switched from `agent status` to
+  `zrok2 list shares` (the v2.0 listing verb, per the zrok2 CLI reference). PR
+  comment for a6f1596 posted 3 times due to silent fj success + re-runs; noted,
+  no action needed (duplicate comments only).
