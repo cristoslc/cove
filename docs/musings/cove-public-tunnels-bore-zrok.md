@@ -77,6 +77,26 @@ Cove's instinct was option 1 for ad-hoc dev apps, option 2 for stable-identity s
 - dnsmasq answers the public name locally (→ loopback ingress) and the relay answers it publicly (→ tunnel client → ingress). One name, two resolutions, app sees a single identity always.
 - Local-only apps without a share simply don't have a public name yet — they keep plain `*.cove` names and normal ingress routing. When a tunnel is added, the share *assigns* the public identity; there is exactly one identity rule everywhere: "the app's canonical name is the name the outside world uses."
 
+### But Host rewrite alone isn't enough — the ROOT_URL problem (operator follow-up, 2026-09-21)
+
+Operator's follow-up: apps like Forgejo don't trust the request `Host` for their generated links — they carry their own canonical identity in config. Cove already sets `FORGEJO__server__ROOT_URL` (default `https://git.cove.local/`, see `compose/docker-compose.yml:9` and `bringup.yml`). Every PR link, clone URL, and OAuth callback Forgejo emits is built from `ROOT_URL`, not from the incoming Host. So with only a Host rewrite:
+
+- Visit via the tunnel → `Host: git.tun.example`, but Forgejo still stamps `https://git.cove.local/...` on every link it renders. A friend clicking a PR link gets an address that doesn't resolve outside the tailnet. **Reverse problem of what we feared: links leak the local name into the public world** — the mirror image of `sub_filter`/reverse-rewrite concerns.
+
+So the honest answer to "do we need reverse-rewrite?":
+
+- **Rewriting rendered links in responses (sub_filter-style reverse-rewrite) is a trap.** It breaks on compressed bodies, absolute redirects, JSON payloads, and signed content. Never solve identity by rewriting HTML in flight.
+- **What Forgejo-class apps actually need is a config-level canonical base URL** — and Forgejo has exactly one knob: `ROOT_URL`. This is the app-level ceremony the single-identity rule must absorb.
+
+**Refined single strategy — canonical identity is a share property, applied as config:**
+
+1. The share is the source of truth for an app's canonical name: `cove tunnel up --target git.cove --public git.tun.example` sets the *identity*, and Cove renders it into the app's own config (`FORGEJO__server__ROOT_URL=https://git.tun.example/`) — not into nginx, not by rewriting traffic. Apps get their canonical name the same way they get any config: from the compose env / bringup render. IaC discipline holds.
+2. The ingress Host rewrite stays, but it's now downstream plumbing: it makes local visitors *reach* the app under its canonical name; the app itself emits links from its configured ROOT_URL. Both layers agree because both are set from the same share definition.
+3. Apps without a `ROOT_URL`-style knob that trust `Host`/`X-Forwarded-*` (most small dev servers) need nothing — the existing `proxy_set_header Host $host` behavior suffices. The strategy is: **config-driven canonical URL when the app has a knob, Host-rewrite when it doesn't** — decided per app by whether a knob exists, never by rewriting bodies.
+4. For Forgejo specifically: `ROOT_URL` becomes `${FORGEJO_ROOT_URL:-https://git.cove.local/}` (already is), and the tunnel share for Forgejo overrides it via the compose `.env` — a one-line bringup change, consistent with how `cove creds` injects everything else.
+
+This also answers the reverse-rewrite question fully: no `sub_filter`, ever. The name lives in (a) DNS at both edges, (b) the ingress Host header, (c) the app's own canonical-URL config — three places, one source of truth (the share), zero body rewriting.
+
 ## The tension with offline-first
 
 Cove's rule: third-party services may *enhance*, never *be foundational*. A self-hosted tunnel server satisfies this (bore/frp/rathole/zrok all can self-host). The risk is different: **the relay is an attack surface pointed at the public internet**, and Cove's security posture today assumes no inbound exposure at all. Any tunnel feature must be default-off, and its docs must say: only run the relay when you intend to share.
