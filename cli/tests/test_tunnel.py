@@ -275,10 +275,15 @@ class TestEnvRendering:
 
 
 class TestUrlExtraction:
-    def test_extracts_shares_zrok_io_url(self):
+    def test_extracts_share_zrok_io_url(self):
         from cove.tunnel import _extract_url
-        output = "https://abc123.shares.zrok.io\n"
-        assert _extract_url(output) == "https://abc123.shares.zrok.io"
+        output = "https://abc123.share.zrok.io\n"
+        assert _extract_url(output) == "https://abc123.share.zrok.io"
+
+    def test_extracts_named_share_zrok_io_url(self):
+        from cove.tunnel import _extract_url
+        output = "https://myforge.share.zrok.io\n"
+        assert _extract_url(output) == "https://myforge.share.zrok.io"
 
     def test_returns_none_when_no_url(self):
         from cove.tunnel import _extract_url

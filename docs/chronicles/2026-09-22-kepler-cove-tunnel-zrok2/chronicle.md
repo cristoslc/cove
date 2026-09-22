@@ -40,3 +40,12 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   compose resource, bringup gating, loud auth, tests, docs. Deferred to orchestrator:
   e2e relay-touching tests (gated), promote/reinstall (post-merge), operator zrok
   signup + token provisioning.
+
+- 2026-09-22 (orchestrator): Closure loop. Rebased onto fjl/main (0886151) via sync,
+  force-pushed. Coverage matrix self-healed: 7 tunnel paths added (83a6060). Test gate:
+  481 passed. Code review (orchestrator-run; subagent dispatch erroring in harness):
+  findings = docs/error text referenced nonexistent `cove creds set` (fixed ->
+  `cove creds vault-put`), URL domain was `shares.zrok.io` vs zrok2's documented
+  `share.zrok.io` (red-green: failing test first, then fixed ZROK2_DOMAIN + docs),
+  minor nits accepted (status-grep idempotency guard, unused SHARE_TOKEN_OP_REF,
+  tunnel.yml networks key). Post-fix gate: 482 passed.
