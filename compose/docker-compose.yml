@@ -266,3 +266,27 @@ services:
       resources:
         limits:
           memory: ${SPEEDTEST_MEM_LIMIT:-512M}
+
+  tunnel:
+    profiles: ["tunnel"]
+    image: ${TUNNEL_IMAGE:-openziti/zrok2:2.0.4@sha256:f607c294b79613f05e8f3dd255d3ef8bd853851dc5c8d806cc5b6d9092c83d16}
+    container_name: ${TUNNEL_CONTAINER_NAME:-cove-tunnel}
+    restart: unless-stopped
+    # Outbound-only: no published ports; reaches the ingress over the
+    # compose network (tunnel-to-ingress) and zrok.io over TLS.
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "${TUNNEL_UID:-1000}:${TUNNEL_GID:-1000}"
+    volumes:
+      - ${COVE_DATA_ROOT}/tunnel:/home/ziggy/.zrok2
+    environment:
+      PFXLOG_NO_JSON: "true"
+      ZROK_ACCOUNT_TOKEN: ${ZROK_ACCOUNT_TOKEN:-}
+    networks:
+      - default
+    command: ["sleep", "infinity"]
+    deploy:
+      resources:
+        limits:
+          memory: ${TUNNEL_MEM_LIMIT:-256M}
