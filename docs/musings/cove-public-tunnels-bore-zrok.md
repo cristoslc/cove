@@ -55,6 +55,21 @@ Three postures:
 
 So the refined design: `cove tunnel up --target git.cove --public myapp.tun.example` where `--public` requires a configured operator domain (from `cove creds`), and the free-tier shared domain is the fallback when none is configured. The local `*.app.cove` identity and the public identity are separate names bound at the tunnel client (it rewrites Host on the internal hop), which matches how the ingress already routes.
 
+### The two-identity problem (operator follow-up, 2026-09-21)
+
+Operator's catch: an app behind a tunnel now has two DNS identities — `myapp.app.cove` (local) and `myapp.tun.example` (public) — and apps are not built for that. Concretely painful for:
+
+- **Absolute URLs the app generates:** OAuth redirect URIs, email links, CSRF/CORS origin checks, cookies scoped to a domain, OpenID `redirect_uri` allowlists. An app that computes its public base URL from the request `Host` header flips identity depending on who's asking — which is exactly what you *don't* get in production, where identity is stable.
+- **HSTS/cookies:** `Secure` cookies set under the public name won't exist under the local name; login flows that work locally can break publicly and vice versa.
+
+Options for making the app see one identity:
+
+1. **Public-only for tunneled apps (lean in):** the tunnel *is* the app's identity while it's being tested. Don't give the app a `*.app.cove` name at all — dnsmasq resolves `myapp.tun.example` *locally* straight to the ingress (dnsmasq can answer for non-`.cove` names too), and nginx routes it to the app. Local visitors, CI, and the tunnel all use the same name; only resolution differs (local: dnsmasq → loopback ingress; public: real DNS → relay → tunnel client → ingress). **This makes the app's world single-identity and is the strongest answer.** The relay-edge TLS terminates the public path; the internal hop carries the same Host. What you give up: the name only works when the relay/client is up (same as any share), and you need to own the domain for stable naming.
+2. **Proxy-Host discipline:** keep both names, but make the ingress rewrite `Host:` so the app always sees the *public* name (`proxy_set_header Host myapp.tun.example`) whether the visitor came locally or via tunnel. App stays single-identity; bookmarks/redirects emit the public name even on the sofa. Cost: ingress config per share, and the local name becomes a pure alias.
+3. **Base-URL config:** the app is configured with one canonical base URL (12-factor style). Works only for apps that honor `BASE_URL`/`X-Forwarded-Host` cleanly; many don't, and it's per-app ceremony.
+
+Cove's instinct: option 1 for ad-hoc dev apps (identity follows the tunnel, disposable), option 2 for anything that needs a stable identity both locally and publicly (e.g. Forgejo if it's ever shared). Either way the *app* sees one name — the two-identity problem is solved at the DNS/ingress layer, never inside the app.
+
 ## The tension with offline-first
 
 Cove's rule: third-party services may *enhance*, never *be foundational*. A self-hosted tunnel server satisfies this (bore/frp/rathole/zrok all can self-host). The risk is different: **the relay is an attack surface pointed at the public internet**, and Cove's security posture today assumes no inbound exposure at all. Any tunnel feature must be default-off, and its docs must say: only run the relay when you intend to share.
