@@ -9,7 +9,7 @@ from cove.stateless import resolve_compose_dir
 
 
 ZROK2_IMAGE = "openziti/zrok2:2.0.4"
-ZROK2_DOMAIN = "shares.zrok.io"
+ZROK2_DOMAIN = "share.zrok.io"
 TUNNEL_OP_VAULT = "Private"
 TUNNEL_ITEM_TITLE = "Zrok Account"
 ACCOUNT_TOKEN_OP_REF = f"op://{TUNNEL_OP_VAULT}/{TUNNEL_ITEM_TITLE}/account_token"
@@ -111,9 +111,9 @@ def _ensure_account_token() -> str:
 
     raise click.ClickException(
         "zrok2 account token is missing. Sign up at https://myzrok.io/ (no "
-        "card required), copy the account token, and store it with: "
-        "`cove creds set 'op://Private/Zrok Account/account_token'`. See "
-        "docs/services/tunnel.md for the onboarding journey."
+        "card required), copy the account token, and cache it with: "
+        "`cove creds vault-put 'op://Private/Zrok Account/account_token'`. "
+        "See docs/services/tunnel.md for the onboarding journey."
     )
 
 

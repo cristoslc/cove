@@ -9,7 +9,7 @@ The client is a single sidecar container (`openziti/zrok2`, pinned) running the 
 1. **Sign up at [myzrok.io](https://myzrok.io/)** (no credit card required) and copy your **account token** from the console.
 2. **Store the token** in 1Password under the shared `Zrok Account` item (ADR-017 conventions), keyed so it is reused across machines:
    ```shell
-   cove creds set 'op://Private/Zrok Account/account_token'
+   cove creds vault-put 'op://Private/Zrok Account/account_token'
    ```
    `cove tunnel` reads it via `cove creds vault-get`. You can also set `ZROK_ACCOUNT_TOKEN` in the compose `.env` or your shell — that value is honored directly. If no token is found anywhere, the command **fails loudly** with setup instructions (never an anonymous fallback).
 3. **Run `cove tunnel up`** — the sidecar starts, and the first `up` runs `zrok2 enable <token>` idempotently (state persists in `${COVE_DATA_ROOT}/tunnel/`, mounted at `/home/ziggy/.zrok2`).
@@ -19,11 +19,11 @@ The client is a single sidecar container (`openziti/zrok2`, pinned) running the 
 ```shell
 # Ad-hoc public share of the ingress (default target: https://nginx, Host preserved)
 cove tunnel up
-# → https://<random>.shares.zrok.io
+# → https://<random>.share.zrok.io
 
 # Share a specific .cove service through ingress, with a stable reserved name
 cove tunnel up --public myforge
-# → https://myforge.shares.zrok.io  (name survives restarts)
+# → https://myforge.share.zrok.io  (name survives restarts)
 
 # Share an arbitrary target (a .cove service name reachable on the compose network)
 cove tunnel up https://git.cove.local
@@ -45,7 +45,7 @@ zrok2 v2 renamed the v1 verbs: `zrok reserve`/`zrok share reserved` are gone. In
 
 - `zrok2 create name <name>` — reserve a stable name (lowercase alphanumeric, 4–32 chars; enforced by `cove tunnel --public`).
 - `zrok2 share public <target> -n public:<name> --headless` — share under that name.
-- Public URLs live under **`shares.zrok.io`** (plural — v1's `share.zrok.io` is gone).
+- Public URLs live under **`share.zrok.io`** (the v2 public namespace).
 - `zrok2 modify name -r <name>` promotes an ephemeral name in place ("this share earned a permanent name").
 
 `--public` is IaC-rendered via `ZROK_SHARE_NAME` in the compose `.env` when the tunnel profile is active (bringup), so the name survives restarts.
