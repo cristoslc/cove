@@ -43,7 +43,23 @@ Everything in Cove today is either loopback-only (`127.0.0.1:8443`), LAN-reachab
 4. **Tailscale Funnel already covers the "share with the public" case** for operators who run Tailscale — with zero new services. Documenting that path (in a docs page, not code) might be the honest v1.
 5. **ssh -R to a personal VPS** is the zero-container option Cove docs can recommend with no new code. The gap it leaves: no ad-hoc URL management, no TLS termination story (you'd front it with the VPS's own nginx/Caddy), and it requires a VPS — which violates "Cove requires exactly three things from the host" *for the share feature only*, not for Cove itself.
 
-## The real question: the public DNS identity (operator follow-up, 2026-09-21)
+## Why are we doing this at all? (operator prompt, 2026-09-21)
+
+Stepping back: the two-identity rabbit hole came from conflating two use cases with very different identity needs.
+
+**Use case A — webhook testing during local dev.** Stripe/GitHub/Twilio POST to whatever URL you paste into their dashboard. They don't click the app's emitted links, don't follow its redirects, don't care about `ROOT_URL`. They need exactly one thing: a publicly reachable HTTPS URL that delivers their POST to a local receiver. The app stays `myapp.cove`, the webhook sender hits `abc123.localhost.run`, the tunnel pipes bytes. **No identity problem exists here at all.** The app doesn't even know it has a public name. This is the use case that originally motivated the musing, and it's trivial.
+
+**Use case B — interactive browsing of an app that emits self-referential links** (Forgejo PR links, OAuth-provider flows, anything where a human clicks around on the tunneled app). Here the app's own link generation (`ROOT_URL`, absolute URLs, cookie domains) matters, and the two-identity friction is real. This is the use case the whole identity chapter was trying to solve — and it's the *harder, less common* one.
+
+The smell the operator caught: **we've been redesigning Cove's naming to serve use case B, when use case A is the actual motivator and needs none of it.** Use case A works with the simplest possible tunnel — random public URL, pipe bytes to a local port, done. No canonical identity, no ROOT_URL, no split-horizon, no public domain prerequisite. The app keeps `*.cove`, the tunnel is a disposable pipe, everybody's happy.
+
+**Reframed strategy: build for use case A first. Use case B is a known limitation, not a design driver.**
+
+- `cove tunnel up <port>` → starts a managed-relay client container, prints a public HTTPS URL, pipes traffic to the local port (or to the ingress at `*.cove`). Zero identity ceremony. This covers webhook testing, ad-hoc demos, "show a friend this page for ten minutes."
+- Use case B (stable public identity for Forgejo-style apps with self-referential links) is documented as **not supported by the tunnel** — or, much later, as a separate explicit feature with its own design (likely the ROOTURL-override-while-active path). It is not the thing we build first, and it does not get to reshape Cove's local-first naming.
+- Everything in the identity chapter above (split-horizon, two-identity, ROOTURL-as-strategy, public-TLD-from-day-one) is **out of scope for v1**. Kept in the musing as a record of the thinking, but none of it gates the tunnel feature.
+
+This restores the original framing: the tunnel is an enhancement for the common, easy case. The hard case stays hard and is explicitly deferred.
 
 Operator's point: local TLS (mkcert / Cove CA) is irrelevant to *external* callers anyway — an OAuth provider hitting `auth.myapp` or a webhook sender doesn't trust a local CA and never will. What those services see is only the **public-facing appearance**: the hostname they're given and the certificate that terminates at the relay edge. So the design question collapses to: **what public DNS name does a share adopt, and who owns that domain?**
 
