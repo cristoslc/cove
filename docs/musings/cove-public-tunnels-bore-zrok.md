@@ -77,7 +77,20 @@ Cove's instinct was option 1 for ad-hoc dev apps, option 2 for stable-identity s
 - dnsmasq answers the public name locally (→ loopback ingress) and the relay answers it publicly (→ tunnel client → ingress). One name, two resolutions, app sees a single identity always.
 - Local-only apps without a share simply don't have a public name yet — they keep plain `*.cove` names and normal ingress routing. When a tunnel is added, the share *assigns* the public identity; there is exactly one identity rule everywhere: "the app's canonical name is the name the outside world uses."
 
-### But Host rewrite alone isn't enough — the ROOT_URL problem (operator follow-up, 2026-09-21)
+### Operator correction: same name inside and out — public TLD, split-horizon DNS (2026-09-21)
+
+The ROOT_URL-config approach still leaves the URLs bad: apps emit `git.tun.example` and local visitors get a name dnsmasq doesn't answer, or the identity flips between contexts. The operator's real answer: **the internal and public names must be the same name.** That kills local-only domains for tunneled apps entirely — and points at two mechanisms:
+
+1. **Public TLD from day one (the clean version).** Apps under test live on the operator's real public domain *always* — `myapp.example.com` — never on a `*.cove` alias. dnsmasq answers `myapp.example.com` locally (→ loopback ingress) while real public DNS answers it at the relay edge. Same FQDN, split-horizon resolution, the app sees one identity in every context, ROOT_URL is stable forever, no share/unshare identity churn. The `*.cove` namespace stays internal-only for Cove's own services (git.cove, vault.cove) — or they too get public names when shared, per the same rule.
+   - Cost: requires owning a public domain and a wildcard record → new prerequisite, but one the operator already accepted for stable shares.
+   - This *is* "one address, everywhere" from PURPOSE.md, finally realized fully: the FQDN doesn't change between local and public; only resolution does.
+2. **Local DNS adopts the public bridge FQDN on activation (the fallback version).** When a share activates, dnsmasq gains an entry for the public FQDN (`git.tun.example` → ingress). Local callers then use the same name the public world uses. Weaker: the name exists locally only while the share is up; identities churn between sessions; and free-tier relay names (random subdomains) make this unusable. Only works with a stable operator domain — at which point option 1 dominates it (option 2 without option 1's "always" property adds complexity for nothing).
+
+**Conclusion: option 1 is the strategy.** Apps that will ever be tunneled get their canonical identity from the operator's public domain from the start; dnsmasq's authoritative zone extends over it locally; the relay carries it publicly. `*.cove` remains the private namespace for Cove's own infrastructure. The share no longer "assigns" an identity — it *publishes* the one the app always had. This collapses the whole two-identity chapter: there was only ever supposed to be one name; the mistake was inventing a local alias for apps.
+
+*(This supersedes the ROOT_URL-config refinement below, which solved the wrong problem — with a single split-horizon name, ROOT_URL is simply set to the public FQDN at all times and there is nothing to reconcile. The sub_filter prohibition below stands regardless.)*
+
+### The ROOT_URL problem (kept for the record — subsumed by the split-horizon strategy)
 
 Operator's follow-up: apps like Forgejo don't trust the request `Host` for their generated links — they carry their own canonical identity in config. Cove already sets `FORGEJO__server__ROOT_URL` (default `https://git.cove.local/`, see `compose/docker-compose.yml:9` and `bringup.yml`). Every PR link, clone URL, and OAuth callback Forgejo emits is built from `ROOT_URL`, not from the incoming Host. So with only a Host rewrite:
 
