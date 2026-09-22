@@ -285,6 +285,7 @@ class TestConfigHtmlRendering:
         rendered = env.get_template("config.html.j2").render(**FULL_TEMPLATE_VARS)
         assert "NODE_EXTRA_CA_CERTS" in rendered
         assert "rootCA.pem" in rendered
+        assert "curl -kL -o cove-root-ca.pem https://ca.cove/config/ca" in rendered
         assert "add-trusted-cert" in rendered
         assert "update-ca-certificates" in rendered
 
