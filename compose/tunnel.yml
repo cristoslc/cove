@@ -1,0 +1,30 @@
+# Tunnel sidecar (zrok2 CLI client) — optional profile, standalone compose resource.
+# Deployed as part of the cove stack via docker-compose.yml; this file is the
+# canonical IaC declaration for the relay client used by `cove tunnel`.
+#
+# Outbound-only: no published ports. Reaches the ingress (nginx) over the
+# compose network with the target's Host preserved, and zrok.io over TLS.
+# State (zrok2 environment, enablement) persists under the Cove data root.
+
+services:
+  tunnel:
+    profiles: ["tunnel"]
+    image: ${TUNNEL_IMAGE:-openziti/zrok2:2.0.4@sha256:f607c294b79613f05e8f3dd255d3ef8bd853851dc5c8d806cc5b6d9092c83d16}
+    container_name: ${TUNNEL_CONTAINER_NAME:-cove-tunnel}
+    restart: unless-stopped
+    # Outbound-only: no published ports; reaches the ingress over the
+    # compose network (tunnel-to-ingress) and zrok.io over TLS.
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "${TUNNEL_UID:-1000}:${TUNNEL_GID:-1000}"
+    volumes:
+      - ${COVE_DATA_ROOT}/tunnel:/home/ziggy/.zrok2
+    environment:
+      PFXLOG_NO_JSON: "true"
+      ZROK_ACCOUNT_TOKEN: ${ZROK_ACCOUNT_TOKEN:-}
+    command: ["sleep", "infinity"]
+    deploy:
+      resources:
+        limits:
+          memory: ${TUNNEL_MEM_LIMIT:-256M}
