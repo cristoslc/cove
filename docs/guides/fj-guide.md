@@ -118,6 +118,64 @@ If you know `gh`, use this translation table:
 | `error: unrecognized subcommand 'comments'` (on `fj pr`) | `comments` is a subcommand of `fj pr view`, not `fj pr` | Use `fj pr view <PR> comments` |
 | `error: unrecognized subcommand 'files'` (on `fj pr`) | `files` is a subcommand of `fj pr view`, not `fj pr` | Use `fj pr view <PR> files` |
 
+## Authentication & Token Management
+
+`fj` manages two token types, both stored in
+`~/Library/Application Support/Cyborus.forgejo-cli/keys.json`:
+
+- **OAuth token** (default): `fj auth login` opens a browser OAuth flow against
+  Forgejo and stores a short-lived access token (~1 hour) plus a long-lived
+  refresh token (~30 days) in `keys.json`.
+- **Application token**: `fj auth add-token` creates a long-lived personal
+  access token (valid until revoked). Use when OAuth is impractical (headless,
+  CI) or as a fallback.
+
+### Git pushes use the OAuth helper, not GCM alone
+
+`git push`/`pull` over HTTPS to `git.cove` or `git.cove.local` must go through
+**`git-credential-oauth`** chained with **Git Credential Manager (GCM)** —
+not GCM's Generic provider by itself. The Generic provider returns cached
+OAuth access tokens verbatim with no expiry check, so pushes start failing
+with "Credentials are incorrect or have expired" roughly an hour after
+`fj auth login` (diagnosis in
+[docs/musings/gcm-oauth-token-expiry.md](../musings/gcm-oauth-token-expiry.md)).
+`git-credential-oauth` performs the OAuth flow itself and refreshes expired
+tokens; GCM provides the keychain storage.
+
+Required global git config for **both** hostnames (`git.cove` and
+`git.cove.local` — the legacy and local-domain forms; both must carry the
+helper chain, since the helper config is keyed per-host):
+
+```shell
+# Storage (once, global)
+git config --global credential.helper /usr/local/share/gcm-core/git-credential-manager
+
+# Per-host OAuth helper chain — repeat for git.cove and git.cove.local
+for h in git.cove git.cove.local git.cove.local:8443; do
+  git config --global "credential.https://${h}.helper" oauth
+  git config --global --add "credential.https://${h}.helper" osxkeychain
+  git config --global "credential.https://${h}.oauthAuthURL" /login/oauth/authorize
+  git config --global "credential.https://${h}.oauthTokenURL" /login/oauth/access_token
+  git config --global "credential.https://${h}.oauthClientID" a4792ccc-144e-407e-86c9-5e7d8d9c3269
+done
+```
+
+- The `oauthClientID` is Forgejo's client ID for the git credential flow —
+  provisioned by `cove up`; do not invent a different value.
+- `credential.https://<host>.helper` is a **multi-valued** key: `oauth`
+  runs first (fetch/refresh), `osxkeychain` stores the result.
+- Verify with:
+  `echo "protocol=https\nhost=git.cove\n" | git credential fill` — it should
+  return a current token without prompting. Repeat with `host=git.cove.local`.
+
+### Scripting against the API
+
+Do **not** scrape `keys.json` in scripts when a Vault-backed token exists.
+Retrieve the application token via the Cove credential helpers (see
+[the API workaround below](#create-a-repo-via-the-forgejo-api)):
+`cove creds vault-get forgejo-token`. Reading `keys.json` with `jq` is only
+for interactive inspection.
+
 ## Cove-Specific Conventions
 
 - `fj` is aliased in the interactive shell — use `zsh -i -c 'fj ...'` when running from non-interactive contexts (e.g., agent sessions, scripts).
@@ -150,9 +208,12 @@ curl -X POST https://git.cove.local/api/v1/user/repos \
   -d '{"name":"repo-name"}'
 ```
 
-**Retrieving the token:** `fj` stores its auth token at
+**Retrieving the token:** prefer the Vault-backed helper
+(`cove creds vault-get forgejo-token`) — see
+[Authentication & Token Management](#authentication--token-management). For
+interactive inspection only, `fj` stores its auth token at
 `~/Library/Application Support/Cyborus.forgejo-cli/keys.json` (the `token` field
-of the active host entry). Read it with `jq`:
+of the active host entry); read it with `jq`:
 
 ```shell
 jq -r '.hosts["git.cove.local"].token' \
