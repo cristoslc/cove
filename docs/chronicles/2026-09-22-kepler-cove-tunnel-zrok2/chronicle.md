@@ -30,3 +30,6 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   `zrok2 list shares` (the v2.0 listing verb, per the zrok2 CLI reference). PR
   comment for a6f1596 posted 3 times due to silent fj success + re-runs; noted,
   no action needed (duplicate comments only).
+- 2026-09-22 (implementation): Verified resource sync (compose/tunnel.yml lands in
+  cli/cove/resources/compose; dir is gitignored, sync runs at wheel build). PR comment
+  for 9e1555a posted (1 copy). Full non-e2e suite re-run: 479 passed, 25 deselected.
