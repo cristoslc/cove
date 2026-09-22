@@ -43,7 +43,54 @@ Everything in Cove today is either loopback-only (`127.0.0.1:8443`), LAN-reachab
 4. **Tailscale Funnel already covers the "share with the public" case** for operators who run Tailscale — with zero new services. Documenting that path (in a docs page, not code) might be the honest v1.
 5. **ssh -R to a personal VPS** is the zero-container option Cove docs can recommend with no new code. The gap it leaves: no ad-hoc URL management, no TLS termination story (you'd front it with the VPS's own nginx/Caddy), and it requires a VPS — which violates "Cove requires exactly three things from the host" *for the share feature only*, not for Cove itself.
 
-## Would ActivityPub or GitLab self-hosted avoid the tunnel? (operator question, 2026-09-21)
+## Two-instance Forgejo + ActivityPub federation (operator proposal, 2026-09-21)
+
+Operator's new idea: instead of tunneling to the local Forgejo, run **two Forgejo instances** — local (Cove, `*.cove`, offline-first) + public (cheap VPS, real domain, always-on) — federated via ActivityPub. Kepler talks to the public one. PRs and issues federate. Cheaper than GitLab (512MB VPS feasible).
+
+### What this buys
+
+- **No tunnel at all.** The public Forgejo is natively reachable. Kepler clones/pushes to it directly over real DNS + real TLS.
+- **Local-first preserved for the primary instance.** Cove's Forgejo stays local, offline, in `~/Documents/`, works on a plane.
+- **ActivityPub federates the social layer** — issues, PRs (as ForgeFed objects), reviews, comments — so work done on either side propagates to the other. If a Kepler-driven PR lands on the public instance, the operator sees it on the local one (and vice versa).
+- **RAM:** a public Forgejo on a $4/mo 512MB-1GB VPS is feasible. GitLab needs 4GB+.
+
+### The catch — git data doesn't federate
+
+**ActivityPub/ForgeFed federates issues, PRs, reviews, stars. It does NOT federate the git repositories themselves.** So:
+- Kepler pushes a commit to the public Forgejo's repo. That repo is a *separate git repository* on the VPS — not the same object store as Cove's local Forgejo.
+- The two instances each have their own copy of the repo. They're independent clones that share history, not mirrors.
+- To keep them in sync: `git remote add` both and push to each, or a post-receive mirror hook on one side, or manual pull. That's ceremony — the same ceremony whether or not ActivityPub is in the picture. ActivityPub doesn't remove it.
+
+### Forgejo federation maturity — not there yet (verified 2026-09-21)
+
+From the search: Forgejo's federation is **actively in progress but incomplete**. What works today: user activity following (PR #4767 — follow a user, see their activity as AP Notes). What's being worked on: following issues from Mastodon. The Forgejo FAQ explicitly warns: *"The Forgejo project reserves the right to make breaking changes to its federation components with no prior warning. Such changes may result in the (sub-)domain used for your Forgejo instance to be 'burned'."* ForgeFed (the AP extension for forge federation) is "not finished yet" per the ForgeFed site and community discussions. PR federation specifically — the operator's exact use case — is **not yet a shipped feature**. Issue federation is closer but still in progress.
+
+So: the two-instance + AP architecture is the right *direction* for a federated future, but **it's not buildable today for the PR/issue use case**. Building on it now would mean running two Forgejo instances and manually syncing repos (git-level) while waiting for AP to mature for the social layer.
+
+### Honest decomposition
+
+- **ActivityPub solves the "Kepler files a PR/issue and the operator sees it locally" problem** — once PR/issue federation ships. Not today.
+- **ActivityPub does NOT solve the "Kepler clones the repo and pushes commits" problem** — that always requires either the public instance being canonical (Cove's becomes a clone/mirror) or git-level mirroring between the two.
+- **The two-instance model shifts where the canonical repo lives.** If Kepler pushes to the public one, the public one is canonical for Kepler-facing work. Cove's local one is a satellite. That's a real shift from "Cove is the harbor, everything is local" — the harbor now has an outpost. Whether that's acceptable depends on whether the operator's primary work happens locally (Cove canonical, public is read-only mirror for Kepler) or on the public side (public canonical, Cove is a clone).
+
+### Comparison: tunnel vs two-instance
+
+| | Tunnel (single Forgejo) | Two-instance + AP |
+|---|---|---|
+| Reachability for Kepler | tunnel pipe to local Forgejo | public Forgejo, native |
+| Canonical repo | Cove (local, offline-first) | public instance (or split) |
+| Git sync needed | no (one repo) | yes (two repos must mirror) |
+| PR/issue sync | no (one instance) | AP federation — not ready today |
+| VPS cost | none (managed relay) | $4/mo VPS |
+| Complexity | tunnel client container + relay | second Forgejo + AP config + git mirroring |
+| Local-first | fully preserved | preserved for local instance; canonical may shift |
+| Works today | yes | no (AP PR federation not shipped) |
+
+### Conclusion
+
+The two-instance + AP model is the right long-term architecture for a federated multi-forge world, and it's worth watching. But for the concrete need today (Kepler reaches Forgejo for PRs), **the tunnel is the simpler, working-now answer**: one Forgejo, one repo, one canonical identity, one pipe. The two-instance model adds a VPS, a second Forgejo, git mirroring, and depends on an unfinished federation protocol — more moving parts to solve the same reachability problem.
+
+If the operator's real goal is "Kepler files PRs that I review locally without a tunnel," that's a federated future worth pursuing — but it's a bigger project than the tunnel, and it's gated on Forgejo shipping PR federation. File as a separate musing / future direction, not a v1 tunnel replacement.
 
 Short answer: **neither.** Both were considered as potential escape hatches from the tunnel identity problem. Neither avoids the fundamental reachability requirement.
 
