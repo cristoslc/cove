@@ -43,7 +43,56 @@ Everything in Cove today is either loopback-only (`127.0.0.1:8443`), LAN-reachab
 4. **Tailscale Funnel already covers the "share with the public" case** for operators who run Tailscale — with zero new services. Documenting that path (in a docs page, not code) might be the honest v1.
 5. **ssh -R to a personal VPS** is the zero-container option Cove docs can recommend with no new code. The gap it leaves: no ad-hoc URL management, no TLS termination story (you'd front it with the VPS's own nginx/Caddy), and it requires a VPS — which violates "Cove requires exactly three things from the host" *for the share feature only*, not for Cove itself.
 
-## Two-instance Forgejo + ActivityPub federation (operator proposal, 2026-09-21)
+## Two Forgejo instances, one local + one tunneled, same machine (operator proposal, 2026-09-21)
+
+Operator's refined idea: both Forgejo instances run on the local machine (no VPS). The local one is `git.cove` (offline-first, canonical). The second is a public-identity instance (`git.gitkraken.dev`) that's tunneled to the public web. Both point to the **same files on disk** — same repos — so there's one canonical repo, one set of data. The repo sees only one remote (the local one, preferably). ActivityPub federates the social layer (PRs, issues) between the two instances, if needed at all.
+
+### Why this is elegant
+
+- **No identity problem.** Each instance has its own `ROOT_URL` — local is `https://git.cove.local/`, public is `https://git.gitkraken.dev/`. No rewriting, no split-horizon, no `sub_filter`. Each instance is a clean, independent identity.
+- **No VPS.** Both containers run in Cove's compose. The public one is tunneled via the managed relay (same tunnel mechanism as before). No second machine, no $4/mo.
+- **One canonical repo on disk.** The operator's work happens against the local instance; Kepler's work arrives via the public one. Same git objects, same `~/Documents/` data root, same backups.
+- **ActivityPub is optional**, not load-bearing. If PR/issue federation matures, the two instances federate the social layer. If not, they're just two views onto the same repos with different identities — still useful.
+
+### The hard technical question: can two Forgejo instances share the same data directory?
+
+**No. Not safely.** From Codeberg's clustered-Forgejo discussion (#259): even a single Forgejo instance has race conditions (e.g. authorized-keys rewrites). Two instances on the same data directory would:
+- **Corrupt the SQLite database** — each instance has its own `app.ini`, its own DB, its own migration state. Two writers to the same SQLite file is data loss.
+- **Fight over git config writes** — Forgejo writes remotes and config to repo `.git/config` at runtime; two instances racing on the same files is undefined behavior.
+- **Desync notifications, cache, and search index** — each instance maintains its own; events fire only for the acting instance; the notification icon gets out of sync (confirmed by Codeberg cluster operators).
+- **Migration safety** — during upgrades, all but one instance must be stopped, then upgraded, then restarted. Two instances complicating that is real operational risk.
+
+Gitea Enterprise's HA docs confirm: multi-instance requires shared *POSIX* storage (NFS/Gluster) for `/data`, and even then it's an enterprise feature with caveats. On a single machine with bind mounts to `~/Documents/`, it's not supported.
+
+### Can they share the *git repo directory* but not the *app data*?
+
+Closer to viable. Forgejo's layout (`compose/docker-compose.yml:35-36`) separates app data (`/data/gitea` — DB, config, sessions) from repo storage (`/data/git` — bare repos). Two instances could:
+- Each have their **own** `/data/gitea` (own SQLite DB, own config, own `ROOT_URL`).
+- Share `/data/git` (the bare repos) — **read-only for one of them**, or with git's own file locking.
+
+But this is fragile: Forgejo writes to repo `.git/config` (hooks, remotes, etc.), and two instances writing to the same bare repo's config concurrently is unsafe. Even read-only access for the second instance would break on any push (Forgejo updates repo metadata on push). **Two Forgejo instances cannot safely share the same bare repo directory.**
+
+### What *would* work: git-level mirroring between two independent instances
+
+The safe version of the two-instance model:
+- **Instance A (local, `git.cove`):** full Forgejo, own data, own DB, canonical repos. Offline-first.
+- **Instance B (public, `git.gitkraken.dev`):** full Forgejo, own data, own DB, **separate repo copies**. Tunneled to public web.
+- **Sync:** post-receive mirror hook on A pushes to B's API/git endpoint; or B pulls from A on a schedule; or the operator pushes to both via dual remotes.
+
+This is the two-instance model from the previous section, just co-located on one machine. It's safe but adds: a second Forgejo container, a second DB, mirror config, and sync lag. The repo on B is a clone, not the same objects — pushes from Kepler land on B and must mirror back to A.
+
+### Honest assessment
+
+| Approach | Safe? | One repo? | Identity clean? | Complexity |
+|---|---|---|---|---|
+| Shared data dir | **no** (corruption) | yes | yes | lowest but broken |
+| Shared repo dir, separate app data | **no** (git config races) | yes | yes | medium but broken |
+| Two instances + git mirroring | yes | no (two copies) | yes | highest (mirror config, sync lag) |
+| **Single instance + tunnel** | **yes** | **yes** | **yes** (ROOT_URL = public) | **lowest working option** |
+
+The single-instance + tunnel — where Forgejo's `ROOT_URL` is set to the public FQDN and dnsmasq resolves it locally too — is still the simplest *working* answer. One instance, one repo, one identity, one pipe. The two-instance model is architecturally appealing (each instance is a clean identity) but either unsafe (shared data) or adds mirroring ceremony (separate data). And ActivityPub PR federation isn't shipped, so the social-layer benefit isn't available today either.
+
+**The operator's instinct — "one repo, the repo sees one remote" — is exactly right.** Only the single-instance + tunnel model delivers that. The two-instance model breaks "one repo" no matter how you slice it.
 
 Operator's new idea: instead of tunneling to the local Forgejo, run **two Forgejo instances** — local (Cove, `*.cove`, offline-first) + public (cheap VPS, real domain, always-on) — federated via ActivityPub. Kepler talks to the public one. PRs and issues federate. Cheaper than GitLab (512MB VPS feasible).
 
