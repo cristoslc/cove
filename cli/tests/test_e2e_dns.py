@@ -280,6 +280,20 @@ class TestConfigHtmlRendering:
         assert "/config/ca" in rendered
         assert "/config/dns" in rendered
 
+    def test_config_html_documents_node_ca_trust(self):
+        env = Environment(loader=FileSystemLoader(str(NGINX_DIR)))
+        rendered = env.get_template("config.html.j2").render(**FULL_TEMPLATE_VARS)
+        assert "NODE_EXTRA_CA_CERTS" in rendered
+        assert "rootCA.pem" in rendered
+        assert "add-trusted-cert" in rendered
+        assert "update-ca-certificates" in rendered
+
+    def test_config_html_no_jinja2_artifacts(self):
+        env = Environment(loader=FileSystemLoader(str(NGINX_DIR)))
+        rendered = env.get_template("config.html.j2").render(**FULL_TEMPLATE_VARS)
+        assert "{{" not in rendered
+        assert "{%" not in rendered
+
 
 class TestDnsmasqDockerfile:
     """Validate the dnsmasq Dockerfile is clean (no custom Go build)."""
