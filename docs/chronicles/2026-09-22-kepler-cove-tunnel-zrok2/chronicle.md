@@ -33,3 +33,10 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
 - 2026-09-22 (implementation): Verified resource sync (compose/tunnel.yml lands in
   cli/cove/resources/compose; dir is gitignored, sync runs at wheel build). PR comment
   for 9e1555a posted (1 copy). Full non-e2e suite re-run: 479 passed, 25 deselected.
+- 2026-09-22 (implementation): Wrap-up. `docker compose --profile tunnel config`
+  validates (outbound-only service rendered with digest pin + data-root bind).
+  Branch pushed to origin; PR #53 has 6 comments (3 duplicates of the a6f1596
+  entry from silent fj success + re-runs). Scope complete per plan: command group,
+  compose resource, bringup gating, loud auth, tests, docs. Deferred to orchestrator:
+  e2e relay-touching tests (gated), promote/reinstall (post-merge), operator zrok
+  signup + token provisioning.
