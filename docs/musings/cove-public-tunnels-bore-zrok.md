@@ -43,6 +43,18 @@ Everything in Cove today is either loopback-only (`127.0.0.1:8443`), LAN-reachab
 4. **Tailscale Funnel already covers the "share with the public" case** for operators who run Tailscale — with zero new services. Documenting that path (in a docs page, not code) might be the honest v1.
 5. **ssh -R to a personal VPS** is the zero-container option Cove docs can recommend with no new code. The gap it leaves: no ad-hoc URL management, no TLS termination story (you'd front it with the VPS's own nginx/Caddy), and it requires a VPS — which violates "Cove requires exactly three things from the host" *for the share feature only*, not for Cove itself.
 
+## The real question: the public DNS identity (operator follow-up, 2026-09-21)
+
+Operator's point: local TLS (mkcert / Cove CA) is irrelevant to *external* callers anyway — an OAuth provider hitting `auth.myapp` or a webhook sender doesn't trust a local CA and never will. What those services see is only the **public-facing appearance**: the hostname they're given and the certificate that terminates at the relay edge. So the design question collapses to: **what public DNS name does a share adopt, and who owns that domain?**
+
+Three postures:
+
+1. **Relay's shared domain (free tier):** `x7f3k.localhost.run`, `abc123.share.zrok.io`. Zero setup, but the identity is disposable and shared — fine for ad-hoc webhook debugging, bad for OAuth redirect URIs you want to pre-register (many providers pin exact redirect origins).
+2. **Operator's own domain at the relay (the real answer):** relay edge terminates `*.tun.cristos.example` via wildcard DNS + wildcard cert (zrok self-host/hosted supports a custom DNS zone with Caddy + DNS-provider API token; localhost.run supports custom domains on paid tier). The share gets a *stable, ownable* public identity (`myapp.tun.example`), redirect URIs can be registered once, and the local `*.app.cove` name becomes just the internal alias. This is the posture that makes OAuth/webhook flows actually work, because the public name is consistent across sessions.
+3. **Public name without a relay:** skip the tunnel for identity — point real DNS at the machine and terminate TLS locally. Rejected: needs a public IP; same wall as before.
+
+So the refined design: `cove tunnel up --target git.cove --public myapp.tun.example` where `--public` requires a configured operator domain (from `cove creds`), and the free-tier shared domain is the fallback when none is configured. The local `*.app.cove` identity and the public identity are separate names bound at the tunnel client (it rewrites Host on the internal hop), which matches how the ingress already routes.
+
 ## The tension with offline-first
 
 Cove's rule: third-party services may *enhance*, never *be foundational*. A self-hosted tunnel server satisfies this (bore/frp/rathole/zrok all can self-host). The risk is different: **the relay is an attack surface pointed at the public internet**, and Cove's security posture today assumes no inbound exposure at all. Any tunnel feature must be default-off, and its docs must say: only run the relay when you intend to share.
