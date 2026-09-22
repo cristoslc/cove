@@ -86,14 +86,22 @@ The ROOT_URL-config approach still leaves the URLs bad: apps emit `git.tun.examp
    - This *is* "one address, everywhere" from PURPOSE.md, finally realized fully: the FQDN doesn't change between local and public; only resolution does.
 2. **Local DNS adopts the public bridge FQDN on activation (the fallback version).** When a share activates, dnsmasq gains an entry for the public FQDN (`git.tun.example` → ingress). Local callers then use the same name the public world uses. Weaker: the name exists locally only while the share is up; identities churn between sessions; and free-tier relay names (random subdomains) make this unusable. Only works with a stable operator domain — at which point option 1 dominates it (option 2 without option 1's "always" property adds complexity for nothing).
 
-**Conclusion: option 1 is the strategy — with a hard constraint the operator named (2026-09-21): split-horizon requires a public zone you actually own. `.cove` is not a real TLD and never will be, so it can only ever answer locally — it cannot be the public-identity zone.** So:
+**Conclusion — revised twice after the operator caught a foundational error (2026-09-21):**
 
-- Apps that will ever be tunneled live on **a real registered domain the operator owns** (e.g. `myapp.cristos.dev`), from day one. dnsmasq split-horizons *that* domain locally (→ loopback ingress); the real registrar/relay answers it publicly. The single-identity property holds — but on the operator's domain, not on `.cove`.
-- `*.cove` stays **purely internal**, for Cove's own infrastructure (git.cove, vault.cove) and for apps that will never be shared publicly. It's the private namespace; it was never a candidate for public identity because it can't be.
-- A tunneled app therefore never has a `*.cove` name at all — it gets its public name up front. The "two-identity" question is dissolved because there's only ever one name, and it's a real one.
-- Cost: owning a public domain is a real prerequisite for tunneled apps. Free-tier relay shared subdomains (`abc123.localhost.run`) are the no-domain fallback — disposable identity, fine for ad-hoc webhook debugging, useless for OAuth redirect URIs or anything stable. There is no zero-prerequisite path to stable public identity; that's a fact of the internet, not a Cove design flaw.
+The split-horizon "public TLD from day one" strategy was wrong. It solves the tunnel's identity problem by breaking Cove's foundation: making apps depend on a public domain and external DNS from day one, just so an *optional* enhancement has clean identity. That inverts PURPOSE.md — "Offline by Default. The internet is optional. Network access is an enhancement, not a prerequisite." Forcing public-TLD identity on apps that may never be shared makes the enhancement load-bearing. The operator named this directly: "this is throwing out all of cove's local-first philosophy in order to accommodate public bridges that are optional."
 
-This supersedes the ROOTURL-config refinement below, which solved the wrong problem — with a single split-horizon name on a real domain, ROOT_URL is set to the public FQDN at all times and there is nothing to reconcile. The `sub_filter` prohibition below stands regardless.
+**Corrected strategy: `*.cove` is primary, always; the tunnel maps it to a public identity as an enhancement.**
+
+- Apps live on `*.cove` from day one, local-first, offline-works. This is the foundation and it doesn't move.
+- A tunnel share *maps* a local identity to a public one: `cove tunnel up --target git.cove --public git.example.com`. The public name is an enhancement-layer alias, not the app's canonical identity.
+- **The two-identity cost is the inherent price of opting into public exposure.** Apps that get shared publicly will emit some links under their local name (Forgejo's `ROOT_URL=https://git.cove.local/`) that don't resolve for public visitors. That's a real friction, and it's *acceptable* — because the alternative (forcing every app onto a public domain from day one) breaks every app that's never shared, which is most of them.
+- Mitigations, in order of preference, all enhancement-layer only:
+  1. For apps with a config knob (Forgejo `ROOT_URL`): allow the share to override it to the public FQDN *while the share is active*, restored on `cove tunnel down`. The app emits public links during the share; local links otherwise. Identity churns per-share, accepted.
+  2. For apps without a knob: accept that public visitors may see local-name links, or don't tunnel that app for OAuth/PR-link flows. The tunnel is best for webhook debugging and ad-hoc demos, not for Forgejo PR sharing — and that's fine.
+  3. `sub_filter` body rewriting: still prohibited. Still a trap.
+- The free-tier shared-subdomain fallback (random `abc123.localhost.run`) stays for zero-prerequisite ad-hoc use. No operator domain required for v1.
+
+This keeps the foundation intact: local-first wins, the tunnel is opt-in enhancement, and the identity friction is the honest cost of that opt-in rather than a reason to redesign Cove's naming. The earlier "split-horizon public TLD from day one" and "ROOT_URL-config as strategy" sections are both superseded by this. The `sub_filter` prohibition stands.
 
 ### The ROOT_URL problem (kept for the record — subsumed by the split-horizon strategy)
 
