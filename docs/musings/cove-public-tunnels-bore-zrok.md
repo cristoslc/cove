@@ -1,6 +1,12 @@
 # Cove + Public Tunnels (bore / zrok / et al)
 
-**Status:** Musing — half-formed idea. Not ready for sashay.
+**Status:** Musing — direction chosen by operator (2026-09-21): managed public relay, exposed as a `cove` CLI command. Tailscale Funnel only if fully automatable. Not yet sashayed into a spec.
+
+## Operator decision (2026-09-21)
+
+> "yes, the managed public relay is the goal. tailscale funnel only works if it can be fully automated, I want this to work as a `cove` cli command"
+
+So the shape is: **`cove tunnel <cmd>` wraps a managed public relay client**. The relay is a third-party enhancement (allowed by PURPOSE.md's enhancement clause); the *client* runs inside the harbor as a container making outbound-only connections — no inbound exposure, no VPS, no port-forwarding. Tailscale Funnel is demoted to a conditional path: only surfaced if it can be fully automated end-to-end, otherwise dropped.
 
 ## The question
 
@@ -45,19 +51,32 @@ A second tension the deeper look surfaced: **the relay needs a public IP**. Cove
 
 ## Rough shape if pursued
 
-1. `compose/` gains a `tunnel/` profile with one relay service (probably **frp** if we want hostname-based shares on one port, **bore** if we want minimal TCP only).
-2. `cove tunnel up` renders server config (ports, secret from `cove creds`), brings it up, prints the public URL(s).
-3. `cove tunnel share <local_port> [--hostname x]` opens an ad-hoc share; `cove tunnel shares` lists active; `cove tunnel down` stops everything.
-4. Forgejo public sharing stays manual: if the operator wants `git.cove` publicly reachable, they opt in explicitly and accept the exposure.
-5. Optional enhancement later: Tailscale Funnel covers the same use case with zero new services — worth documenting as the "if you already run Tailscale" path before building anything.
+Direction chosen: managed public relay + `cove tunnel` CLI command. Revised shape:
+
+1. **Pick the managed relay.** Candidates by fit:
+   - **bore.pub** (bore's free public instance): zero account, zero signup, `bore local 8000 --to bore.pub` → `bore.pub:<random-port>`. Plaintext TCP through the relay, random port URLs (not `https://`). Weakest fit for webhook work (webhooks need real HTTPS URLs; a bare TCP port usually fails TLS/SNI-based webhook delivery).
+   - **localhost.run**: SSH-based, zero install — `ssh -R 80:localhost:3000 nokey@localhost.run` → real HTTPS URL, no account for the anonymous tier. Uses the host's ssh (violates "nothing runs on the host" only in the sense that ssh already exists — Cove isn't installing it). Free tier: random subdomains, no custom domains.
+   - **zrok.io** (hosted zrok): full zrok client features (public + private shares, reserved subdomains on free tier), but requires account signup + token exchange. Richest and most "product-like" fit for a `cove tunnel` command.
+   - **localhost.run / pinggy / localhost-run style SSH wrappers** can be wrapped without any new binary at all — `cove tunnel up` literally shells out to `ssh -R`. Zero new containers, zero account ceremony on the free tier.
+2. **CLI surface.** `cove tunnel up [port]` (or `cove tunnel share`) starts the client, prints the public URL, keeps it alive; `cove tunnel ls`; `cove tunnel down`. Config (account/token, if any) from `cove creds`/1Password per ADR-017 conventions.
+3. **Client in the harbor where possible.** For zrok-style clients: a small sidecar container with the client binary, outbound-only network. For SSH-based relays: shell out to host ssh (simplest; ssh is already a host prerequisite in practice).
+4. **Naming.** Random URLs by default; reserved/stable subdomains as an opt-in upgrade once an account is configured.
+5. **Forgejo public sharing** stays a separate explicit decision — the tunnel command is for ad-hoc app testing first.
+
+### What "fully automated" means for Tailscale Funnel
+
+Funnel requires: Tailscale up + logged in, `funnel` policy enabled in the tailnet ACL, HTTPS enabled on the node, and `tailscale funnel <port>` running persistently. If `cove tunnel up` can idempotently check/enable each of those via the Tailscale CLI/API and fall back cleanly when Tailscale isn't installed, it qualifies as an automated path; if any step needs the admin console, it's out.
 
 ## Open questions
 
 - Is this a real need or a nice-to-have? (webhooks during local dev seem like the strongest actual use case)
-- **Self-hosted relay has no public IP** — the deeper look found the "relay in the harbor" idea mostly doesn't work without a VPS or port-forward. Is a docs-only recommendation (ssh -R / Tailscale Funnel / bore.pub as enhancement) actually the v1, with a first-class `cove tunnel` profile deferred until there's evidence of repeated need?
-- bore's TCP-only model vs frp's HTTP vhost model — which matches how Cove names things?
-- Does the relay port conflict with the `:443` port-collapse question in `cove-up-sudo-friction.md`?
-- zrok's private-share model is the closest fit to Cove's single-developer worldview, but its container weight (4 services + Postgres) is out of proportion for an optional profile. Revisit when a concrete need shows up?
+- Which managed relay: localhost.run (zero-account SSH, real HTTPS URLs, weakest CLI control) vs zrok.io (richest, needs account) vs bore.pub (zero-account, but bare TCP ports, no HTTPS)? Leaning: **localhost.run first** (zero signup, real HTTPS, no new binary), zrok.io as the upgrade path if reserved subdomains/private shares are wanted.
+- SSH-based wrapper runs on the host, not in a container — acceptable since ssh is already present, or does "client in the harbor" matter enough to containerize it?
+- For Forgejo: is a stable reserved share worth the account, or is ad-hoc-only fine for v1?
+- ~~Self-hosted relay has no public IP~~ — resolved: operator chose the managed-relay path.
+- ~~bore's TCP-only model vs frp's HTTP vhost model~~ — mooted by the managed-relay decision; both were self-hosted server questions.
+- Does the relay port conflict with the `:443` port-collapse question in `cove-up-sudo-friction.md`? — only matters for self-hosted relays; moot for managed relays.
+- Tailscale Funnel: automate-or-drop — needs a concrete check of whether `tailscale funnel` can be enabled/verified idempotently from the CLI without the admin console.
 
 ## See also
 
