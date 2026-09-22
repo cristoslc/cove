@@ -68,7 +68,14 @@ Options for making the app see one identity:
 2. **Proxy-Host discipline:** keep both names, but make the ingress rewrite `Host:` so the app always sees the *public* name (`proxy_set_header Host myapp.tun.example`) whether the visitor came locally or via tunnel. App stays single-identity; bookmarks/redirects emit the public name even on the sofa. Cost: ingress config per share, and the local name becomes a pure alias.
 3. **Base-URL config:** the app is configured with one canonical base URL (12-factor style). Works only for apps that honor `BASE_URL`/`X-Forwarded-Host` cleanly; many don't, and it's per-app ceremony.
 
-Cove's instinct: option 1 for ad-hoc dev apps (identity follows the tunnel, disposable), option 2 for anything that needs a stable identity both locally and publicly (e.g. Forgejo if it's ever shared). Either way the *app* sees one name — the two-identity problem is solved at the DNS/ingress layer, never inside the app.
+Cove's instinct was option 1 for ad-hoc dev apps, option 2 for stable-identity services — but the operator wants **one strategy**, and re-reading it: **option 2 subsumes option 1.** If the ingress always rewrites `Host:` to the public name, then the app has a single identity (`myapp.tun.example`) regardless of whether a local alias exists at all. Option 1 is just option 2 with the local alias dropped from dnsmasq — a naming detail, not a strategy.
+
+**Single strategy adopted (operator, 2026-09-21): the ingress-host-rewrite rule.**
+
+- The tunnel client binds a share: `public name ⇄ target service`.
+- The ingress (or the tunnel client's local hop) always presents the **public name** as `Host:` to the target, whether the visitor arrived via relay or locally.
+- dnsmasq answers the public name locally (→ loopback ingress) and the relay answers it publicly (→ tunnel client → ingress). One name, two resolutions, app sees a single identity always.
+- Local-only apps without a share simply don't have a public name yet — they keep plain `*.cove` names and normal ingress routing. When a tunnel is added, the share *assigns* the public identity; there is exactly one identity rule everywhere: "the app's canonical name is the name the outside world uses."
 
 ## The tension with offline-first
 
