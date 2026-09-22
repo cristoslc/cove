@@ -4,12 +4,26 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.1] — 2026-09-22
 
 ### Added
 - **Node/Electron CA trust documentation** on the `ca.cove` config page (`/config/`) — Node.js and Electron never read the OS trust store, so TLS to `*.cove` names fails even after the OS trusts the Cove CA. The page now documents `NODE_EXTRA_CA_CERTS`, a download-first path (`curl -kL -o cove-root-ca.pem https://ca.cove/config/ca`), durable OS-store alternatives (macOS `security add-trusted-cert`, Linux `update-ca-certificates`), and the `launchctl setenv` non-durability caveat. See issue [#51](https://git.cove.local/cristos/cove/issues/51).
 - **Forgejo Actions Runner service** (`cove runner up|down|status|logs`) — optional profiled CI runner that polls Forgejo for Actions workflows and executes them in Docker sibling containers. Outbound-only, no nginx route, no 1Password seed. Registration handled by `provision_forgejo.yml` IaC. See [docs/services/forgejo-runner.md](docs/services/forgejo-runner.md).
 - **Forgejo webhook allowlist** (`webhook.ALLOWED_HOST_LIST`) — explicit, configurable compose env var defaulting to `loopback` (upstream default `external` blocked all loopback/private webhook delivery, breaking local receivers like tidesman). Widen per-receiver via `FORGEJO_WEBHOOK_ALLOWED_HOST_LIST=loopback,<host-or-cidr>`. See [docs/services/forgejo.md](docs/services/forgejo.md) and issue [#44](https://git.cove.local/cristos/cove/issues/44).
+
+### Fixed
+- **cryptography CVE-2026-69247** (GHSA-g6cj-pr64-35w5, Bleichenbacher oracle in `pkcs7_decrypt_*`) — dependency floor raised to `cryptography>=50.0.0` (patched release), lock resolves 50.0.1, so the pinned version cannot regress.
+- **Runtime `.env` preserved across compose re-extraction** — `extract_resources()` no longer deletes the deployed `.env` on a promote (the 2026-09-02 incident: promote wiped `.env`, a bare `docker compose up` then booted Forgejo against an empty data mount). `cove up` additionally fails loud before bringup if `docker compose config` reports unset `*_DATA_ROOT` variables. See `docs/tech-debt/extract-resources-deletes-env.md`.
+- **Bringup bind-mount dir guard** — bringup fails loudly if Docker auto-created directories at file-mount targets.
+
+## [0.5.0] — 2026-08-14
+
+### Added
+- **`cove status` shows stopped optional services** — status output no longer hides profiled optionals; `cove up` reconciles the running ones. Stopped optionals no longer fail the status exit code.
+
+### Fixed
+- **`cove up` BECOME password prompted once** — not once per playbook.
+- **Speedtest Tracker admin env re-injected on re-run**; `DISPLAY_TIMEZONE` set. `APP_KEY` no longer clobbered; Cove Admin secrets pulled in one batch.
 
 ## [0.4.1] — 2026-08-12
 
@@ -72,6 +86,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 Initial public release of the Cove CLI.
 
+[0.5.1]: https://git.cove.local/cristos/cove/releases/tag/v0.5.1
+[0.5.0]: https://git.cove.local/cristos/cove/releases/tag/v0.5.0
+[0.4.1]: https://git.cove.local/cristos/cove/releases/tag/v0.4.1
 [0.3.0]: https://git.cove.local/cristos/cove/releases/tag/v0.3.0
 [0.2.0]: https://git.cove.local/cristos/cove/releases/tag/v0.2.0
 [0.1.0]: https://git.cove.local/cristos/cove/releases/tag/v0.1.0
