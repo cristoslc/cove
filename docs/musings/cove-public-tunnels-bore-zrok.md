@@ -43,7 +43,17 @@ Everything in Cove today is either loopback-only (`127.0.0.1:8443`), LAN-reachab
 4. **Tailscale Funnel already covers the "share with the public" case** for operators who run Tailscale — with zero new services. Documenting that path (in a docs page, not code) might be the honest v1.
 5. **ssh -R to a personal VPS** is the zero-container option Cove docs can recommend with no new code. The gap it leaves: no ad-hoc URL management, no TLS termination story (you'd front it with the VPS's own nginx/Caddy), and it requires a VPS — which violates "Cove requires exactly three things from the host" *for the share feature only*, not for Cove itself.
 
-## Forgejo's tunnel-friendly configuration (operator question, 2026-09-21)
+## Would ActivityPub or GitLab self-hosted avoid the tunnel? (operator question, 2026-09-21)
+
+Short answer: **neither.** Both were considered as potential escape hatches from the tunnel identity problem. Neither avoids the fundamental reachability requirement.
+
+**ActivityPub (Forgejo federation):** Forgejo federation is real and in progress, but it doesn't solve the core use case. Kepler needs `git clone` / `git push` — git protocol over HTTP/SSH, not ActivityPub. ActivityPub federates social metadata (stars, issues, PRs as objects), not git data transfer. Worse: ActivityPub federation is server-to-server HTTP, so federating instances must be *publicly reachable to federate at all* — it adds a public-exposure requirement rather than removing one. Orthogonal to the tunnel: helps with event propagation, doesn't help with git operations. File under "interesting future feature, not a tunnel replacement."
+
+**GitLab self-hosted:** Heavier (4GB+ RAM, PostgreSQL + Redis + Sidekiq vs Forgejo's <512MB SQLite). More mature remote-access features (built-in Pages with custom domains, built-in registry) — but doesn't solve reachability. You still need it publicly reachable for Kepler to clone/push. Would break Cove's minimalism principles (SQLite, single-binary, opinionated simplicity) without removing the tunnel need. The tunnel problem is identical on GitLab.
+
+**The real insight from considering both:** a publicly-reachable git instance is inherently a public service. There's no protocol swap or platform swap that avoids exposing it. The "native" solution is a VPS-hosted Forgejo with real public DNS — but that breaks local-first (the forge isn't local anymore, doesn't work on a plane, data leaves `~/Documents/`). The tunnel is the compromise that keeps the forge local while making it reachable, and Forgejo is already one of the most tunnel-friendly apps available (three config knobs: `ROOT_URL`, `DOMAIN`, `SSH_DOMAIN`). Neither ActivityPub nor GitLab changes that tradeoff.
+
+**What this confirms about the tunnel design:** the tunnel solves *reachability*, and reachability is the actual problem. Identity is solved by Forgejo's own config (not the tunnel, not DNS tricks, not body rewriting). The tunnel is a pipe; the app is its own identity authority. This is the simplest possible division of responsibility, and both alternative approaches considered here would have added complexity without removing the need for a pipe.
 
 Operator's question: "does forgejo have a reverse proxy or tunnel-friendly configuration?" Yes — Forgejo is explicitly designed for reverse-proxy deployment, and it has the exact knobs this use case needs. From the Forgejo docs and verified against Cove's current compose:
 
