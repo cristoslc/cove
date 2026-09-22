@@ -1,6 +1,10 @@
 # Cove + Public Tunnels (bore / zrok / et al)
 
-**Status:** Musing — direction chosen by operator (2026-09-21): managed public relay, exposed as a `cove` CLI command. Tailscale Funnel only if fully automatable. Not yet sashayed into a spec.
+**Status:** Musing — kept for reference. The original trigger (Forgejo not reachable by Kepler) was resolved as a **TLS configuration issue, not a tunneling need** (2026-09-21). The use case for public tunneling may resurface differently; the design thinking here remains worth keeping but is not active.
+
+## Resolution (2026-09-21)
+
+The motivating problem — "make Forgejo accessible to Kepler via gitkraken.dev" — turned out to be a TLS problem, not a reachability problem. No tunnel was needed. The musing is retained because the design exploration (managed relay, tunnel-to-ingress, Forgejo's ROOT_URL/SSH_DOMAIN knobs, two-instance analysis, ActivityPub federation assessment) is broadly useful if a public-tunneling need resurfaces with a different shape.
 
 ## Operator decision (2026-09-21)
 
