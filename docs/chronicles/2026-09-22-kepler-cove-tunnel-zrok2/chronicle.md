@@ -49,3 +49,18 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   `share.zrok.io` (red-green: failing test first, then fixed ZROK2_DOMAIN + docs),
   minor nits accepted (status-grep idempotency guard, unused SHARE_TOKEN_OP_REF,
   tunnel.yml networks key). Post-fix gate: 482 passed.
+
+- 2026-09-22 (orchestrator): Staging deploy + E2E. Deploy OK (wheel build, cove up
+  re-rendered nginx — note: default.conf was missing on the deployed stack until a
+  manual `.staging-venv/bin/cove up` re-ran the render; deploy.sh's cove up had
+  aborted on the BECOME prompt in non-interactive mode). E2E: DNS suite green
+  (config/ca fixed by re-render). Staging-marked suites: test_litellm E2E failures
+  (6) reproduce IDENTICALLY on pristine fjl/main (verified in a throwaway worktree
+  with the same live stack) — pre-existing on trunk, not caused by this branch:
+  test_models_endpoint expects unauthenticated 200 but trunk commit ab01427
+  (admin-UI/master-key auth) now requires a Bearer key; the /key/generate, /user/new,
+  /prompts/test 403 tests and read_only/444 checks likewise mismatch the current
+  stack (route-whitelist removal, no read_only in compose). test_speedtest failures
+  are also stack-state (speedtest unhealthy pending APP_KEY from 1Password). None of
+  the failing paths touch tunnel code. Escalation guard not triggered — these are
+  trunk-baseline failures, recorded here and for the operator handoff.
