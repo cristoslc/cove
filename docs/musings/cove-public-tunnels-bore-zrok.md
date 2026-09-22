@@ -43,7 +43,25 @@ Everything in Cove today is either loopback-only (`127.0.0.1:8443`), LAN-reachab
 4. **Tailscale Funnel already covers the "share with the public" case** for operators who run Tailscale — with zero new services. Documenting that path (in a docs page, not code) might be the honest v1.
 5. **ssh -R to a personal VPS** is the zero-container option Cove docs can recommend with no new code. The gap it leaves: no ad-hoc URL management, no TLS termination story (you'd front it with the VPS's own nginx/Caddy), and it requires a VPS — which violates "Cove requires exactly three things from the host" *for the share feature only*, not for Cove itself.
 
-## Why are we doing this at all? (operator prompt, 2026-09-21)
+## The actual goal (operator clarification, 2026-09-21)
+
+> "ah, but B is the issue — we want to make forgejo accessible to kepler via gitkraken.dev"
+
+Use case B isn't a hypothetical edge case. **It's the primary goal.** The concrete target: Forgejo reachable at a stable public URL on `gitkraken.dev` so that Kepler (an external system, not on the tailnet) can clone from and push to it on demand. That means:
+
+- Real identity: `git.gitkraken.dev` (or similar), stable, real TLS, real public DNS.
+- `ROOT_URL` must be the public URL — Forgejo emits PR/clone/clone-SSH links that Kepler and GitKraken follow; they have to resolve publicly.
+- The tunnel must be **persistently up**, not ad-hoc — Kepler needs Forgejo reachable on demand, not "when the operator feels like sharing."
+- Local-first still holds for everything *else*: Cove's own services (vault, litellm, pages) and dev apps stay `*.cove`, offline-first, untouched.
+
+So the design has **two tiers**, not one strategy forced on everything:
+
+1. **Stable public shares for designated services (the Forgejo/Kepler case).** A configured, persistent tunnel with a real owned-domain FQDN, split-horizon DNS (dnsmasq answers `git.gitkraken.dev` locally → ingress; real DNS → relay → tunnel client → ingress), `ROOT_URL` set to the public FQDN permanently. This is use case B, done right, for the specific services that need it. It requires the operator's domain + a persistent relay relationship — accepted cost for a persistent public Forgejo.
+2. **Ad-hoc disposable shares for dev apps (the webhook-testing case).** `cove tunnel up <port>` → random public URL, pipe bytes, throw away. No identity ceremony. Use case A, unchanged.
+
+The two tiers share the same tunnel client container and relay; they differ in persistence and identity. Tier 1 is configured in compose/bringup (IaC — the Forgejo share is declared, not ad-hoc). Tier 2 is CLI-driven and ephemeral.
+
+**What this resolves from the identity chapter:** the split-horizon-on-owned-domain approach was right — it was just wrongly proposed for *all* apps. It's right for Forgejo-as-public-service, and wrong for everything else. Local-first holds for the everything-else; Forgejo gets a real public identity because it genuinely needs one. The `sub_filter` prohibition stands. The "two-identity problem" doesn't apply to Forgejo because it has one identity — the public one — and dnsmasq makes it resolve locally too.
 
 Stepping back: the two-identity rabbit hole came from conflating two use cases with very different identity needs.
 
