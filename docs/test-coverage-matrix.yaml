@@ -265,3 +265,10 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "config page documents Node/Electron CA trust (NODE_EXTRA_CA_CERTS)"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
