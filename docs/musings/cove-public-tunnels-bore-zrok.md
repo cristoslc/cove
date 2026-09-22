@@ -43,7 +43,23 @@ Everything in Cove today is either loopback-only (`127.0.0.1:8443`), LAN-reachab
 4. **Tailscale Funnel already covers the "share with the public" case** for operators who run Tailscale — with zero new services. Documenting that path (in a docs page, not code) might be the honest v1.
 5. **ssh -R to a personal VPS** is the zero-container option Cove docs can recommend with no new code. The gap it leaves: no ad-hoc URL management, no TLS termination story (you'd front it with the VPS's own nginx/Caddy), and it requires a VPS — which violates "Cove requires exactly three things from the host" *for the share feature only*, not for Cove itself.
 
-## The actual goal (operator clarification, 2026-09-21)
+## Forgejo's tunnel-friendly configuration (operator question, 2026-09-21)
+
+Operator's question: "does forgejo have a reverse proxy or tunnel-friendly configuration?" Yes — Forgejo is explicitly designed for reverse-proxy deployment, and it has the exact knobs this use case needs. From the Forgejo docs and verified against Cove's current compose:
+
+**The three knobs that matter for a tunnel share:**
+
+1. **`ROOT_URL`** (`FORGEJO__server__ROOT_URL`, currently `https://git.cove.local/` in Cove). The canonical public URL Forgejo stamps on every link it generates — PR URLs, clone URLs, OAuth callbacks, email links. Set this to `https://git.gitkraken.dev/` and every link Forgejo emits works for Kepler and GitKraken, period. This is the single most important setting; it's the app's whole identity.
+2. **`DOMAIN`** (`FORGEJO__server__DOMAIN`, currently `git.cove.local`). The server's domain for display and internal routing. Usually matches `ROOT_URL`'s host. Set to `git.gitkraken.dev`.
+3. **`SSH_DOMAIN`** (`FORGEJO__server__SSH_DOMAIN`, currently `git.cove.local`, `compose/docker-compose.yml:14`). **This is the key insight: Forgejo separates HTTP identity from SSH identity.** Clone URLs show `git@git.cove.local:org/repo` for SSH and `https://git.cove.local/org/repo` for HTTP. You can set `ROOT_URL=https://git.gitkraken.dev/` (HTTP goes through the tunnel) while keeping `SSH_DOMAIN=git.cove.local` (SSH stays local-only via tailnet) — or set `SSH_DOMAIN` to a separate public host if SSH needs to be public too. **For Kepler, HTTP through the tunnel is probably enough; SSH can stay on the tailnet.**
+
+**What this means for the tunnel design:**
+
+- Forgejo doesn't need body rewriting, Host-header tricks, or split-horizon DNS to work behind a tunnel. It needs **three config values set correctly** — `ROOT_URL`, `DOMAIN`, `SSH_DOMAIN` — and a reverse proxy (nginx) forwarding to it with standard headers (`Host`, `X-Forwarded-Proto`). That's it. Forgejo is one of the most tunnel-friendly apps you could pick.
+- The "messy use case" is actually clean: `cove tunnel` for Forgejo = set `ROOT_URL`/`DOMAIN` to the public FQDN + ensure nginx routes the public name to Forgejo + start the persistent tunnel. The config is IaC (compose env, rendered by bringup), not runtime hacks.
+- **The split-horizon DNS is still useful but not load-bearing for Forgejo's correctness.** Forgejo with `ROOT_URL=https://git.gitkraken.dev/` works for public visitors regardless of what local DNS does. Split-horizon (dnsmasq answering `git.gitkraken.dev` locally → ingress) is a *local convenience* so the operator's browser uses the same name; without it, the operator just uses `git.cove` locally and `git.gitkraken.dev` remotely, and Forgejo doesn't care because it reads `ROOT_URL`, not the incoming Host.
+
+**The real question this surfaces: does Forgejo even need the tunnel to think about identity at all?** Almost no. The tunnel's job is purely *reachability* — pipe public traffic to nginx → Forgejo. Forgejo handles its own identity via `ROOT_URL`. The tunnel client doesn't rewrite Host, doesn't do split-horizon, doesn't manage identity. It just carries bytes. The identity lives in Forgejo's config, set once, stable forever. This is much simpler than the whole identity chapter assumed.
 
 > "ah, but B is the issue — we want to make forgejo accessible to kepler via gitkraken.dev"
 
