@@ -59,9 +59,11 @@ Direction chosen: managed public relay + `cove tunnel` CLI command. Revised shap
    - **zrok.io** (hosted zrok): full zrok client features (public + private shares, reserved subdomains on free tier), but requires account signup + token exchange. Richest and most "product-like" fit for a `cove tunnel` command.
    - **localhost.run / pinggy / localhost-run style SSH wrappers** can be wrapped without any new binary at all — `cove tunnel up` literally shells out to `ssh -R`. Zero new containers, zero account ceremony on the free tier.
 2. **CLI surface.** `cove tunnel up [port]` (or `cove tunnel share`) starts the client, prints the public URL, keeps it alive; `cove tunnel ls`; `cove tunnel down`. Config (account/token, if any) from `cove creds`/1Password per ADR-017 conventions.
-3. **Client in the harbor where possible.** For zrok-style clients: a small sidecar container with the client binary, outbound-only network. For SSH-based relays: shell out to host ssh (simplest; ssh is already a host prerequisite in practice).
-4. **Naming.** Random URLs by default; reserved/stable subdomains as an opt-in upgrade once an account is configured.
-5. **Forgejo public sharing** stays a separate explicit decision — the tunnel command is for ad-hoc app testing first.
+3. ~~Client in the harbor where possible~~ — **operator: container, not host ssh.** The tunnel client is a small sidecar container on the compose network. Outbound-only network; no published ports. This resolves the host-ssh question entirely: nothing shells out on the host. Note: the localhost.run SSH mode would need an ssh *client* inside the sidecar container (e.g. dropbear or openssh-client in a tiny image) — still a container, still outbound-only.
+4. **Tunnel-to-ingress, not tunnel-to-host-port** (operator follow-up, 2026-09-21): set the app up locally with a `*.app.cove.local`-style address through nginx ingress, then tunnel to *that*, not to a raw host port. **This is the right shape.** The ingress already owns Host-based routing for every `*.cove` service (`default.conf.j2` server blocks) — tunneling to it means the public URL traverses the identical path a local visitor takes: same routing rules, same upstreams. The tunnel client container sits on the compose network and proxies `https://nginx` with the right `Host:` header out through the relay; `cove tunnel up --target git.cove` = "make the existing ingress route publicly reachable". TLS is simple: the public certificate is the *relay's* (localhost.run/zrok terminate real HTTPS at their edge); the ingress's self-signed `*.cove` cert only covers the relay→client→nginx hop, which never leaves the machine. The one thing to verify per relay: Host header preservation end-to-end (both candidates do this).
+   - If the operator wants dedicated sandbox apps rather than existing services, a wildcard `*.app.cove` ingress route + dnsmasq entry gives each share a real local identity (`webhook-test-1.app.cove`) mapping 1:1 to its public URL — an ingress extension, worth doing regardless.
+5. **Naming.** Random URLs by default; reserved/stable subdomains as an opt-in upgrade once an account is configured.
+6. **Forgejo public sharing** stays a separate explicit decision — the tunnel command is for ad-hoc app testing first.
 
 ### What "fully automated" means for Tailscale Funnel
 
@@ -71,7 +73,7 @@ Funnel requires: Tailscale up + logged in, `funnel` policy enabled in the tailne
 
 - Is this a real need or a nice-to-have? (webhooks during local dev seem like the strongest actual use case)
 - Which managed relay: localhost.run (zero-account SSH, real HTTPS URLs, weakest CLI control) vs zrok.io (richest, needs account) vs bore.pub (zero-account, but bare TCP ports, no HTTPS)? Leaning: **localhost.run first** (zero signup, real HTTPS, no new binary), zrok.io as the upgrade path if reserved subdomains/private shares are wanted.
-- SSH-based wrapper runs on the host, not in a container — acceptable since ssh is already present, or does "client in the harbor" matter enough to containerize it?
+- ~~SSH-based wrapper runs on the host, not in a container~~ — operator prefers a container. Confirmed shape below.
 - For Forgejo: is a stable reserved share worth the account, or is ad-hoc-only fine for v1?
 - ~~Self-hosted relay has no public IP~~ — resolved: operator chose the managed-relay path.
 - ~~bore's TCP-only model vs frp's HTTP vhost model~~ — mooted by the managed-relay decision; both were self-hosted server questions.
