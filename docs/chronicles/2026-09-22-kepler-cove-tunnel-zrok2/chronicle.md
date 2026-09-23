@@ -195,3 +195,15 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   free-tier interstitial CAN also be bypassed via the `skip_zrok_interstitial`
   HTTP header (any value) — our announced link uses `?interstitial=1`, which is
   the documented equivalent. Gate: 549 passed.
+- 2026-09-23 (implementation): The "not working" 301-loop root cause, third and
+  final: ad-hoc (bare-target) shares rendered their nginx route AFTER the share
+  process started — but the foreground share BLOCKS FOREVER, so the route render
+  never ran while the share was live → share reachable → nginx default HTTP
+  server 301 → loop. Fixed: routes are now rendered MID-STREAM the moment the
+  URL is announced (on-url callback in _run_share_foreground applies share=
+  service state + nginx reload before the first visitor can arrive). Also fixed
+  the operator's deployed stack: (a) routed the live share z8ba1y38t49b to
+  speedtest, (b) repaired the TRUNCATED SPEEDTEST_APP_KEY ("base64:iDup…", 14
+  payload chars vs the required 44) — Laravel halted init on it → backend dead
+  → 502. Regenerated a proper key, recreated the container; public URL now
+  serves (200 at /admin/login, 302 root → login). Gate: 549 passed.
