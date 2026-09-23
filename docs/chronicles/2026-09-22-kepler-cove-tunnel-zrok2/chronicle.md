@@ -213,3 +213,10 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   nginx reloaded ("Route for '<token>' removed." printed). Without this the
   rendered route lingered until the next up/down. No-route-state case is a
   no-op. Gate: 551 passed.
+- 2026-09-23 (orchestrator-sashay): Sashay CLOSED — PR #53 approved by the
+  operator. Feature complete: `cove tunnel` (up/ls/down/reset-token) with
+  interactive token onboarding, platform-aware per-arch image pinning, mid-stream
+  route rendering, orphan-share cleanup, clickable interstitial-skipping URL,
+  and full Ctrl-C teardown. Verified end-to-end on the operator's stack.
+  Promote is a post-merge release action (not this session's): test gate →
+  sync_compose_resources → wheel build → uv tool install --force.
