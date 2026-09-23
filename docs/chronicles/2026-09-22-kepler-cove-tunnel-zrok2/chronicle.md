@@ -163,3 +163,10 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   was empty). (c) Ad-hoc (picker-picked) shares now capture the server-generated
   token from the announced URL and persist share=service in COVE_TUNNEL_SHARES so
   nginx routes them and `down` cleans up. Gate: 544 passed.
+- 2026-09-23 (implementation): Clickable + interstitial-skip announcement, and the
+  live shares healed. `_announce_url` emits the OSC 8 link pointing at
+  `<url>?interstitial=1` (zrok's documented skip-interstitial query) — "Open:"
+  line says "skips interstitial". Existing live shares (30 ad-hoc tokens) were
+  mapped to 'ingress' routes, rendered into cove-tunnel-shares.conf, nginx
+  reloaded; hop probe now 200 and public URLs verified working
+  (vbkvlkkffili.shares.zrok.io → 200). Gate: 544 passed.
