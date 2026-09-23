@@ -1358,3 +1358,57 @@ class TestUpFlow:
         result = runner.invoke(t.tunnel, ["up", "speedtest"])
         assert result.exit_code == 0, result.output
         assert "Tunnel active: https://abcd12fg34hi.shares.zrok.io" in result.output
+
+
+class TestOrphanCleanup:
+    def test_up_cleans_stale_shares(self, fake_compose_env, monkeypatch):
+        import cove.tunnel as t
+        monkeypatch.setattr(t, "discover_services", lambda: [
+            t.TunnelService("speedtest", "https://speedtest.cove.local",
+                            "http://speedtest-tracker:80"),
+        ])
+        monkeypatch.setattr(t, "_resolve_share_target",
+                            lambda target, services, private_mode:
+                            ("http://nginx", services[0]))
+        monkeypatch.setattr(t, "_ensure_shares_file", lambda: None)
+        monkeypatch.setattr(t, "_ensure_sidecar", lambda: None)
+        monkeypatch.setattr(t, "_ensure_enabled", lambda: None)
+        deleted = []
+
+        def fake_capture(*args, **kwargs):
+            if args and args[:2] == ("list", "shares"):
+                return subprocess.CompletedProcess(
+                    args, 0,
+                    stdout="│ stale1234567 │ stale1234567.shares.zrok.io │ ... │\n"
+                           "│ stale1234567 │ stale1234567.shares.zrok.io │ ... │\n",
+                    stderr="")
+            if args and args[:2] == ("delete", "share"):
+                deleted.append(args[2])
+                return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+            if args and args[:2] == ("share", "public"):
+                # foreground path would block; raise to end the test here
+                raise KeyboardInterrupt
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
+        monkeypatch.setattr(t.subprocess, "Popen", lambda *a, **k: (_ for _ in ()).throw(AssertionError("skip popen")))
+        runner = CliRunner()
+        result = runner.invoke(t.tunnel, ["up", "speedtest"])
+        import traceback as tb
+        if result.exception:
+            tb.print_exception(type(result.exception), result.exception, result.exception.__traceback__)
+        assert deleted == ["stale1234567"], f"deleted={deleted}"
+
+    def test_cleanup_failure_is_warning_not_fatal(self, monkeypatch):
+        import cove.tunnel as t
+
+        def fake_capture(*args, **kwargs):
+            if args and args[:2] == ("list", "shares"):
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="│ stale1234567 │ stale1234567.shares.zrok.io │", stderr="")
+            if args and args[:2] == ("delete", "share"):
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="boom")
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
+        t._clean_orphan_shares()

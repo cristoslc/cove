@@ -184,3 +184,14 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   the share. Now `_share_public` always runs (foreground stream announces the
   URL), and the captured token is read afterwards for the route state. Also
   hardened foreground Popen with stdin=DEVNULL. Gate: 547 passed.
+- 2026-09-23 (implementation): Stale-share cleanup + memory bump (from operator's
+  502 + OOM findings). The tunnel container was OOM-killed (exit 137, 256M limit)
+  while ~9 zrok2 share client processes ran concurrently; 42 share records
+  survived server-side with zero live clients → every URL 502'd. Fixes: (a)
+  `_clean_orphan_shares()` on every `up` — deletes server-side share records with
+  no live client (parallel, 8 workers; failures are warnings, not fatal);
+  unicode-pipe table parsing fixed; (b) tunnel memory limit 256M → 1G default
+  (TUNNEL_MEM_LIMIT). Live stack cleaned: 42 → 0 stale records. Note: zrok2
+  free-tier interstitial CAN also be bypassed via the `skip_zrok_interstitial`
+  HTTP header (any value) — our announced link uses `?interstitial=1`, which is
+  the documented equivalent. Gate: 549 passed.
