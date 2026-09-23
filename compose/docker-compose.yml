@@ -286,7 +286,10 @@ services:
       ZROK_ACCOUNT_TOKEN: ${ZROK_ACCOUNT_TOKEN:-}
     networks:
       - default
-    command: ["sleep", "infinity"]
+    # ENTRYPOINT-CMD: the image entrypoint is `zrok2` (Dockerfile CMD/ENTRYPOINT
+    # pair), so an override command of `sleep infinity` is parsed BY zrok2 as a
+    # subcommand and crash-loops. Run the sleeper directly with exec form.
+    entrypoint: ["/usr/bin/env", "sleep", "infinity"]
     deploy:
       resources:
         limits:
