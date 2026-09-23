@@ -16,6 +16,7 @@ from cove.creds import creds
 from cove.litellm import litellm
 from cove.speedtest import speedtest
 from cove.runner import runner
+from cove.tunnel import tunnel
 from cove.project import (
     _inject, _strip, _container_env, _render_context, _render_guidance,
     _render_agents_block, _write_detail_cove, _write_fj_detail, _write_gh_detail,
@@ -249,6 +250,7 @@ app.add_command(creds)
 app.add_command(litellm)
 app.add_command(speedtest)
 app.add_command(runner)
+app.add_command(tunnel)
 
 
 @app.command()
