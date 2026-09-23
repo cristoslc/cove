@@ -452,13 +452,14 @@ def _run_share_foreground(args: list[str]) -> None:
                 line = key.fileobj.readline()
                 if not line:
                     raise StopIteration
-                sys.stdout.write(f"  {line}")
-                sys.stdout.flush()
+                if announced:
+                    sys.stdout.write(f"  {line}")
+                    sys.stdout.flush()
                 if not announced:
                     url = _extract_url(line)
                     if url:
                         announced = True
-                        click.echo(f"Tunnel active: {url}")
+                        _announce_url(url)
             if proc.poll() is not None and not announced:
                 break
     except KeyboardInterrupt:
@@ -474,7 +475,7 @@ def _run_share_foreground(args: list[str]) -> None:
             output = (proc.stdout.read() if proc.stdout else "") or ""
             url = _extract_url(output)
             if url:
-                click.echo(f"Tunnel active: {url}")
+                _announce_url(url)
 
 
 def _share_public(target: str, name: str | None) -> str | None:
@@ -500,6 +501,7 @@ def _share_public(target: str, name: str | None) -> str | None:
         raise click.ClickException(
             f"Could not parse a public URL from zrok2 output: {result.stdout.strip()}"
         )
+    _announce_url(url)
     return url
 
 
@@ -965,7 +967,16 @@ def up(target, name, private_mode):
         shares[share_name] = route_service.name
         _write_share_state(shares)
         _apply_share_routes(shares)
-    click.echo(f"Tunnel active: {url}")
+    _announce_url(url)
+
+
+def _announce_url(url: str) -> None:
+    """Print the URL with an OSC 8 hyperlink so terminals render it
+    clickable."""
+    click.echo(f"\nTunnel active: {url}")
+    click.echo(
+        f"Open:  \x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\  (Ctrl-C to stop)"
+    )
 
 
 def _generate_share_token() -> str:
