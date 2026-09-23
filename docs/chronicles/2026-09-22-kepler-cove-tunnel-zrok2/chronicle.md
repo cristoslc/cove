@@ -170,3 +170,10 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   mapped to 'ingress' routes, rendered into cove-tunnel-shares.conf, nginx
   reloaded; hop probe now 200 and public URLs verified working
   (vbkvlkkffili.shares.zrok.io → 200). Gate: 544 passed.
+- 2026-09-23 (implementation): "No feedback" on `up speedtest` fixed. zrok2 2.0.x
+  prints the endpoint as a BARE token line ("access your zrok share at the
+  following endpoints:\n <token>.shares.zrok.io" — NO https:// scheme, JSON-escaped
+  \n) so `_extract_url` (which required https://) never matched → announce never
+  fired → chatter suppression left the operator with zero output. `_extract_url`
+  now synthesizes `https://<token>.shares.zrok.io` from the bare endpoint token
+  (multi-line and JSON-escaped variants). 2 new tests (104 tunnel tests). Gate: 546.

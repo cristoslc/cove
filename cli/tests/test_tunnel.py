@@ -1270,3 +1270,18 @@ class TestClickableUrl:
         t._share_public("http://nginx", "named")
         clickable = [m for m in emitted if "\x1b]8;;" in m]
         assert clickable and "https://named.shares.zrok.io" in clickable[0]
+
+
+class TestUrlExtractionJSON:
+    def test_bare_endpoint_token_line(self):
+        import cove.tunnel as t
+        line = ('{"msg":"access your zrok share at the following endpoints:'
+                '\\n 8rddw4qstynj.shares.zrok.io"}')
+        assert t._extract_url(line) == "https://8rddw4qstynj.shares.zrok.io"
+
+    def test_streamed_line_format(self):
+        import cove.tunnel as t
+        line = ('{"time":"2026-09-23T05:30:52Z","level":"INFO",'
+                '"msg":"access your zrok share at the following endpoints:'
+                '\\n 8rddw4qstynj.shares.zrok.io"}\n')
+        assert t._extract_url(line) == "https://8rddw4qstynj.shares.zrok.io"
