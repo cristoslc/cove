@@ -207,3 +207,9 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   payload chars vs the required 44) — Laravel halted init on it → backend dead
   → 502. Regenerated a proper key, recreated the container; public URL now
   serves (200 at /admin/login, 302 root → login). Gate: 549 passed.
+- 2026-09-23 (implementation): Ctrl-C teardown completeness. The foreground share
+  path now removes the ephemeral share's nginx route in the finally block after
+  SIGINT: route state popped from COVE_TUNNEL_SHARES, shares conf re-rendered,
+  nginx reloaded ("Route for '<token>' removed." printed). Without this the
+  rendered route lingered until the next up/down. No-route-state case is a
+  no-op. Gate: 551 passed.
