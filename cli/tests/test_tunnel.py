@@ -1412,3 +1412,109 @@ class TestOrphanCleanup:
 
         monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
         t._clean_orphan_shares()
+
+
+class TestForegroundTeardown:
+    def test_ctrl_c_removes_route(self, fake_compose_env, monkeypatch):
+        import cove.tunnel as t
+        applied = []
+
+        class FakeProc:
+            args = ["share"]
+            stdout = io.StringIO("")
+            def __init__(self):
+                self.terminated = False
+                self._polls = 0
+            def poll(self):
+                return None
+            def terminate(self):
+                self.terminated = True
+            def wait(self, timeout=None):
+                return 0
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        proc = FakeProc()
+
+        class FakeKey:
+            fileobj = io.StringIO(
+                '{"msg":"access your zrok share at the following endpoints:'
+                '\\n abcd12fg34hi.shares.zrok.io"}\n')
+
+        class FakeSel:
+            def __init__(self):
+                self.calls = 0
+            def register(self, *a, **k):
+                pass
+            def select(self, timeout=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return [(FakeKey(), None)]
+                raise KeyboardInterrupt
+            def close(self):
+                pass
+
+        monkeypatch.setattr(t.subprocess, "Popen", lambda cmd, **kw: proc)
+        monkeypatch.setattr(t.selectors, "DefaultSelector", FakeSel)
+        monkeypatch.setattr(t, "_read_share_state",
+                            lambda: {"abcd12fg34hi": "speedtest"})
+        monkeypatch.setattr(t, "_write_share_state",
+                            lambda shares: applied.append(("write", shares)))
+        monkeypatch.setattr(t, "_apply_share_routes",
+                            lambda shares: applied.append(("apply", shares)))
+        t._run_share_foreground(
+            ["share", "public", "http://nginx", "--headless"],
+            t.TunnelService("speedtest", "https://speedtest.cove.local",
+                            "http://speedtest-tracker:80"),
+        )
+        writes = [s for kind, s in applied if kind == "write"]
+        assert {} in writes, f"route state not emptied: {applied}"
+        assert proc.terminated
+
+    def test_ctrl_c_without_route_state_is_noop(self, fake_compose_env, monkeypatch):
+        import cove.tunnel as t
+        applied = []
+
+        class FakeProc:
+            args = ["share"]
+            stdout = io.StringIO("")
+            def poll(self):
+                return 0
+            def terminate(self):
+                pass
+            def wait(self, timeout=None):
+                return 0
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+
+        class FakeKey:
+            fileobj = io.StringIO(
+                '{"msg":"access your zrok share at the following endpoints:'
+                '\\n abcd12fg34hi.shares.zrok.io"}\n')
+
+        class FakeSel:
+            def __init__(self):
+                self.calls = 0
+            def register(self, *a, **k):
+                pass
+            def select(self, timeout=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return [(FakeKey(), None)]
+                raise KeyboardInterrupt
+            def close(self):
+                pass
+
+        monkeypatch.setattr(t.subprocess, "Popen", lambda cmd, **kw: FakeProc())
+        monkeypatch.setattr(t.selectors, "DefaultSelector", FakeSel)
+        monkeypatch.setattr(t, "_read_share_state", lambda: {})
+        monkeypatch.setattr(t, "_write_share_state",
+                            lambda shares: applied.append(shares))
+        monkeypatch.setattr(t, "_apply_share_routes",
+                            lambda shares: applied.append("APPLIED"))
+        t._run_share_foreground(["share", "public", "http://nginx", "--headless"])
+        assert applied == [], f"unexpected route application: {applied}"
