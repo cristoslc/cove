@@ -23,7 +23,10 @@ services:
     environment:
       PFXLOG_NO_JSON: "true"
       ZROK_ACCOUNT_TOKEN: ${ZROK_ACCOUNT_TOKEN:-}
-    command: ["sleep", "infinity"]
+    # ENTRYPOINT-CMD: the image entrypoint is `zrok2`, so an override
+    # command of `sleep infinity` is parsed BY zrok2 as a subcommand and
+    # crash-loops. Override the entrypoint to run the sleeper directly.
+    entrypoint: ["/usr/bin/env", "sleep", "infinity"]
     deploy:
       resources:
         limits:

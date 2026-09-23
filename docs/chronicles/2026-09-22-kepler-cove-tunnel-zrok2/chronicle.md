@@ -99,3 +99,10 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   deletes from Vault + compose .env; next `up` re-onboards. 13 new tests (86 total
   tunnel tests); full non-e2e gate 527 passed, 25 deselected. docs/services/tunnel.md
   updated (onboarding + rotation sections).
+- 2026-09-22 (implementation): Crash-loop fix. The openziti/zrok2 image entrypoint IS
+  `zrok2`, so the compose override `command: ["sleep", "infinity"]` was parsed by zrok2
+  as a subcommand → crash loop → `docker compose exec` failed with "container is
+  restarting" → surfaced as "zrok2 enable failed:" with empty detail. Fixed by
+  overriding the entrypoint directly: `entrypoint: ["/usr/bin/env", "sleep", "infinity"]`
+  (no published ports, posture unchanged). Verified live: sidecar Up, `zrok2 status`
+  responds. Resource sync + `cove init --force` propagated to the deployed compose dir.
