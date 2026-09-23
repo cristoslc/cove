@@ -1,0 +1,38 @@
+# Tunnel sidecar (zrok2 CLI client) — optional profile, standalone compose resource.
+# Deployed as part of the cove stack via docker-compose.yml; this file is the
+# canonical IaC declaration for the relay client used by `cove tunnel`.
+#
+# Outbound-only: no published ports. Reaches the ingress (nginx) over the
+# compose network with the target's Host preserved, and zrok.io over TLS.
+# State (zrok2 environment, enablement) persists under the Cove data root.
+
+services:
+  tunnel:
+    profiles: ["tunnel"]
+    # TUNNEL_IMAGE is pinned per-arch by `cove tunnel up` (ZROK2_DIGESTS in
+    # cli/cove/tunnel.py); the default is the multi-arch manifest (Docker
+    # picks the matching arch). Per-arch digests for 2.0.4:
+    #   amd64: sha256:f607c294b79613f05e8f3dd255d3ef8bd853851dc5c8d806cc5b6d9092c83d16
+    #   arm64: sha256:8864ba64136cc690c6fddd556b679e5f344b06855de74f0fafce9c3eb9300f76
+    image: ${TUNNEL_IMAGE:-openziti/zrok2:2.0.4}
+    container_name: ${TUNNEL_CONTAINER_NAME:-cove-tunnel}
+    restart: unless-stopped
+    # Outbound-only: no published ports; reaches the ingress over the
+    # compose network (tunnel-to-ingress) and zrok.io over TLS.
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "${TUNNEL_UID:-1000}:${TUNNEL_GID:-1000}"
+    volumes:
+      - ${COVE_DATA_ROOT}/tunnel:/home/ziggy/.zrok2
+    environment:
+      PFXLOG_NO_JSON: "true"
+      ZROK_ACCOUNT_TOKEN: ${ZROK_ACCOUNT_TOKEN:-}
+    # ENTRYPOINT-CMD: the image entrypoint is `zrok2`, so an override
+    # command of `sleep infinity` is parsed BY zrok2 as a subcommand and
+    # crash-loops. Override the entrypoint to run the sleeper directly.
+    entrypoint: ["/usr/bin/env", "sleep", "infinity"]
+    deploy:
+      resources:
+        limits:
+          memory: ${TUNNEL_MEM_LIMIT:-1G}

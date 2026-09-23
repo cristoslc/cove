@@ -27,6 +27,9 @@ upstream vault_backend {
 
 include /etc/nginx/user.d/*.conf;
 
+# Public share routes rendered by `cove tunnel` (empty file when no shares).
+include /etc/nginx/cove-tunnel-shares.conf;
+
 # Default server — catches direct IP access (LAN, Tailscale).
 # Serves the Cove landing page so direct IP access shows the portal.
 server {

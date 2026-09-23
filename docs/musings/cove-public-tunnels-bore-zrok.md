@@ -6,6 +6,35 @@
 
 The motivating problem — "make Forgejo accessible to Kepler via gitkraken.dev" — turned out to be a TLS problem, not a reachability problem. No tunnel was needed. The musing is retained because the design exploration (managed relay, tunnel-to-ingress, Forgejo's ROOT_URL/SSH_DOMAIN knobs, two-instance analysis, ActivityPub federation assessment) is broadly useful if a public-tunneling need resurfaces with a different shape.
 
+## Update (2026-09-22): relay re-decision — zrok2 default, localhost.run demoted
+
+Post-musing review of the "bore for raw TCP, localhost.run for web services" heuristic and a cost check changed the pick.
+
+**Heuristic rejected.** It cut against the musing's own conclusions: the adopted shape is *tunnel-to-ingress*, so nearly every target is already a web service behind nginx (the raw-TCP case is rare); bore.pub was already ranked *weakest* fit (plaintext TCP, no HTTPS, random ports — fails webhook delivery); and it drops zrok, which the musing itself designated the upgrade path.
+
+**Cost ladder (checked 2026-09-22):**
+
+| Tier | Cost | What you get |
+|---|---|---|
+| **zrok.io free** | $0 | Reserved shares **with custom unique names** (`name.share.zrok.io`), private shares, accounts/tokens, 5 GB/day, 25 environments, 50 backends. No card required. Caveat: unverified free accounts get an anti-phishing **interstitial page** on first visit to a public share (removed by adding a credit card anytime). |
+| localhost.run free | $0 | Random names only, no auth story, anonymous tier. |
+| **localhost.run custom domain** | $9/mo (billed annually) | Stable `lhr.rocks` subdomain (zero DNS setup) or own domain + wildcard. |
+| Cheap VPS bastion | ~$3–4/mo | `ssh -R` or self-hosted bore relay; your domain, your TLS, fully self-contained — but the "new host prerequisite" the musing flagged. |
+| AWS | — | Rejected: no native public-URL-tunnel service; EC2 bastion is just the VPS option with IAM/NAT/billing ceremony. |
+
+**zrok2 is a breaking rename (v2.0.0, Mar 2026):** binary is `zrok2` (v1/v2 coexist via separate `~/.zrok2` config); `zrok reserve`/`zrok release`/`zrok share reserved` are **removed**, replaced by namespaces + reserved names (`zrok2 create name <name>`, `zrok2 share public <target> --name <name>`). Ephemeral names promote in place: `zrok2 modify name -r <name>`. Private shares take a vanity token: `zrok2 share private localhost:8080 --share-token myapi-prod` + `zrok2 access private myapi-prod` on the other end. Any `cove tunnel` work pins to v2 conventions.
+
+**Onboarding/signup journey for `cove tunnel` (zrok2 path):**
+
+1. **One-time account:** operator signs up at myzrok.io (no card), gets an account token. Stored via `cove creds`/1Password per ADR-017 — never hand-entered at share time.
+2. **One-time environment enable:** the tunnel sidecar container runs `zrok2 enable <account-token>` on first `cove tunnel up` (idempotent; state in a container volume).
+3. **Ad-hoc share (v1 default):** `cove tunnel up <port>` → sidecar runs `zrok2 share public http://nginx` (or the ingress target) → prints `https://<random>.share.zrok.io`; `cove tunnel down` tears it down. Ephemeral name, zero config.
+4. **Stable name (opt-in):** `cove tunnel up --target git.cove --public git.tun.example` reserves a name via `zrok2 create name` / `--name`, rendered IaC-style so the share survives restarts. Promote-on-the-fly (`zrok2 modify name -r`) covers "this ad-hoc share earned a permanent name."
+5. **Private share (zrok differentiator):** friend/Kepler-side environment runs `zrok2 access private <token>` — reaches the share over the OpenZiti overlay with **no public URL at all**. Closest match yet to Cove's closed-by-default posture.
+6. **Custom domains** (`myshare.tun.example` on your own domain) need myzrok Pro (price unlisted) — deferred; not needed for v1 since reserved `*.share.zrok.io` names are free.
+
+**Revised recommendation (supersedes the "leaning localhost.run first" open question):** `cove tunnel` v1 wraps **zrok2 (zrok.io hosted, free tier)** — reserved names + private shares + token auth for free, one sidecar container via the already-adopted tunnel-to-ingress shape, no operator domain prerequisite. localhost.run demoted to the documented zero-account fallback (random names only, no auth, interstitial-free but unstable names). The $9/mo localhost.run tier and self-hosted bore (nginx-fronted for TLS) are documented fallbacks, not v1 paths.
+
 ## Operator decision (2026-09-21)
 
 > "yes, the managed public relay is the goal. tailscale funnel only works if it can be fully automated, I want this to work as a `cove` cli command"

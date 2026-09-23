@@ -352,6 +352,13 @@
         state: directory
         mode: "0700"
 
+    - name: Create tunnel data directory (tunnel profile only)
+      when: "'tunnel' in (cove_profiles | default(''))"
+      ansible.builtin.file:
+        path: "{{ cove_data_root }}/tunnel"
+        state: directory
+        mode: "0700"
+
     # TEMPLATES ----------------------------------------------------------------
     # Docker bind-mounts auto-create missing host paths as DIRECTORIES. If a
     # previous `docker compose up` ran before these files were rendered, the
@@ -367,6 +374,7 @@
         - pages.html
         - cove-config-locations.conf
         - cove-pages-locations.conf
+        - cove-tunnel-shares.conf
       register: nginx_mount_targets
     - name: Fail if a Docker-created directory wedges an nginx mount
       ansible.builtin.fail:
@@ -385,6 +393,17 @@
         dest: "{{ nginx_conf_dir }}/default.conf"
         mode: "0644"
       notify: Reload nginx
+
+    - name: Ensure cove-tunnel-shares.conf exists (empty state, never a directory)
+      ansible.builtin.copy:
+        dest: "{{ nginx_conf_dir }}/cove-tunnel-shares.conf"
+        mode: "0644"
+        content: |
+          # Rendered by `cove tunnel` — public share routes (<name>.share.zrok.io).
+          # State: COVE_TUNNEL_SHARES in the compose .env. Do not edit.
+        force: false
+      notify: Reload nginx
+      when: not (nginx_conf_dir ~ "/cove-tunnel-shares.conf") is exists
 
     - name: Assert data-root bind-mount targets are not directories
       ansible.builtin.stat:
@@ -479,6 +498,33 @@
           FORGEJO_RUNNER_CONTAINER_NAME={{ forgejo_runner_container_name | default('cove-forgejo-runner') }}
           FORGEJO_RUNNER_MEM_LIMIT={{ forgejo_runner_mem_limit | default('512M') }}
       when: not (compose_dir ~ "/.env") is exists
+
+    - name: Render tunnel env (tunnel profile only)
+      when: "'tunnel' in (cove_profiles | default(''))"
+      block:
+        - name: Assert zrok2 account token is set
+          ansible.builtin.assert:
+            that:
+              - zrok_account_token | default('') | length > 0
+            fail_msg: >
+              zrok_account_token is empty. Sign up at https://myzrok.io/ (no
+              card required), store the account token via `cove creds`
+              (op://Private/Zrok Account/account_token, ADR-017), and provide
+              it through the tunnel profile vars. See docs/services/tunnel.md.
+
+        - name: Ensure ZROK_ACCOUNT_TOKEN in compose .env
+          ansible.builtin.lineinfile:
+            path: "{{ compose_dir }}/.env"
+            regexp: '^ZROK_ACCOUNT_TOKEN='
+            line: "ZROK_ACCOUNT_TOKEN={{ zrok_account_token }}"
+            mode: "0600"
+
+        - name: Ensure ZROK_SHARE_NAME in compose .env
+          when: zrok_share_name | default('') | length > 0
+          ansible.builtin.lineinfile:
+            path: "{{ compose_dir }}/.env"
+            regexp: '^ZROK_SHARE_NAME='
+            line: "ZROK_SHARE_NAME={{ zrok_share_name }}"
 
     # CONTAINERS -------------------------------------------------------------
     - name: Detect active docker context endpoint
