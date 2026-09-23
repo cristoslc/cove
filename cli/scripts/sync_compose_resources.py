@@ -38,6 +38,11 @@ def _should_exclude(path: Path, relative: Path) -> bool:
 
 def sync() -> None:
     if not SRC.exists():
+        # Building from an sdist (uv build sandbox): compose/ isn't packaged,
+        # and the bundled resources are already synced. Nothing to do.
+        if (Path(__file__).resolve().parent.parent / "cove" / "resources" / "compose").exists():
+            print(f"compose/ not present (sdist build) — using bundled {DST}")
+            return
         raise SystemExit(f"compose/ not found at {SRC}")
     if DST.exists():
         shutil.rmtree(DST)
