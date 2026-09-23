@@ -60,6 +60,7 @@ services:
       - ${NGINX_CONF_DIR:-./nginx}/pages.html:/usr/share/nginx/html/pages.html:ro
       - ${NGINX_CONF_DIR:-./nginx}/cove-config-locations.conf:/etc/nginx/cove-config-locations.conf:ro
       - ${NGINX_CONF_DIR:-./nginx}/cove-pages-locations.conf:/etc/nginx/cove-pages-locations.conf:ro
+      - ${NGINX_CONF_DIR:-./nginx}/cove-tunnel-shares.conf:/etc/nginx/cove-tunnel-shares.conf:ro
       - ${COVE_DATA_ROOT}/certs:/certs:ro
       - ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites:ro
       - ${COVE_DATA_ROOT}/nginx/user.d:/etc/nginx/user.d:ro
@@ -266,3 +267,32 @@ services:
       resources:
         limits:
           memory: ${SPEEDTEST_MEM_LIMIT:-512M}
+
+  tunnel:
+    profiles: ["tunnel"]
+    # TUNNEL_IMAGE is pinned per-arch (see compose/tunnel.yml) by `cove tunnel up`;
+    # the default is the multi-arch manifest (Docker picks the matching arch).
+    image: ${TUNNEL_IMAGE:-openziti/zrok2:2.0.4}
+    container_name: ${TUNNEL_CONTAINER_NAME:-cove-tunnel}
+    restart: unless-stopped
+    # Outbound-only: no published ports; reaches the ingress over the
+    # compose network (tunnel-to-ingress) and zrok.io over TLS.
+    read_only: true
+    tmpfs:
+      - /tmp
+    user: "${TUNNEL_UID:-1000}:${TUNNEL_GID:-1000}"
+    volumes:
+      - ${COVE_DATA_ROOT}/tunnel:/home/ziggy/.zrok2
+    environment:
+      PFXLOG_NO_JSON: "true"
+      ZROK_ACCOUNT_TOKEN: ${ZROK_ACCOUNT_TOKEN:-}
+    networks:
+      - default
+    # ENTRYPOINT-CMD: the image entrypoint is `zrok2` (Dockerfile CMD/ENTRYPOINT
+    # pair), so an override command of `sleep infinity` is parsed BY zrok2 as a
+    # subcommand and crash-loops. Run the sleeper directly with exec form.
+    entrypoint: ["/usr/bin/env", "sleep", "infinity"]
+    deploy:
+      resources:
+        limits:
+          memory: ${TUNNEL_MEM_LIMIT:-1G}
