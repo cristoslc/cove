@@ -17,27 +17,63 @@ The client is a single sidecar container (`openziti/zrok2`, pinned) running the 
 ## Usage
 
 ```shell
-# Ad-hoc public share of the ingress (default target: https://nginx, Host preserved)
+# Interactive picker (arrow keys): choose from Cove's discovered services
 cove tunnel up
-# → https://<random>.share.zrok.io
+# → picker lists e.g. `git — https://git.cove.local`, Enter selects
 
-# Share a specific .cove service through ingress, with a stable reserved name
-cove tunnel up --public myforge
-# → https://myforge.share.zrok.io  (name survives restarts)
+# Service shorthand — resolves the name against Cove's nginx ingress config
+cove tunnel up git
+# → https://<random>.share.zrok.io (or the reserved name below)
 
-# Share an arbitrary target (a .cove service name reachable on the compose network)
+# Explicit URL — the power escape hatch
 cove tunnel up https://git.cove.local
+
+# Share with a stable reserved name
+cove tunnel up git --public myforge
+# → https://myforge.share.zrok.io  (name survives restarts)
 
 # Private share — no public URL at all; the other side pulls with a token
 cove tunnel up --private
 # → zrok2 access private <token>  (from a second environment)
 ```
 
-`cove tunnel up` **blocks** while the share is active (Ctrl-C or `cove tunnel down` tears it down). `cove tunnel ls` lists active shares; `cove tunnel down [NAME]` releases a named share or stops the sidecar.
+`cove tunnel up` **blocks** while the share is active (Ctrl-C or `cove tunnel down` tears it down). `cove tunnel ls` lists active shares; `cove tunnel down [NAME]` releases a named share (removing its rendered route) or stops the sidecar.
+
+### Service picker — no silent default
+
+Bare `cove tunnel up` never picks a service for you. It presents an interactive
+picker (arrow keys, Enter; `q` cancels) of the services Cove discovers from its
+**nginx ingress config** — every proxied vhost in `compose/nginx/default.conf`
+(git.cove → forgejo, vault.cove → vault, litellm.cove, speedtest.cove, the
+landing root, pages). Each entry shows the resolved target. Regex-only vhosts
+(`*.pages.cove`), redirects (ca.cove), and health endpoints are not tunnelable
+and are excluded.
+
+When stdin is not a TTY, the bare form **fails loudly** listing the available
+services and their targets — it never falls back to a default. An unknown
+shorthand fails the same way. There is no `DEFAULT_TARGET` anymore.
+
+### Cove renders the public-share nginx routes
+
+The operator never writes nginx blocks. When a share is created, Cove renders
+a server block for `<name>.share.zrok.io` into `compose/nginx/cove-tunnel-shares.conf`
+(mounted into nginx and included from `default.conf`), routes it to the
+selected service's upstream with `Host: $host` preserved, and reloads nginx
+(validating with `nginx -t` first; on rejection the previous include is
+restored). `cove tunnel down` removes the rendered route. Share state lives in
+`COVE_TUNNEL_SHARES` in the compose `.env`; the rendered file is a pure
+artifact of that state (IaC: bringup seeds an empty file so the bind-mount is
+never wedged as a directory). TLS for the public hop terminates at the zrok
+relay edge, so the internal hop needs no public-name certificate.
 
 ### Targets and tunnel-to-ingress
 
-The default target is `https://nginx` — the same path a local visitor takes, with the `Host:` header preserved, so Forgejo/Vault/etc. see their own identity. The tunnel is a **pipe**: no URL rewriting, no `sub_filter`. The app's identity (`ROOT_URL` etc.) stays with the app.
+Picker/shorthand shares route through the ingress — the same path a local
+visitor takes — with the `Host:` header preserved, so Forgejo/Vault/etc. see
+their own identity. The tunnel is a **pipe**: no URL rewriting, no `sub_filter`.
+The app's identity (`ROOT_URL` etc.) stays with the app. Explicit-URL shares
+pass the URL through to zrok2 unchanged; HTTPS targets with Cove's self-signed
+certs are shared with `--insecure` (the hop never leaves the machine).
 
 ### Reserved names (zrok2 v2 conventions)
 
@@ -45,10 +81,10 @@ zrok2 v2 renamed the v1 verbs: `zrok reserve`/`zrok share reserved` are gone. In
 
 - `zrok2 create name <name>` — reserve a stable name (lowercase alphanumeric, 4–32 chars; enforced by `cove tunnel --public`).
 - `zrok2 share public <target> -n public:<name> --headless` — share under that name.
-- Public URLs live under **`share.zrok.io`** (the v2 public namespace).
+- Public URLs live under **`share.zrok.io`** (the v2 public namespace), one flat level — `<name>.share.zrok.io`.
 - `zrok2 modify name -r <name>` promotes an ephemeral name in place ("this share earned a permanent name").
 
-`--public` is IaC-rendered via `ZROK_SHARE_NAME` in the compose `.env` when the tunnel profile is active (bringup), so the name survives restarts.
+`--public` reserves the name for the session; the share's nginx route is rendered by Cove for as long as the share is active.
 
 ### Private shares
 
