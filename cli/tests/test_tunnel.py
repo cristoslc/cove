@@ -892,3 +892,21 @@ class TestResetToken:
         monkeypatch.setattr(t.sys, "stdout", fake_stdout)
         assert t._ensure_account_token() == "fresh-token"
         assert "ZROK_ACCOUNT_TOKEN=fresh-token" in env.read_text()
+
+
+class TestEnable:
+    def test_enable_runs_headless(self, monkeypatch):
+        import cove.tunnel as t
+        calls = []
+
+        def fake_capture(*args, **kwargs):
+            calls.append(args)
+            if args and args[0] == "status":
+                return subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
+        monkeypatch.setattr(t, "_ensure_account_token", lambda: "tok")
+        t._ensure_enabled()
+        enable_call = next(c for c in calls if c and c[0] == "enable")
+        assert "--headless" in enable_call
