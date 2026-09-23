@@ -980,12 +980,19 @@ def up(target, name, private_mode):
 
 def _announce_url(url: str) -> None:
     """Print the URL with an OSC 8 hyperlink so terminals render it
-    clickable."""
+    clickable.
+
+    The announced link carries zrok's `?interstitial=1` query, which skips
+    the anti-phishing interstitial free-tier accounts get on first visit
+    per share URL."""
     token = url.split("//", 1)[-1].split(".")[0]
     _last_announced_token["token"] = token
+    sep = "&" if "?" in url else "?"
+    skip_url = f"{url}{sep}interstitial=1"
     click.echo(f"\nTunnel active: {url}")
     click.echo(
-        f"Open:  \x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\  (Ctrl-C to stop)"
+        f"Open:  \x1b]8;;{skip_url}\x1b\\{skip_url}\x1b]8;;\x1b\\"
+        "  (skips interstitial; Ctrl-C to stop)"
     )
 
 
