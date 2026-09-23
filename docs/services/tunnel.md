@@ -7,12 +7,28 @@ The client is a single sidecar container (`openziti/zrok2`, pinned) running the 
 ## Onboarding journey (one-time)
 
 1. **Sign up at [myzrok.io](https://myzrok.io/)** (no credit card required) and copy your **account token** from the console.
-2. **Store the token** in 1Password under the shared `Zrok Account` item (ADR-017 conventions), keyed so it is reused across machines:
-   ```shell
-   cove creds vault-put 'op://Private/Zrok Account/account_token'
-   ```
-   `cove tunnel` reads it via `cove creds vault-get`. You can also set `ZROK_ACCOUNT_TOKEN` in the compose `.env` or your shell — that value is honored directly. If no token is found anywhere, the command **fails loudly** with setup instructions (never an anonymous fallback).
-3. **Run `cove tunnel up`** — the sidecar starts, and the first `up` runs `zrok2 enable <token>` idempotently (state persists in `${COVE_DATA_ROOT}/tunnel/`, mounted at `/home/ziggy/.zrok2`).
+2. **Run `cove tunnel up`** — if no token is configured yet, it **onboards interactively**: it shows the signup steps, prompts for the token (hidden input), writes it to the shared `Zrok Account` 1Password item (`op://Private/Zrok Account/account_token`, ADR-017 conventions), and caches it in Vault + the compose `.env` (0600). If 1Password is unavailable, it degrades to Vault + `.env` caching only, with a loud warning.
+3. Non-interactive (no TTY) with no token → **loud failure** with setup instructions — never an anonymous fallback.
+
+### Manual token provisioning
+
+To pre-provision the token (e.g. scripted setups) instead of the interactive flow:
+
+```shell
+cove creds set 'op://Private/Zrok Account/account_token'
+```
+
+`cove tunnel` reads it via `cove creds vault-get`. You can also set `ZROK_ACCOUNT_TOKEN` in the compose `.env` or your shell — that value is honored directly.
+
+### Rotating the token (`cove tunnel reset-token`)
+
+If the account token is revoked or needs rotating, run:
+
+```shell
+cove tunnel reset-token
+```
+
+It retires the current token: appends it to the `Zrok Account` 1Password item as an `account_token_previous` (password-type) field so rotation history survives even a revoked-token overwrite, then clears it from Vault and the compose `.env`. The next `cove tunnel up` re-onboards with the fresh token. If 1Password is unavailable, the retired token is dropped from local caches with a loud warning.
 
 ## Usage
 

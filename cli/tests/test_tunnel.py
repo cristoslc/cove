@@ -18,6 +18,9 @@ Run unit:  pytest cli/tests/test_tunnel.py -m "not e2e"
 """
 
 from pathlib import Path
+import io
+import os
+import subprocess
 from subprocess import CompletedProcess
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -604,6 +607,7 @@ class TestAuth:
         import cove.tunnel as t
         monkeypatch.delenv("ZROK_ACCOUNT_TOKEN", raising=False)
         monkeypatch.setattr(t, "_vault_get", lambda ref: None)
+        monkeypatch.setattr("sys.stdin", open(os.devnull))
         with pytest.raises(click.ClickException, match="myzrok.io"):
             t._ensure_account_token()
 
@@ -611,6 +615,7 @@ class TestAuth:
         import cove.tunnel as t
         monkeypatch.delenv("ZROK_ACCOUNT_TOKEN", raising=False)
         monkeypatch.setattr(t, "_vault_get", lambda ref: None)
+        monkeypatch.setattr("sys.stdin", open(os.devnull))
         with pytest.raises(click.ClickException, match="Zrok Account"):
             t._ensure_account_token()
 
@@ -641,6 +646,138 @@ class TestAuth:
         )
 
 
+class TestOnboarding:
+    @pytest.fixture
+    def no_token_anywhere(self, fake_compose_env, monkeypatch):
+        import cove.tunnel as t
+        monkeypatch.delenv("ZROK_ACCOUNT_TOKEN", raising=False)
+        monkeypatch.setattr(t, "_vault_get", lambda ref: None)
+        return t
+
+    def test_non_tty_fails_loud_with_onboarding_pointer(
+        self, no_token_anywhere, monkeypatch
+    ):
+        t = no_token_anywhere
+        monkeypatch.setattr("sys.stdin", open(os.devnull))
+        with pytest.raises(click.ClickException, match="myzrok.io"):
+            t._ensure_account_token()
+
+    @pytest.fixture
+    def fake_tty(self, no_token_anywhere, monkeypatch):
+        fake_stdin = io.StringIO("y\nmyzrok-token-abc\n")
+        fake_stdin.isatty = lambda: True
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True
+        monkeypatch.setattr(no_token_anywhere.sys, "stdin", fake_stdin)
+        monkeypatch.setattr(no_token_anywhere.sys, "stdout", fake_stdout)
+        return no_token_anywhere
+
+    def test_interactive_flow_stores_token_and_caches(
+        self, no_token_anywhere, monkeypatch
+    ):
+        t = no_token_anywhere
+        monkeypatch.setattr(t, "_op_write", lambda ref, value: True)
+        import sys
+        fake_stdin = io.StringIO("y\nmyzrok-token-abc\n")
+        fake_stdin.isatty = lambda: True
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True
+        monkeypatch.setattr(sys, "stdin", fake_stdin)
+        monkeypatch.setattr(sys, "stdout", fake_stdout)
+        token = t._ensure_account_token()
+        assert token == "myzrok-token-abc"
+        env = Path(os.environ["COVE_COMPOSE_DIR"]) / ".env"
+        assert "ZROK_ACCOUNT_TOKEN=myzrok-token-abc" in env.read_text()
+
+    def test_decline_fails_loud_no_fallback(self, no_token_anywhere, monkeypatch):
+        t = no_token_anywhere
+        fake_stdin = io.StringIO("n\n")
+        fake_stdin.isatty = lambda: True
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True
+        monkeypatch.setattr(t.sys, "stdin", fake_stdin)
+        monkeypatch.setattr(t.sys, "stdout", fake_stdout)
+        with pytest.raises(click.ClickException, match="myzrok.io"):
+            t._ensure_account_token()
+
+    def test_empty_token_retries_then_accepts(self, no_token_anywhere, monkeypatch):
+        t = no_token_anywhere
+        fake_stdin = io.StringIO("y\n\nreal-token\n")
+        fake_stdin.isatty = lambda: True
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True
+        monkeypatch.setattr(t.sys, "stdin", fake_stdin)
+        monkeypatch.setattr(t.sys, "stdout", fake_stdout)
+        monkeypatch.setattr(t, "_op_write", lambda ref, value: True)
+        assert t._ensure_account_token() == "real-token"
+
+    def test_eof_mid_onboard_aborts_loud(self, no_token_anywhere, monkeypatch):
+        t = no_token_anywhere
+        fake_stdin = io.StringIO("\n")
+        fake_stdin.isatty = lambda: True
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True
+        monkeypatch.setattr(t.sys, "stdin", fake_stdin)
+        monkeypatch.setattr(t.sys, "stdout", fake_stdout)
+        with pytest.raises((click.ClickException, click.exceptions.Abort)):
+            t._ensure_account_token()
+
+    def test_op_write_failure_degrades_to_env_cache_only(
+        self, no_token_anywhere, monkeypatch
+    ):
+        t = no_token_anywhere
+        fake_stdin = io.StringIO("y\nmyzrok-token-abc\n")
+        fake_stdin.isatty = lambda: True
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True
+        monkeypatch.setattr(t, "_op_write", lambda ref, value: False)
+        monkeypatch.setattr(t.sys, "stdin", fake_stdin)
+        monkeypatch.setattr(t.sys, "stdout", fake_stdout)
+        token = t._ensure_account_token()
+        assert token == "myzrok-token-abc"
+        env = Path(os.environ["COVE_COMPOSE_DIR"]) / ".env"
+        assert "ZROK_ACCOUNT_TOKEN=myzrok-token-abc" in env.read_text()
+
+    def test_op_write_edits_existing_item(self, monkeypatch):
+        import cove.tunnel as t
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(t.subprocess, "run", fake_run)
+        assert t._op_write(t.ACCOUNT_TOKEN_OP_REF, "tok") is True
+        assert len(calls) == 1
+        assert "item" in calls[0] and "edit" in calls[0]
+
+    def test_op_write_creates_item_when_missing(self, monkeypatch):
+        import cove.tunnel as t
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            if "edit" in argv:
+                return subprocess.CompletedProcess(argv, 1, stdout="", stderr="not found")
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(t.subprocess, "run", fake_run)
+        assert t._op_write(t.ACCOUNT_TOKEN_OP_REF, "tok") is True
+        assert any("create" in argv for argv in calls)
+
+    def test_op_write_wraps_in_op_run_biometric(self, monkeypatch):
+        import cove.tunnel as t
+        calls = []
+
+        def fake_run(argv, **kwargs):
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(t.subprocess, "run", fake_run)
+        t._op_write(t.ACCOUNT_TOKEN_OP_REF, "tok")
+        assert calls[0][:3] == ["op", "run", "--"]
+
+
 class TestEnvRendering:
     def test_upsert_env_no_duplicates(self, tmp_path, monkeypatch):
         import cove.tunnel as t
@@ -667,3 +804,91 @@ class TestUrlExtraction:
     def test_returns_none_when_no_url(self):
         from cove.tunnel import _extract_url
         assert _extract_url("error: something broke") is None
+
+class TestResetToken:
+    @pytest.fixture
+    def token_in_env(self, fake_compose_env, monkeypatch):
+        import cove.tunnel as t
+        (fake_compose_env / ".env").write_text("ZROK_ACCOUNT_TOKEN=old-tok\n")
+        monkeypatch.delenv("ZROK_ACCOUNT_TOKEN", raising=False)
+        monkeypatch.setattr(t, "_vault_get", lambda ref: "old-tok")
+        return t
+
+    def test_reset_token_command_registered(self):
+        from cove.tunnel import tunnel as tunnel_group
+        assert "reset-token" in tunnel_group.commands
+
+    def test_reset_clears_env_and_appends_history(
+        self, token_in_env, monkeypatch
+    ):
+        t = token_in_env
+        monkeypatch.setattr(t, "_op_append_previous_token", lambda v: True)
+        monkeypatch.setattr(t, "_vault_delete", lambda ref: (True, ""))
+        runner = CliRunner()
+        result = runner.invoke(t.tunnel, ["reset-token"])
+        assert result.exit_code == 0
+        env = Path(os.environ["COVE_COMPOSE_DIR"]) / ".env"
+        assert "ZROK_ACCOUNT_TOKEN" not in env.read_text()
+
+    def test_reset_without_token_fails_loud(self, fake_compose_env, monkeypatch):
+        import cove.tunnel as t
+        monkeypatch.delenv("ZROK_ACCOUNT_TOKEN", raising=False)
+        monkeypatch.setattr(t, "_vault_get", lambda ref: None)
+        with pytest.raises(click.ClickException, match="nothing to reset"):
+            t._reset_token()
+
+    def test_reset_appends_previous_token_to_1p(self, token_in_env, monkeypatch):
+        t = token_in_env
+        appended = []
+        monkeypatch.setattr(
+            t, "_op_append_previous_token", lambda v: appended.append(v) or True
+        )
+        monkeypatch.setattr(t, "_vault_delete", lambda ref: (True, ""))
+        t._reset_token()
+        assert appended == ["old-tok"]
+
+    def test_reset_degrades_loud_when_1p_unavailable(
+        self, token_in_env, monkeypatch
+    ):
+        t = token_in_env
+        monkeypatch.setattr(t, "_op_append_previous_token", lambda v: False)
+        monkeypatch.setattr(t, "_vault_delete", lambda ref: (True, ""))
+        runner = CliRunner()
+        result = runner.invoke(t.tunnel, ["reset-token"])
+        assert result.exit_code == 0
+        assert "Could not append" in result.output
+
+    def test_op_append_previous_uses_password_field(self, monkeypatch):
+        import cove.tunnel as t
+        calls = []
+
+        def fake_run(*args, **kwargs):
+            argv = args[0] if args else kwargs.get("argv", [])
+            calls.append(argv)
+            return subprocess.CompletedProcess(argv, 0, stdout="old-tok", stderr="")
+
+        monkeypatch.setattr(t, "_run_cove_creds", fake_run)
+        monkeypatch.setattr(t.subprocess, "run", fake_run)
+        t._op_append_previous_token("retired")
+        assert any(
+            "account_token_previous[password]=retired" in " ".join(argv)
+            for argv in calls
+        )
+
+    def test_reset_next_up_reonboards(self, token_in_env, monkeypatch):
+        t = token_in_env
+        monkeypatch.setattr(t, "_op_append_previous_token", lambda v: True)
+        monkeypatch.setattr(t, "_vault_delete", lambda ref: (True, ""))
+        t._reset_token()
+        env = Path(os.environ["COVE_COMPOSE_DIR"]) / ".env"
+        assert "ZROK_ACCOUNT_TOKEN" not in env.read_text()
+        monkeypatch.setattr(t, "_vault_get", lambda ref: None)
+        monkeypatch.setattr(t, "_op_write", lambda ref, value: True)
+        fake_stdin = io.StringIO("y\nfresh-token\n")
+        fake_stdin.isatty = lambda: True
+        fake_stdout = io.StringIO()
+        fake_stdout.isatty = lambda: True
+        monkeypatch.setattr(t.sys, "stdin", fake_stdin)
+        monkeypatch.setattr(t.sys, "stdout", fake_stdout)
+        assert t._ensure_account_token() == "fresh-token"
+        assert "ZROK_ACCOUNT_TOKEN=fresh-token" in env.read_text()
