@@ -139,3 +139,10 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   enabled environment". Now `_environment_enabled()` requires an Account Token
   `<<SET>>` row in status output, and the enable error path treats "already have
   an enabled environment" as success. Gate: 538 passed.
+- 2026-09-23 (implementation): Foreground streaming shares (operator-approved).
+  Ephemeral public shares now run `docker compose exec tunnel zrok2 share public
+  --headless` WITHOUT output capture: the CLI streams the live process, prints the
+  public URL as soon as it appears, and stays attached until Ctrl-C (SIGINT →
+  terminate → zrok2 deletes the share server-side). Named shares still return
+  (agent-adopted, idempotent 409+exit0 semantics per zrok2 v2). Private shares
+  unchanged. 4 new tests (100 tunnel tests). Gate: 542 passed.

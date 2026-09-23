@@ -2,6 +2,7 @@
 
 import os
 import re
+import selectors
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -422,18 +423,72 @@ def _ensure_enabled() -> None:
         )
 
 
-def _share_public(target: str, name: str | None) -> str:
-    """Start a public share; return the public URL.
+def _run_share_foreground(args: list[str]) -> None:
+    """Run a blocking `zrok2 share` inside the sidecar, streaming output.
 
-    Ephemeral (unnamed) shares use zrok2's server-generated token: passing a
-    client-invented `-n` token fails with 409 shareConflict ("error finding
-    name ... in namespace 'public'") because the name was never reserved."""
+    Streams the subprocess live (no capture — capture made `up` hang forever
+    holding the pipe while the share ran). Resolves the public URL from the
+    stream as soon as it appears, then keeps streaming until the operator
+    hits Ctrl-C; SIGINT is forwarded to the exec'd zrok2 process so the
+    share is deleted server-side."""
+    import selectors
+
+    cmd = _compose_cmd("--profile", "tunnel", "exec", "tunnel", "zrok2", *args)
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    announced = False
+    try:
+        sel = selectors.DefaultSelector()
+        sel.register(proc.stdout, selectors.EVENT_READ)
+        while True:
+            for key, _ in sel.select(timeout=0.5):
+                if key is None or key.fileobj is None:
+                    continue
+                line = key.fileobj.readline()
+                if not line:
+                    raise StopIteration
+                sys.stdout.write(f"  {line}")
+                sys.stdout.flush()
+                if not announced:
+                    url = _extract_url(line)
+                    if url:
+                        announced = True
+                        click.echo(f"Tunnel active: {url}")
+            if proc.poll() is not None and not announced:
+                break
+    except KeyboardInterrupt:
+        pass
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        if not announced:
+            output = (proc.stdout.read() if proc.stdout else "") or ""
+            url = _extract_url(output)
+            if url:
+                click.echo(f"Tunnel active: {url}")
+
+
+def _share_public(target: str, name: str | None) -> str | None:
+    """Start a public share; return the URL, or None when it blocks in the
+    foreground (the URL is streamed from the live process instead)."""
     args = ["share", "public", target, "--headless"]
     if target.startswith("https://"):
         args.append("--insecure")
     if name:
         _ensure_name(name)
         args += ["-n", f"public:{name}"]
+    if name is None:
+        _run_share_foreground(args)
+        return None
     result = _zrok2_exec_capture(*args, check=False)
     if result.returncode != 0:
         raise click.ClickException(
@@ -903,6 +958,8 @@ def up(target, name, private_mode):
         )
         return
     url = _share_public(zrok_target, share_name)
+    if url is None:
+        return
     if route_service is not None:
         shares = _read_share_state()
         shares[share_name] = route_service.name
