@@ -106,3 +106,7 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   overriding the entrypoint directly: `entrypoint: ["/usr/bin/env", "sleep", "infinity"]`
   (no published ports, posture unchanged). Verified live: sidecar Up, `zrok2 status`
   responds. Resource sync + `cove init --force` propagated to the deployed compose dir.
+- 2026-09-23 (implementation): `zrok2 enable` now passes `--headless` — the exec
+  path has no TTY, so the TUI-enabled enable failed with "open /dev/tty: no such
+  device or address". Platform-mismatch warning (linux/amd64 image on arm64 host)
+  is cosmetic (Rosetta/QEMU emulated fine — status responded). Gate: 528 passed.

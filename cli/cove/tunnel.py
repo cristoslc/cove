@@ -370,7 +370,7 @@ def _ensure_enabled() -> None:
     if env.returncode == 0 and "environment enabled" in (env.stdout + env.stderr).lower():
         return
     token = _ensure_account_token()
-    result = _zrok2_exec_capture("enable", token, check=False)
+    result = _zrok2_exec_capture("enable", token, "--headless", check=False)
     if result.returncode != 0:
         raise click.ClickException(
             "zrok2 enable failed: "
