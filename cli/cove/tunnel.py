@@ -466,7 +466,10 @@ def _ensure_enabled() -> None:
 _last_announced_token = {"token": None}
 
 
-def _run_share_foreground(args: list[str]) -> None:
+def _run_share_foreground(
+    args: list[str],
+    route_service: "TunnelService | None" = None,
+) -> None:
     """Run a blocking `zrok2 share` inside the sidecar, streaming output.
 
     Streams the subprocess live (no capture — capture made `up` hang forever
@@ -503,6 +506,13 @@ def _run_share_foreground(args: list[str]) -> None:
                     if url:
                         announced = True
                         _announce_url(url)
+                        if route_service is not None:
+                            token = _last_announced_token.get("token")
+                            if token:
+                                shares = _read_share_state()
+                                shares[token] = route_service.name
+                                _write_share_state(shares)
+                                _apply_share_routes(shares)
             if proc.poll() is not None and not announced:
                 break
     except KeyboardInterrupt:
@@ -519,9 +529,20 @@ def _run_share_foreground(args: list[str]) -> None:
             url = _extract_url(output)
             if url:
                 _announce_url(url)
+                if route_service is not None:
+                    token = _last_announced_token.get("token")
+                    if token:
+                        shares = _read_share_state()
+                        shares[token] = route_service.name
+                        _write_share_state(shares)
+                        _apply_share_routes(shares)
 
 
-def _share_public(target: str, name: str | None) -> str | None:
+def _share_public(
+    target: str,
+    name: str | None,
+    route_service: "TunnelService | None" = None,
+) -> str | None:
     """Start a public share; return the URL, or None when it blocks in the
     foreground (the URL is streamed from the live process instead)."""
     args = ["share", "public", target, "--headless"]
@@ -531,7 +552,7 @@ def _share_public(target: str, name: str | None) -> str | None:
         _ensure_name(name)
         args += ["-n", f"public:{name}"]
     if name is None:
-        _run_share_foreground(args)
+        _run_share_foreground(args, route_service)
         return None
     result = _zrok2_exec_capture(*args, check=False)
     if result.returncode != 0:
@@ -1030,7 +1051,7 @@ def up(target, name, private_mode):
             f"Private share active. Access with: zrok2 access private {share_name}"
         )
         return
-    url = _share_public(zrok_target, share_name)
+    url = _share_public(zrok_target, share_name, route_service)
     if url is None:
         return
     share_name = share_name or _last_announced_token.get("token")
