@@ -412,7 +412,7 @@ class TestShareRouteRendering:
     def test_rendered_route_has_public_server_name_and_host(self):
         from cove.tunnel import _render_share_route
         conf = _render_share_route("myforge", self._service())
-        assert "server_name myforge.share.zrok.io;" in conf
+        assert "server_name myforge.shares.zrok.io;" in conf
         assert "proxy_pass $tunnel_upstream$request_uri;" in conf
         assert "proxy_set_header Host $host;" in conf
         assert "listen 80;" in conf
@@ -435,8 +435,8 @@ class TestShareRouteRendering:
             {"aaaa": "git", "bbbb": "vault"},
             {"git": self._service(), "vault": self._service("vault", "http://vault:8200")},
         )
-        assert "server_name aaaa.share.zrok.io;" in conf
-        assert "server_name bbbb.share.zrok.io;" in conf
+        assert "server_name aaaa.shares.zrok.io;" in conf
+        assert "server_name bbbb.shares.zrok.io;" in conf
 
     def test_apply_share_routes_writes_include_and_reloads(
         self, tmp_path, monkeypatch
@@ -824,13 +824,13 @@ class TestEnvRendering:
 class TestUrlExtraction:
     def test_extracts_share_zrok_io_url(self):
         from cove.tunnel import _extract_url
-        output = "https://abc123.share.zrok.io\n"
-        assert _extract_url(output) == "https://abc123.share.zrok.io"
+        output = "https://abc123.shares.zrok.io\n"
+        assert _extract_url(output) == "https://abc123.shares.zrok.io"
 
     def test_extracts_named_share_zrok_io_url(self):
         from cove.tunnel import _extract_url
-        output = "https://myforge.share.zrok.io\n"
-        assert _extract_url(output) == "https://myforge.share.zrok.io"
+        output = "https://myforge.shares.zrok.io\n"
+        assert _extract_url(output) == "https://myforge.shares.zrok.io"
 
     def test_returns_none_when_no_url(self):
         from cove.tunnel import _extract_url
@@ -950,7 +950,7 @@ class TestShareNameReservation:
 
         class FakeProc:
             args = ["share", "public"]
-            stdout = io.StringIO("https://random12.share.zrok.io\nlistening...\n")
+            stdout = io.StringIO("https://random12.shares.zrok.io\nlistening...\n")
             def __init__(self):
                 self.terminated = False
             def poll(self):
@@ -993,7 +993,7 @@ class TestShareNameReservation:
             calls.append(args)
             if args and args[:2] == ("share", "public"):
                 return subprocess.CompletedProcess(
-                    args, 0, stdout="https://myforge.share.zrok.io\n", stderr=""
+                    args, 0, stdout="https://myforge.shares.zrok.io\n", stderr=""
                 )
             return subprocess.CompletedProcess(args, 0, stdout="ok\n", stderr="")
 
@@ -1014,12 +1014,12 @@ class TestShareNameReservation:
         def fake_capture(*args, **kwargs):
             return call_results.get(
                 tuple(args),
-                subprocess.CompletedProcess(args, 0, stdout="https://myforge.share.zrok.io\n", stderr=""),
+                subprocess.CompletedProcess(args, 0, stdout="https://myforge.shares.zrok.io\n", stderr=""),
             )
 
         monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
         url = t._share_public("http://nginx", "myforge")
-        assert url == "https://myforge.share.zrok.io"
+        assert url == "https://myforge.shares.zrok.io"
 
     def test_reserve_failure_fails_loud(self, monkeypatch):
         import cove.tunnel as t
@@ -1083,7 +1083,7 @@ class TestForegroundShare:
         class FakeProc:
             args = ["true"]
             def __init__(self):
-                self.stdout = io.StringIO("https://rand12.share.zrok.io\nlistening...\n")
+                self.stdout = io.StringIO("https://rand12.shares.zrok.io\nlistening...\n")
                 self.poll = lambda: None
                 self.pid = 4242
                 self.terminated = False
@@ -1168,11 +1168,11 @@ class TestForegroundShare:
         import cove.tunnel as t
         monkeypatch.setattr(
             t, "_zrok2_exec_capture",
-            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="https://named.share.zrok.io\n", stderr=""),
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="https://named.shares.zrok.io\n", stderr=""),
         )
         monkeypatch.setattr(t, "_ensure_name", lambda n: None)
         url = t._share_public("http://nginx", "named")
-        assert url == "https://named.share.zrok.io"
+        assert url == "https://named.shares.zrok.io"
 
 
 class _InstantCancelSel:
@@ -1181,7 +1181,7 @@ class _InstantCancelSel:
     def register(self, *a, **k):
         pass
     def select(self, timeout=None):
-        self._proc.stdout.write("https://xyz.share.zrok.io\n")
+        self._proc.stdout.write("https://xyz.shares.zrok.io\n")
         self._proc.stdout.seek(0)
         raise KeyboardInterrupt
     def close(self):
@@ -1212,7 +1212,7 @@ class TestClickableUrl:
 
         class FakeProc:
             args = ["share", "public"]
-            stdout = io.StringIO("access your zrok share at the following endpoints:\n https://io0677a0vzm4.share.zrok.io\n")
+            stdout = io.StringIO("access your zrok share at the following endpoints:\n https://io0677a0vzm4.shares.zrok.io\n")
             def poll(self):
                 return None
             def terminate(self):
@@ -1256,17 +1256,17 @@ class TestClickableUrl:
         t._run_share_foreground(["share", "public", "http://nginx", "--headless"])
         clickable = [m for m in emitted if "\x1b]8;;" in m]
         assert clickable, f"no OSC 8 hyperlink emitted: {emitted}"
-        assert "https://io0677a0vzm4.share.zrok.io" in clickable[0]
+        assert "https://io0677a0vzm4.shares.zrok.io" in clickable[0]
 
     def test_named_share_prints_clickable_url(self, fake_compose_env, monkeypatch):
         import cove.tunnel as t
         emitted = []
         monkeypatch.setattr(
             t, "_zrok2_exec_capture",
-            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="https://named.share.zrok.io\n", stderr=""),
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="https://named.shares.zrok.io\n", stderr=""),
         )
         monkeypatch.setattr(t, "_ensure_name", lambda n: None)
         monkeypatch.setattr(t.click, "echo", lambda msg="", *a, **k: emitted.append(str(msg)))
         t._share_public("http://nginx", "named")
         clickable = [m for m in emitted if "\x1b]8;;" in m]
-        assert clickable and "https://named.share.zrok.io" in clickable[0]
+        assert clickable and "https://named.shares.zrok.io" in clickable[0]

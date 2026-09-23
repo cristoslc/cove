@@ -13,7 +13,7 @@ from cove.stateless import resolve_compose_dir
 
 
 ZROK2_IMAGE = "openziti/zrok2:2.0.4"
-ZROK2_DOMAIN = "share.zrok.io"
+ZROK2_DOMAIN = "shares.zrok.io"
 # Digest pins per host architecture (manifest-list tags work too, but a
 # per-arch pin makes the pulled image explicit and arm64 hosts never pull
 # the amd64 layer by accident).
@@ -423,6 +423,9 @@ def _ensure_enabled() -> None:
         )
 
 
+_last_announced_token = {"token": None}
+
+
 def _run_share_foreground(args: list[str]) -> None:
     """Run a blocking `zrok2 share` inside the sidecar, streaming output.
 
@@ -431,8 +434,6 @@ def _run_share_foreground(args: list[str]) -> None:
     stream as soon as it appears, then keeps streaming until the operator
     hits Ctrl-C; SIGINT is forwarded to the exec'd zrok2 process so the
     share is deleted server-side."""
-    import selectors
-
     cmd = _compose_cmd("--profile", "tunnel", "exec", "tunnel", "zrok2", *args)
     proc = subprocess.Popen(
         cmd,
@@ -523,7 +524,9 @@ def _ensure_name(name: str) -> None:
 
 
 def _extract_url(output: str):
-    match = re.search(rf"https://[a-z0-9.-]+{re.escape(ZROK2_DOMAIN)}\S*", output)
+    match = re.search(
+        rf"https://[a-z0-9.-]+\.{re.escape(ZROK2_DOMAIN)}\S*", output
+    )
     return match.group(0).rstrip(".,;:") if match else None
 
 
@@ -649,7 +652,7 @@ def discover_services(compose_dir=None) -> list[TunnelService]:
     seen = set()
     for _, body in _extract_blocks(text, "server"):
         name = _first_server_name(body)
-        if not name or ".share.zrok.io" in name:
+        if not name or ".shares.zrok.io" in name:
             continue
         short = re.sub(r"(\.cove\.local|\.cove)$", "", name)
         if short == "cove":
@@ -841,7 +844,7 @@ def _rendered_share_conf(
 ) -> str:
     lines = [
         "# Rendered by `cove tunnel` — public share routes "
-        "(<name>.share.zrok.io).",
+        "(<name>.shares.zrok.io).",
         f"# State: {SHARES_ENV_KEY} in the compose .env. Do not edit.",
         "",
     ]
@@ -959,6 +962,12 @@ def up(target, name, private_mode):
             f"Private share active. Access with: zrok2 access private {share_name}"
         )
         return
+    if share_name is None:
+        # Ephemeral share: server-generated token. Capture it from the
+        # foreground stream (announced line) to key the nginx route state.
+        share_name = _last_announced_token.get("token")
+        if not share_name:
+            return
     url = _share_public(zrok_target, share_name)
     if url is None:
         return
@@ -967,12 +976,13 @@ def up(target, name, private_mode):
         shares[share_name] = route_service.name
         _write_share_state(shares)
         _apply_share_routes(shares)
-    _announce_url(url)
 
 
 def _announce_url(url: str) -> None:
     """Print the URL with an OSC 8 hyperlink so terminals render it
     clickable."""
+    token = url.split("//", 1)[-1].split(".")[0]
+    _last_announced_token["token"] = token
     click.echo(f"\nTunnel active: {url}")
     click.echo(
         f"Open:  \x1b]8;;{url}\x1b\\{url}\x1b]8;;\x1b\\  (Ctrl-C to stop)"
