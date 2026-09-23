@@ -270,7 +270,9 @@ services:
 
   tunnel:
     profiles: ["tunnel"]
-    image: ${TUNNEL_IMAGE:-openziti/zrok2:2.0.4@sha256:f607c294b79613f05e8f3dd255d3ef8bd853851dc5c8d806cc5b6d9092c83d16}
+    # TUNNEL_IMAGE is pinned per-arch (see compose/tunnel.yml) by `cove tunnel up`;
+    # the default is the multi-arch manifest (Docker picks the matching arch).
+    image: ${TUNNEL_IMAGE:-openziti/zrok2:2.0.4}
     container_name: ${TUNNEL_CONTAINER_NAME:-cove-tunnel}
     restart: unless-stopped
     # Outbound-only: no published ports; reaches the ingress over the

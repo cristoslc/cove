@@ -95,7 +95,36 @@ class TestComposeService:
         service = _load_compose()["services"]["tunnel"]
         image = service["image"]
         assert "openziti/zrok2" in image
-        assert "sha256:" in image
+        assert "2.0.4" in image
+
+    def test_tunnel_image_is_per_arch_pinned_by_up(self):
+        import cove.tunnel as t
+        image = t._tunnel_image()
+        arch = t._host_arch()
+        assert image == f"openziti/zrok2:2.0.4@{t.ZROK2_DIGESTS[arch]}"
+
+    def test_host_arch_maps_machine(self, monkeypatch):
+        import cove.tunnel as t
+        import platform
+        monkeypatch.setattr(platform, "machine", lambda: "arm64")
+        assert t._host_arch() == "arm64"
+        monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+        assert t._host_arch() == "amd64"
+
+    def test_host_arch_fails_loud_on_unsupported(self, monkeypatch):
+        import cove.tunnel as t
+        import platform
+        monkeypatch.setattr(platform, "machine", lambda: "riscv64")
+        with pytest.raises(click.ClickException, match="Unsupported host architecture"):
+            t._host_arch()
+
+    def test_tunnel_image_uses_matching_digest(self, monkeypatch):
+        import cove.tunnel as t
+        import platform
+        monkeypatch.setattr(platform, "machine", lambda: "aarch64")
+        assert "sha256:8864ba64136cc690c6fddd556b679e5f344b06855de74f0fafce9c3eb9300f76" in t._tunnel_image()
+        monkeypatch.setattr(platform, "machine", lambda: "amd64")
+        assert "sha256:f607c294b79613f05e8f3dd255d3ef8bd853851dc5c8d806cc5b6d9092c83d16" in t._tunnel_image()
 
     def test_tunnel_state_volume_under_data_root(self):
         service = _load_compose()["services"]["tunnel"]
