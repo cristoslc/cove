@@ -349,9 +349,12 @@ def _env_token(key: str):
 
 
 def _zrok2_exec(*args: str, check: bool = True) -> subprocess.CompletedProcess:
-    """Run a zrok2 command inside the tunnel sidecar."""
+    """Run a zrok2 command inside the tunnel sidecar (-T: never allocate a
+    TTY — TTY allocation hijacks the caller's terminal and detaches output
+    from the captured pipe, which made `up` exit silently under a PTY)."""
     return subprocess.run(
-        _compose_cmd("--profile", "tunnel", "exec", "tunnel", "zrok2", *args),
+        _compose_cmd("--profile", "tunnel", "exec", "-T", "tunnel",
+                     "zrok2", *args),
         check=check,
     )
 
@@ -359,9 +362,11 @@ def _zrok2_exec(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 def _zrok2_exec_capture(
     *args: str, check: bool = True
 ) -> subprocess.CompletedProcess:
-    """Run a zrok2 command inside the sidecar, capturing output."""
+    """Run a zrok2 command inside the sidecar, capturing output (-T as
+    above)."""
     return subprocess.run(
-        _compose_cmd("--profile", "tunnel", "exec", "tunnel", "zrok2", *args),
+        _compose_cmd("--profile", "tunnel", "exec", "-T", "tunnel",
+                     "zrok2", *args),
         capture_output=True, text=True, check=check,
     )
 
@@ -434,11 +439,13 @@ def _run_share_foreground(args: list[str]) -> None:
     stream as soon as it appears, then keeps streaming until the operator
     hits Ctrl-C; SIGINT is forwarded to the exec'd zrok2 process so the
     share is deleted server-side."""
-    cmd = _compose_cmd("--profile", "tunnel", "exec", "tunnel", "zrok2", *args)
+    cmd = _compose_cmd("--profile", "tunnel", "exec", "-T", "tunnel",
+                       "zrok2", *args)
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
         text=True,
         bufsize=1,
     )
@@ -987,16 +994,11 @@ def up(target, name, private_mode):
             f"Private share active. Access with: zrok2 access private {share_name}"
         )
         return
-    if share_name is None:
-        # Ephemeral share: server-generated token. Capture it from the
-        # foreground stream (announced line) to key the nginx route state.
-        share_name = _last_announced_token.get("token")
-        if not share_name:
-            return
     url = _share_public(zrok_target, share_name)
     if url is None:
         return
-    if route_service is not None:
+    share_name = share_name or _last_announced_token.get("token")
+    if route_service is not None and share_name:
         shares = _read_share_state()
         shares[share_name] = route_service.name
         _write_share_state(shares)

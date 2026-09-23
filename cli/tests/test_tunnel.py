@@ -1285,3 +1285,76 @@ class TestUrlExtractionJSON:
                 '"msg":"access your zrok share at the following endpoints:'
                 '\\n 8rddw4qstynj.shares.zrok.io"}\n')
         assert t._extract_url(line) == "https://8rddw4qstynj.shares.zrok.io"
+
+
+class TestUpFlow:
+    def test_up_speedtest_shorthand_runs_foreground_and_announces(
+        self, fake_compose_env, monkeypatch
+    ):
+        import cove.tunnel as t
+        monkeypatch.setattr(t, "discover_services", lambda: [
+            t.TunnelService("speedtest", "https://speedtest.cove.local",
+                            "http://speedtest-tracker:80"),
+        ])
+        monkeypatch.setattr(t, "_resolve_share_target",
+                            lambda target, services, private_mode:
+                            ("http://nginx", services[0]))
+        monkeypatch.setattr(t, "_ensure_shares_file", lambda: None)
+        monkeypatch.setattr(t, "_ensure_sidecar", lambda: None)
+        monkeypatch.setattr(t, "_ensure_enabled", lambda: None)
+        monkeypatch.setattr(t, "_write_share_state", lambda shares: None)
+        monkeypatch.setattr(t, "_apply_share_routes", lambda shares: None)
+
+        emitted = []
+
+        class FakeProc:
+            args = ["share"]
+            stdout = io.StringIO(
+                '{"msg":"access your zrok share at the following endpoints:'
+                '\\n abcd12fg34hi.shares.zrok.io"}\n'
+            )
+            poll_rc = [None, None, 0]
+            def poll(self):
+                if len(self.poll_rc) > 1:
+                    return self.poll_rc.pop(0)
+                return self.poll_rc[0]
+            def terminate(self):
+                pass
+            def wait(self, timeout=None):
+                return 0
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def communicate(self, input=None, timeout=None):
+                return ("", "")
+
+        def fake_popen(cmd, **kwargs):
+            return FakeProc()
+
+        monkeypatch.setattr(t.subprocess, "Popen", fake_popen)
+
+        class FakeSel:
+            def __init__(self):
+                self.calls = 0
+            def register(self, *a, **k):
+                pass
+            def select(self, timeout=None):
+                self.calls += 1
+                if self.calls == 1:
+                    k = type("K", (), {})
+                    k.fileobj = io.StringIO(
+                        '{"msg":"access your zrok share at the following endpoints:'
+                        '\\\\n abcd12fg34hi.shares.zrok.io"}')
+                    return [(k(), None)]
+                if self.calls >= 2:
+                    raise KeyboardInterrupt
+                return []
+            def close(self):
+                pass
+
+        monkeypatch.setattr(t.selectors, "DefaultSelector", FakeSel)
+        runner = CliRunner()
+        result = runner.invoke(t.tunnel, ["up", "speedtest"])
+        assert result.exit_code == 0, result.output
+        assert "Tunnel active: https://abcd12fg34hi.shares.zrok.io" in result.output
