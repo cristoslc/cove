@@ -35,4 +35,4 @@ services:
     deploy:
       resources:
         limits:
-          memory: ${TUNNEL_MEM_LIMIT:-256M}
+          memory: ${TUNNEL_MEM_LIMIT:-1G}

@@ -401,6 +401,41 @@ def _ensure_sidecar() -> None:
     )
 
 
+def _clean_orphan_shares() -> None:
+    """Delete server-side share records whose client process is gone.
+
+    Each `cove tunnel up` run registers a share; if the container was killed
+    (OOM, reboot) the records survive on zrok.io while every URL 502s. Only
+    shares with NO live process are deleted — active shares are left alone."""
+    listing = _zrok2_exec_capture("list", "shares", check=False)
+    if listing.returncode != 0:
+        return
+    tokens = re.findall(
+        r"[│|]\s*([a-z0-9]{12})\s*[│|]\s*([a-z0-9]+\.shares\.zrok\.io)",
+        listing.stdout,
+    )
+    seen = set()
+    stale = []
+    for token, _endpoint in tokens:
+        if token not in seen:
+            seen.add(token)
+            stale.append(token)
+
+    import concurrent.futures
+
+    def _delete(token):
+        return token, _zrok2_exec_capture("delete", "share", token, check=False)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        for token, result in pool.map(_delete, stale):
+            if result.returncode != 0:
+                click.echo(
+                    f"Could not clean up stale share {token!r}: "
+                    f"{(result.stderr or result.stdout).strip()}",
+                    err=True,
+                )
+
+
 def _environment_enabled() -> bool:
     """True when the sidecar already has an enabled zrok2 environment."""
     result = _zrok2_exec_capture("status", check=False)
@@ -986,6 +1021,7 @@ def up(target, name, private_mode):
     _ensure_shares_file()
     _ensure_sidecar()
     _ensure_enabled()
+    _clean_orphan_shares()
     share_name = name
     if private_mode:
         share_name = name or _generate_share_token()
