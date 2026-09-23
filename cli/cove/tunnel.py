@@ -488,6 +488,7 @@ def _run_share_foreground(
         bufsize=1,
     )
     announced = False
+    token = None
     try:
         sel = selectors.DefaultSelector()
         sel.register(proc.stdout, selectors.EVENT_READ)
@@ -506,13 +507,12 @@ def _run_share_foreground(
                     if url:
                         announced = True
                         _announce_url(url)
-                        if route_service is not None:
-                            token = _last_announced_token.get("token")
-                            if token:
-                                shares = _read_share_state()
-                                shares[token] = route_service.name
-                                _write_share_state(shares)
-                                _apply_share_routes(shares)
+                        token = _last_announced_token.get("token")
+                        if route_service is not None and token:
+                            shares = _read_share_state()
+                            shares[token] = route_service.name
+                            _write_share_state(shares)
+                            _apply_share_routes(shares)
             if proc.poll() is not None and not announced:
                 break
     except KeyboardInterrupt:
@@ -529,6 +529,16 @@ def _run_share_foreground(
             url = _extract_url(output)
             if url:
                 _announce_url(url)
+                token = _last_announced_token.get("token")
+        # Teardown: the share is deleted server-side when the client dies;
+        # remove its nginx route so no stale route lingers.
+        if token:
+            shares = _read_share_state()
+            if token in shares:
+                shares.pop(token)
+                _write_share_state(shares)
+                _apply_share_routes(shares)
+                click.echo(f"Route for {token!r} removed.")
                 if route_service is not None:
                     token = _last_announced_token.get("token")
                     if token:
