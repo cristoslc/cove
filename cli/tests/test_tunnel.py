@@ -19,6 +19,8 @@ Run unit:  pytest cli/tests/test_tunnel.py -m "not e2e"
 
 from pathlib import Path
 import io
+import selectors
+import time
 import os
 import subprocess
 from subprocess import CompletedProcess
@@ -946,15 +948,39 @@ class TestShareNameReservation:
         import cove.tunnel as t
         calls = []
 
-        def fake_capture(*args, **kwargs):
-            if args and args[0] == "share" and "public" in args:
-                calls.append(args)
-                return subprocess.CompletedProcess(
-                    args, 0, stdout="https://random12.share.zrok.io\n", stderr=""
-                )
-            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+        class FakeProc:
+            args = ["share", "public"]
+            stdout = io.StringIO("https://random12.share.zrok.io\nlistening...\n")
+            def __init__(self):
+                self.terminated = False
+            def poll(self):
+                return None
+            def terminate(self):
+                self.terminated = True
+            def wait(self, timeout=None):
+                return 0
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def communicate(self, input=None, timeout=None):
+                return ("", "")
 
-        monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
+        def fake_popen(cmd, **kwargs):
+            calls.append(cmd)
+            return FakeProc()
+
+        monkeypatch.setattr(t.subprocess, "Popen", fake_popen)
+
+        class FakeSel:
+            def register(self, *a, **k):
+                pass
+            def select(self, timeout=None):
+                raise KeyboardInterrupt
+            def close(self):
+                pass
+
+        monkeypatch.setattr(t.selectors, "DefaultSelector", FakeSel)
         t._share_public("http://nginx", None)
         joined = " ".join(calls[0])
         assert "-n" not in joined
@@ -1047,3 +1073,133 @@ class TestEnsureEnabled:
         import cove.tunnel as t
         monkeypatch.setattr(t, "_zrok2_exec_capture", lambda *a, **k: subprocess.CompletedProcess(a, 1, stdout="", stderr="") if a and a[0] == "status" else subprocess.CompletedProcess(a, 1, stdout="", stderr="you already have an enabled environment, zrok2 disable first"))
         t._ensure_enabled()
+
+
+class TestForegroundShare:
+    def test_ephemeral_share_streams_and_returns_none(self, monkeypatch):
+        import cove.tunnel as t
+
+        FakeArgs = ["true"]
+        class FakeProc:
+            args = ["true"]
+            def __init__(self):
+                self.stdout = io.StringIO("https://rand12.share.zrok.io\nlistening...\n")
+                self.poll = lambda: None
+                self.pid = 4242
+                self.terminated = False
+                self._closed = False
+            def terminate(self):
+                self.terminated = True
+            def wait(self, timeout=None):
+                return 0
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                self._closed = True
+                return False
+            def communicate(self, input=None, timeout=None):
+                return ("", "")
+
+        procs = []
+
+        def fake_popen(cmd, **kwargs):
+            p = FakeProc()
+            procs.append(p)
+            return p
+
+        monkeypatch.setattr(t.subprocess, "Popen", fake_popen)
+        reads = iter([True, False])
+
+        import selectors
+        class FakeSel:
+            def __init__(self):
+                pass
+            def register(self, *a, **k):
+                pass
+            def select(self, timeout=None):
+                if next(reads, False):
+                    return [(None, None)]
+                time.sleep(0.6)
+                raise KeyboardInterrupt
+            def close(self):
+                pass
+
+        import time as time_mod
+        time = time_mod
+        monkeypatch.setattr(t.selectors, "DefaultSelector", FakeSel)
+        result = t._share_public("http://nginx", None)
+        assert result is None
+
+    def test_foreground_terminates_proc_in_finally(self, monkeypatch):
+        import cove.tunnel as t
+
+        FakeArgs = ["true"]
+        class FakeProc:
+            args = ["true"]
+            stdout = io.StringIO("")
+            def __init__(self):
+                self.terminated = False
+                self._killed = False
+            def poll(self):
+                return None
+            def terminate(self):
+                self.terminated = True
+            def wait(self, timeout=None):
+                return 0
+            def kill(self):
+                self._killed = True
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def communicate(self, input=None, timeout=None):
+                return ("", "")
+
+        proc = FakeProc()
+        monkeypatch.setattr(t.subprocess, "Popen", lambda cmd, **kw: proc)
+        monkeypatch.setattr(
+            t.selectors, "DefaultSelector",
+            lambda: _InstantCancelSel(proc),
+        )
+        t._run_share_foreground(["share", "public", "http://nginx", "--headless"])
+        assert proc.terminated
+
+    def test_named_share_still_returns_url(self, monkeypatch):
+        import cove.tunnel as t
+        monkeypatch.setattr(
+            t, "_zrok2_exec_capture",
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="https://named.share.zrok.io\n", stderr=""),
+        )
+        monkeypatch.setattr(t, "_ensure_name", lambda n: None)
+        url = t._share_public("http://nginx", "named")
+        assert url == "https://named.share.zrok.io"
+
+
+class _InstantCancelSel:
+    def __init__(self, proc):
+        self._proc = proc
+    def register(self, *a, **k):
+        pass
+    def select(self, timeout=None):
+        self._proc.stdout.write("https://xyz.share.zrok.io\n")
+        self._proc.stdout.seek(0)
+        raise KeyboardInterrupt
+    def close(self):
+        pass
+
+
+
+
+
+
+class TestDown:
+    def test_down_stops_sidecar(self, fake_compose_env, monkeypatch):
+        import cove.tunnel as t
+        monkeypatch.setattr(t, "_read_share_state", lambda: {})
+        monkeypatch.setattr(t, "_zrok2_exec_capture", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="", stderr=""))
+        monkeypatch.setattr(t, "_compose_cmd", lambda *a: ["true"])
+        monkeypatch.setattr(t.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess([], 0))
+        runner = CliRunner()
+        result = runner.invoke(t.tunnel, ["down"])
+        assert result.exit_code == 0
+        assert "Tunnel stopped." in result.output
