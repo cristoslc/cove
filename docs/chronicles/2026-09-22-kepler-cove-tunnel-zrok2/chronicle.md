@@ -146,3 +146,8 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   terminate → zrok2 deletes the share server-side). Named shares still return
   (agent-adopted, idempotent 409+exit0 semantics per zrok2 v2). Private shares
   unchanged. 4 new tests (100 tunnel tests). Gate: 542 passed.
+- 2026-09-23 (implementation): Clickable URL (operator feedback). `_announce_url`
+  emits the URL with an OSC 8 hyperlink escape sequence so terminals render it
+  clickable; announced from `_share_public` for both foreground (streamed) and
+  named (returned) shares. After the announcement, non-URL zrok2 chatter is
+  suppressed (only post-URL lines stream). Gate: 544 passed.

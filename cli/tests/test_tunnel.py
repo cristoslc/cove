@@ -1203,3 +1203,70 @@ class TestDown:
         result = runner.invoke(t.tunnel, ["down"])
         assert result.exit_code == 0
         assert "Tunnel stopped." in result.output
+
+
+class TestClickableUrl:
+    def test_foreground_prints_osc8_clickable_url(self, monkeypatch):
+        import cove.tunnel as t
+        emitted = []
+
+        class FakeProc:
+            args = ["share", "public"]
+            stdout = io.StringIO("access your zrok share at the following endpoints:\n https://io0677a0vzm4.share.zrok.io\n")
+            def poll(self):
+                return None
+            def terminate(self):
+                pass
+            def wait(self, timeout=None):
+                return 0
+            def __enter__(self):
+                return self
+            def __exit__(self, *a):
+                return False
+            def communicate(self, input=None, timeout=None):
+                return ("", "")
+
+        proc = FakeProc()
+
+        def fake_popen(cmd, **kwargs):
+            return proc
+
+        monkeypatch.setattr(t.subprocess, "Popen", fake_popen)
+
+        class FakeKey:
+            fileobj = proc.stdout
+
+        class FakeSel:
+            def __init__(self):
+                self.calls = 0
+            def register(self, *a, **k):
+                pass
+            def select(self, timeout=None):
+                self.calls += 1
+                if self.calls == 1:
+                    return [(FakeKey(), None)]
+                if self.calls >= 3:
+                    raise KeyboardInterrupt
+                return []
+            def close(self):
+                pass
+
+        monkeypatch.setattr(t.selectors, "DefaultSelector", FakeSel)
+        monkeypatch.setattr(t.click, "echo", lambda msg="", *a, **k: emitted.append(str(msg)))
+        t._run_share_foreground(["share", "public", "http://nginx", "--headless"])
+        clickable = [m for m in emitted if "\x1b]8;;" in m]
+        assert clickable, f"no OSC 8 hyperlink emitted: {emitted}"
+        assert "https://io0677a0vzm4.share.zrok.io" in clickable[0]
+
+    def test_named_share_prints_clickable_url(self, fake_compose_env, monkeypatch):
+        import cove.tunnel as t
+        emitted = []
+        monkeypatch.setattr(
+            t, "_zrok2_exec_capture",
+            lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="https://named.share.zrok.io\n", stderr=""),
+        )
+        monkeypatch.setattr(t, "_ensure_name", lambda n: None)
+        monkeypatch.setattr(t.click, "echo", lambda msg="", *a, **k: emitted.append(str(msg)))
+        t._share_public("http://nginx", "named")
+        clickable = [m for m in emitted if "\x1b]8;;" in m]
+        assert clickable and "https://named.share.zrok.io" in clickable[0]
