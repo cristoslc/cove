@@ -1,3 +1,7 @@
+## 0.6.0 (2026-09-23)
+
+- **`cove tunnel`** — managed public relay via zrok2 (PR #53). `cove tunnel up/ls/down/reset-token` with an interactive service picker, interactive token onboarding (1Password via ADR-017), platform-aware per-arch image pinning, Cove-rendered nginx share routes (rendered mid-stream, removed on Ctrl-C), orphan-share cleanup on `up`, clickable `?interstitial=1` links, and full Ctrl-C teardown. Docs: `docs/services/tunnel.md`.
+
 # Changelog
 
 All notable changes to Cove are documented here. The format follows
