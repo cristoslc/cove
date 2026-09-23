@@ -321,3 +321,31 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "cove tunnel service picker discovery (nginx vhost parse, static routes, loud empty)"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove tunnel shorthand resolution + unknown-name loud failure"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove tunnel share route rendering into cove-tunnel-shares.conf + removal on down"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove tunnel non-TTY bare up fails loud with service list (no silent default)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip

@@ -2,6 +2,8 @@
 
 import re
 import subprocess
+import sys
+from dataclasses import dataclass
 
 import click
 
@@ -14,9 +16,31 @@ TUNNEL_OP_VAULT = "Private"
 TUNNEL_ITEM_TITLE = "Zrok Account"
 ACCOUNT_TOKEN_OP_REF = f"op://{TUNNEL_OP_VAULT}/{TUNNEL_ITEM_TITLE}/account_token"
 SHARE_TOKEN_OP_REF = f"op://{TUNNEL_OP_VAULT}/{TUNNEL_ITEM_TITLE}/share_token"
-DEFAULT_TARGET = "https://nginx"
+MANAGED_TARGET = "http://nginx"
+SHARES_ENV_KEY = "COVE_TUNNEL_SHARES"
+SHARES_CONF_NAME = "cove-tunnel-shares.conf"
 NAME_PATTERN = re.compile(r"^[a-z0-9]{4,32}$")
 CONTAINER_NAME = "cove-tunnel"
+
+STATIC_ROUTE_BODIES = {
+    "static:landing": [
+        "root /usr/share/nginx/html;",
+        "try_files /landing.html =404;",
+        "include /etc/nginx/cove-config-locations.conf;",
+    ],
+    "static:pages": [
+        "root /usr/share/nginx/html;",
+        "try_files /pages.html =404;",
+        "include /etc/nginx/cove-pages-locations.conf;",
+    ],
+}
+
+
+@dataclass(frozen=True)
+class TunnelService:
+    name: str
+    display: str
+    route: str
 
 
 def validate_share_name(name: str) -> str:
@@ -166,6 +190,8 @@ def _ensure_enabled() -> None:
 def _share_public(target: str, name: str | None) -> str:
     """Start a public share; return the public URL."""
     args = ["share", "public", target, "--headless"]
+    if target.startswith("https://"):
+        args.append("--insecure")
     if name:
         args += ["-n", f"public:{name}"]
     result = _zrok2_exec_capture(*args, check=False)
@@ -189,10 +215,10 @@ def _extract_url(output: str):
 
 def _share_private(target: str, share_token: str) -> str:
     """Start a private share with a vanity token; return the token."""
-    result = _zrok2_exec_capture(
-        "share", "private", target, "--share-token", share_token,
-        "--headless", check=False,
-    )
+    args = ["share", "private", target, "--share-token", share_token, "--headless"]
+    if target.startswith("https://"):
+        args.append("--insecure")
+    result = _zrok2_exec_capture(*args, check=False)
     if result.returncode != 0:
         raise click.ClickException(
             "zrok2 share private failed: "
@@ -206,12 +232,368 @@ def _list_shares() -> list[str]:
     return result.stdout.splitlines() if result.returncode == 0 else []
 
 
+def _extract_blocks(text: str, keyword: str) -> list[tuple[str, str]]:
+    """Return (header, body) for each top-level `keyword { ... }` block."""
+    blocks = []
+    for m in re.finditer(rf"(?m)^{keyword}\s+([^{{}};]*){{", text):
+        depth = 1
+        i = m.end()
+        while i < len(text) and depth:
+            if text[i] == "{":
+                depth += 1
+            elif text[i] == "}":
+                depth -= 1
+            i += 1
+        blocks.append((m.group(1).strip(), text[m.end():i - 1]))
+    return blocks
+
+
+def _read_nginx_conf(compose_dir) -> str:
+    rendered = compose_dir / "nginx" / "default.conf"
+    if rendered.exists():
+        return rendered.read_text()
+    template = compose_dir / "nginx" / "default.conf.j2"
+    if template.exists():
+        return template.read_text()
+    raise click.ClickException(
+        "No nginx config found under "
+        f"{compose_dir / 'nginx'} — run `cove up` first so the ingress "
+        "config is rendered."
+    )
+
+
+def _first_server_name(body: str):
+    m = re.search(r"(?m)^\s*server_name\s+([^;]+);", body)
+    if not m:
+        return None
+    for token in m.group(1).split():
+        if token == "_" or token.startswith("~") or "*" in token or "{{" in token:
+            continue
+        return token
+    return None
+
+
+def _resolve_upstream(value: str, upstreams: dict, setvars: dict):
+    if value.startswith("$"):
+        return setvars.get(value[1:])
+    if re.match(r"^https?://", value):
+        return value
+    return None
+
+
+def _block_route(body: str, upstreams: dict, setvars: dict):
+    m = re.search(r"(?m)^\s*proxy_pass\s+(\S+);", body)
+    if not m:
+        return None
+    raw = m.group(1)
+    if raw.startswith("$"):
+        var = raw[1:].split("$", 1)[0]
+        return setvars.get(var) or _resolve_upstream(raw, upstreams, setvars)
+    scheme, _, name = raw.partition("://")
+    if name in upstreams:
+        return upstreams[name]
+    if scheme in ("http", "https"):
+        return raw.split("$")[0]
+    return None
+
+
+def discover_services(compose_dir=None) -> list[TunnelService]:
+    """Derive the tunnelable service inventory from Cove's nginx config.
+
+    Every nginx server block with a real (non-regex) name and a proxy_pass
+    (or a static landing/pages body) becomes one picker entry. Regex-only
+    vhosts, redirects, and health endpoints are not tunnelable. Fails loud
+    when nothing is discoverable — never a silent default."""
+    compose_dir = compose_dir or resolve_compose_dir()
+    text = _read_nginx_conf(compose_dir)
+    upstreams = {}
+    for header, body in _extract_blocks(text, "upstream"):
+        m = re.search(r"(?m)^\s*server\s+([^;]+);", body)
+        if m:
+            upstreams[header.split()[0]] = f"http://{m.group(1).strip()}"
+    setvars = dict(re.findall(r"(?m)^\s*set\s+\$(\w+)\s+([^;]+);", text))
+    services = []
+    seen = set()
+    for _, body in _extract_blocks(text, "server"):
+        name = _first_server_name(body)
+        if not name or ".share.zrok.io" in name:
+            continue
+        short = re.sub(r"(\.cove\.local|\.cove)$", "", name)
+        if short == "cove":
+            short = "ingress"
+        if short in seen:
+            continue
+        route = _block_route(body, upstreams, setvars)
+        if route is None:
+            if "try_files /landing.html" in body:
+                route = "static:landing"
+            elif "try_files /pages.html" in body:
+                route = "static:pages"
+            else:
+                continue
+        seen.add(short)
+        display = (
+            "https://cove.local" if short == "ingress"
+            else f"https://{short}.cove.local"
+        )
+        services.append(TunnelService(short, display, route))
+    if not services:
+        raise click.ClickException(
+            "No tunnelable services discovered in the nginx config — the "
+            "ingress renders no proxied vhosts. Run `cove up` and retry."
+        )
+    return services
+
+
+def _format_service_listing(services: list[TunnelService]) -> str:
+    return "\n".join(f"  {s.name} — {s.display}" for s in services)
+
+
+def _no_target_message(services: list[TunnelService]) -> str:
+    return (
+        "No TARGET given and stdin is not a TTY — refusing to pick a "
+        "service silently.\n"
+        "Available services:\n"
+        f"{_format_service_listing(services)}\n"
+        "Pass one explicitly, e.g. `cove tunnel up git`."
+    )
+
+
+def _interactive_pick(services: list[TunnelService]) -> TunnelService:
+    """Arrow-key service picker. Enter selects; q/Ctrl-C cancels loudly."""
+    import termios
+    import tty
+
+    if not sys.stdin.isatty():
+        raise click.ClickException(_no_target_message(services))
+    choices = list(services)
+    idx = 0
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    tty.setcbreak(fd)
+
+    def draw(redraw: bool) -> None:
+        if redraw:
+            sys.stdout.write(f"\x1b[{len(choices) + 1}A")
+        sys.stdout.write("\x1b[KSelect a service (up/down, Enter; q cancels):\n")
+        for i, svc in enumerate(choices):
+            cursor = ">" if i == idx else " "
+            sys.stdout.write(f"\x1b[K{cursor} {svc.name} — {svc.display}\n")
+        sys.stdout.flush()
+
+    try:
+        draw(redraw=False)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                return choices[idx]
+            if ch == "\x1b":
+                seq = sys.stdin.read(2)
+                if seq == "[A":
+                    idx = (idx - 1) % len(choices)
+                    draw(redraw=True)
+                elif seq == "[B":
+                    idx = (idx + 1) % len(choices)
+                    draw(redraw=True)
+            elif ch in ("j", "k"):
+                idx = (idx + (1 if ch == "j" else -1)) % len(choices)
+                draw(redraw=True)
+            elif ch in ("\x03", "q"):
+                raise click.ClickException("Cancelled — no share created.")
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _resolve_share_target(
+    target: str | None, services: list[TunnelService], private_mode: bool
+) -> tuple[str, TunnelService | None]:
+    """Resolve the zrok2 backend target and (optionally) the routed service."""
+    if target is None:
+        if not sys.stdin.isatty():
+            raise click.ClickException(_no_target_message(services))
+        service = _interactive_pick(services)
+        return _service_target(service, private_mode), service
+    if "://" in target:
+        return target, None
+    matches = [s for s in services if s.name == target.strip().lower()]
+    if not matches:
+        raise click.ClickException(
+            f"Unknown service {target!r}. Valid services:\n"
+            f"{_format_service_listing(services)}"
+        )
+    service = matches[0]
+    return _service_target(service, private_mode), service
+
+
+def _service_target(service: TunnelService, private_mode: bool) -> str:
+    if private_mode:
+        return service.route if service.route.startswith("http") else MANAGED_TARGET
+    return MANAGED_TARGET
+
+
+def _shares_conf_path():
+    return resolve_compose_dir() / "nginx" / SHARES_CONF_NAME
+
+
+def _read_share_state() -> dict[str, str]:
+    """Return active share definitions (share name -> service name)."""
+    env_path = _compose_env_path()
+    if not env_path.exists():
+        return {}
+    for line in env_path.read_text().splitlines():
+        if line.startswith(f"{SHARES_ENV_KEY}="):
+            raw = line.split("=", 1)[1].strip()
+            shares = {}
+            for pair in filter(None, raw.split(",")):
+                share_name, sep, svc = pair.partition("=")
+                if not sep or not NAME_PATTERN.match(share_name) or not svc:
+                    raise click.ClickException(
+                        f"Malformed {SHARES_ENV_KEY} entry {pair!r} in the "
+                        "compose .env — expected comma-separated "
+                        "<share-name>=<service> pairs."
+                    )
+                shares[share_name] = svc
+            return shares
+    return {}
+
+
+def _write_share_state(shares: dict[str, str]) -> None:
+    _upsert_env(
+        SHARES_ENV_KEY,
+        ",".join(f"{n}={svc}" for n, svc in sorted(shares.items())),
+    )
+
+
+def _service_index() -> dict[str, TunnelService]:
+    return {s.name: s for s in discover_services()}
+
+
+def _render_share_route(
+    share_name: str, service: TunnelService
+) -> str:
+    if service.route.startswith("static:"):
+        body_lines = ["    location / {"]
+        body_lines += [f"        {line}" for line in STATIC_ROUTE_BODIES[service.route]]
+        body_lines.append("    }")
+        resolver = ""
+    else:
+        resolver = "    resolver 127.0.0.11 valid=10s;"
+        body_lines = [
+            "    location / {",
+            f"        set $tunnel_upstream {service.route};",
+            "        proxy_pass $tunnel_upstream$request_uri;",
+            "        proxy_set_header Host $host;",
+            "        proxy_set_header X-Real-IP $remote_addr;",
+            "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+            "        proxy_set_header X-Forwarded-Proto https;",
+            "    }",
+        ]
+    lines = [
+        f"# {share_name}.{ZROK2_DOMAIN} -> {service.route} "
+        "(rendered by `cove tunnel`; do not edit)",
+        "server {",
+        "    listen 80;",
+        f"    server_name {share_name}.{ZROK2_DOMAIN};",
+        "",
+    ]
+    if resolver:
+        lines.append(resolver)
+    lines.extend(body_lines)
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _rendered_share_conf(
+    shares: dict[str, str], services: dict[str, TunnelService]
+) -> str:
+    lines = [
+        "# Rendered by `cove tunnel` — public share routes "
+        "(<name>.share.zrok.io).",
+        f"# State: {SHARES_ENV_KEY} in the compose .env. Do not edit.",
+        "",
+    ]
+    for share_name in sorted(shares):
+        lines.append(_render_share_route(share_name, services[shares[share_name]]))
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _nginx_container_name() -> str:
+    env_path = _compose_env_path()
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("NGINX_CONTAINER_NAME="):
+                value = line.split("=", 1)[1].strip()
+                if value:
+                    return value
+    return "cove-nginx"
+
+
+def _nginx_config_ok() -> bool:
+    result = subprocess.run(
+        ["docker", "exec", _nginx_container_name(), "nginx", "-t"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        click.echo(
+            result.stderr.strip() or result.stdout.strip(), err=True
+        )
+    return result.returncode == 0
+
+
+def _reload_nginx() -> None:
+    result = subprocess.run(
+        ["docker", "exec", _nginx_container_name(), "nginx", "-s", "reload"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(
+            "nginx reload failed: "
+            f"{(result.stderr or result.stdout).strip()}"
+        )
+
+
+def _apply_share_routes(shares: dict[str, str]) -> None:
+    """Render the share-route include from state and reload nginx."""
+    services = _service_index()
+    unknown = sorted(set(shares.values()) - services.keys())
+    if unknown:
+        raise click.ClickException(
+            f"Share routes reference unknown services: {', '.join(unknown)}"
+        )
+    path = _shares_conf_path()
+    previous = path.read_text() if path.exists() else None
+    path.write_text(_rendered_share_conf(shares, services))
+    if not _nginx_config_ok():
+        if previous is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(previous)
+        raise click.ClickException(
+            "nginx rejected the rendered share routes; previous config "
+            "restored. Fix the route state and retry."
+        )
+    _reload_nginx()
+
+
+def _ensure_shares_file() -> None:
+    """Guarantee the share-route include exists before the sidecar starts.
+
+    The nginx bind-mount auto-creates missing host paths as directories,
+    which wedges the mount; the file must exist even with zero shares."""
+    path = _shares_conf_path()
+    if not path.exists():
+        path.write_text(_rendered_share_conf({}, {}))
+
+
 @click.group()
 def tunnel():
     """Manage the public tunnel (optional zrok2 relay sidecar).
 
     Publishes a `.cove` service to the public web via a zrok.io managed
     relay. The sidecar is outbound-only; shares exist only while active.
+    Cove renders the nginx route for each public share name — operators
+    never write nginx blocks.
     """
 
 
@@ -221,23 +603,34 @@ def tunnel():
 @click.option("--private", "private_mode", is_flag=True,
               help="Private share: prints a share token, no public URL.")
 def up(target, name, private_mode):
-    """Start a share for TARGET (default: ingress, Host preserved).
+    """Start a share: picker, service shorthand, or explicit URL.
 
-    The bare default only works if nginx has a vhost (or catch-all) matching
-    the public share name; for a specific service, pass its URL explicitly,
-    e.g. `cove tunnel up https://git.cove.local`.
-    """
+    Bare `cove tunnel up` opens an interactive picker of Cove's services
+    (derived from the nginx ingress config). `cove tunnel up git` resolves
+    a service by name; `cove tunnel up <url>` is the explicit power path.
+    The public share name's nginx route is rendered and reloaded by Cove."""
+    services = discover_services()
+    zrok_target, route_service = _resolve_share_target(
+        target, services, private_mode
+    )
     if name:
         name = validate_share_name(name)
+    _ensure_shares_file()
     _ensure_sidecar()
     _ensure_enabled()
-    resolved_target = target or DEFAULT_TARGET
+    share_name = name or _generate_share_token()
     if private_mode:
-        token = name or _generate_share_token()
-        printed = _share_private(resolved_target, token)
-        click.echo(f"Private share active. Access with: zrok2 access private {printed}")
+        _share_private(zrok_target, share_name)
+        click.echo(
+            f"Private share active. Access with: zrok2 access private {share_name}"
+        )
         return
-    url = _share_public(resolved_target, name)
+    url = _share_public(zrok_target, share_name)
+    if route_service is not None:
+        shares = _read_share_state()
+        shares[share_name] = route_service.name
+        _write_share_state(shares)
+        _apply_share_routes(shares)
     click.echo(f"Tunnel active: {url}")
 
 
@@ -262,7 +655,8 @@ def ls():
 @tunnel.command()
 @click.argument("name", required=False, default=None)
 def down(name):
-    """Stop the tunnel sidecar (and its active shares)."""
+    """Stop shares and the tunnel sidecar, removing rendered routes."""
+    shares = _read_share_state()
     if name:
         name = validate_share_name(name)
         result = _zrok2_exec_capture(
@@ -273,7 +667,15 @@ def down(name):
                 "zrok2 agent release failed: "
                 f"{(result.stderr or result.stdout).strip()}"
             )
+        if name in shares:
+            shares.pop(name)
+            _write_share_state(shares)
+            _apply_share_routes(shares)
         click.echo(f"Released share {name!r}.")
+    elif shares:
+        _write_share_state({})
+        _apply_share_routes({})
+        shares = {}
     click.echo("Stopping tunnel sidecar...")
     subprocess.run(_compose_cmd("stop", "tunnel"), check=True)
     click.echo("Tunnel stopped.")

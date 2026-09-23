@@ -374,6 +374,7 @@
         - pages.html
         - cove-config-locations.conf
         - cove-pages-locations.conf
+        - cove-tunnel-shares.conf
       register: nginx_mount_targets
     - name: Fail if a Docker-created directory wedges an nginx mount
       ansible.builtin.fail:
@@ -392,6 +393,17 @@
         dest: "{{ nginx_conf_dir }}/default.conf"
         mode: "0644"
       notify: Reload nginx
+
+    - name: Ensure cove-tunnel-shares.conf exists (empty state, never a directory)
+      ansible.builtin.copy:
+        dest: "{{ nginx_conf_dir }}/cove-tunnel-shares.conf"
+        mode: "0644"
+        content: |
+          # Rendered by `cove tunnel` — public share routes (<name>.share.zrok.io).
+          # State: COVE_TUNNEL_SHARES in the compose .env. Do not edit.
+        force: false
+      notify: Reload nginx
+      when: not (nginx_conf_dir ~ "/cove-tunnel-shares.conf") is exists
 
     - name: Assert data-root bind-mount targets are not directories
       ansible.builtin.stat:

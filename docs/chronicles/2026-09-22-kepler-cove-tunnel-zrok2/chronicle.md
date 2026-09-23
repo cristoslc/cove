@@ -64,3 +64,29 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   are also stack-state (speedtest unhealthy pending APP_KEY from 1Password). None of
   the failing paths touch tunnel code. Escalation guard not triggered — these are
   trunk-baseline failures, recorded here and for the operator handoff.
+
+- 2026-09-22 (impl agent): Operator-rework implementation (picker + Cove-managed
+  share routes). Two behaviors from the operator review replaced in-place:
+  (1) silent `DEFAULT_TARGET` removed — `discover_services()` parses the nginx
+  ingress config (rendered `default.conf` preferred, `.j2` fallback) into a
+  service inventory (upstreams + `set $var` resolvers + static landing/pages
+  bodies; regex-only vhosts, redirects, health endpoints excluded). Bare
+  `cove tunnel up` on a TTY opens an arrow-key picker (termios/cbreak, j/k
+  aliases, q/Ctrl-C cancels loud); without a TTY it fails loud listing
+  `service — target` lines; unknown shorthand fails loud with the same list.
+  (2) Share routing is Cove-rendered: new include `cove-tunnel-shares.conf`
+  (mounted in docker-compose, included from `default.conf.j2` after user.d)
+  is regenerated from `COVE_TUNNEL_SHARES` state in the compose `.env`
+  (share=service pairs), server blocks per `<name>.share.zrok.io` route to the
+  service upstream with `Host: $host`, `nginx -t` validates and `nginx -s
+  reload` applies (previous file restored on rejection — rollback on failure,
+  never silent). `down` releases the share and re-renders the include; bare
+  `down` clears all share routes. bringup seeds an empty include (force:false)
+  so the bind-mount is never wedged as a directory. zrok2 HTTPS targets now
+  pass `--insecure` (self-signed cove certs on the internal hop; relay edge
+  terminates public TLS). TDD: failing tests written first for the three new
+  discovery/route/state behaviors. Test gate: 511 passed (was 482; +29 tunnel
+  rework tests, +2 net). Coverage matrix +4 paths. Plan + tunnel.md updated to
+  the reworked UX. Known non-blocker: discovery currently resolves the
+  tailscale ts.net vhost to a forgejo route — harmless duplicate entry in the
+  picker, candidate for a name-filter follow-up.
