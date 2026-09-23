@@ -939,3 +939,72 @@ class TestEnable:
         t._ensure_enabled()
         enable_call = next(c for c in calls if c and c[0] == "enable")
         assert "--headless" in enable_call
+
+
+class TestShareNameReservation:
+    def test_ephemeral_share_does_not_pass_client_invented_name(self, monkeypatch):
+        import cove.tunnel as t
+        calls = []
+
+        def fake_capture(*args, **kwargs):
+            if args and args[0] == "share" and "public" in args:
+                calls.append(args)
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="https://random12.share.zrok.io\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
+        t._share_public("http://nginx", None)
+        joined = " ".join(calls[0])
+        assert "-n" not in joined
+
+    def test_named_share_reserves_name_first(self, monkeypatch):
+        import cove.tunnel as t
+        calls = []
+
+        def fake_capture(*args, **kwargs):
+            calls.append(args)
+            if args and args[:2] == ("share", "public"):
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="https://myforge.share.zrok.io\n", stderr=""
+                )
+            return subprocess.CompletedProcess(args, 0, stdout="ok\n", stderr="")
+
+        monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
+        t._share_public("http://nginx", "myforge")
+        assert ("create", "name", "myforge") in calls
+        assert "-n" in calls[-1] and "public:myforge" in calls[-1]
+
+    def test_reserve_existing_name_is_not_fatal(self, monkeypatch):
+        import cove.tunnel as t
+        call_results = {
+            ("list", "names"): subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            ("create", "name", "myforge"): subprocess.CompletedProcess(
+                [], 1, stdout="", stderr="name already exists"
+            ),
+        }
+
+        def fake_capture(*args, **kwargs):
+            return call_results.get(
+                tuple(args),
+                subprocess.CompletedProcess(args, 0, stdout="https://myforge.share.zrok.io\n", stderr=""),
+            )
+
+        monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
+        url = t._share_public("http://nginx", "myforge")
+        assert url == "https://myforge.share.zrok.io"
+
+    def test_reserve_failure_fails_loud(self, monkeypatch):
+        import cove.tunnel as t
+
+        def fake_capture(*args, **kwargs):
+            if args and args[:2] == ("create", "name"):
+                return subprocess.CompletedProcess([], 1, stdout="", stderr="boom")
+            if args and args[:2] == ("share", "public"):
+                return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+        monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
+        with pytest.raises(click.ClickException, match="boom"):
+            t._share_public("http://nginx", "myforge")
