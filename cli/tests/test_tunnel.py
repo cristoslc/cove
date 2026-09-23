@@ -1008,3 +1008,42 @@ class TestShareNameReservation:
         monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
         with pytest.raises(click.ClickException, match="boom"):
             t._share_public("http://nginx", "myforge")
+
+
+class TestEnsureEnabled:
+    @pytest.fixture
+    def exec_results(self, monkeypatch):
+        import cove.tunnel as t
+        calls = []
+        state = {"status": None}
+
+        def fake_capture(*args, **kwargs):
+            calls.append(args)
+            if args and args[0] == "status":
+                return state["status"] or subprocess.CompletedProcess(args, 1, stdout="", stderr="")
+            return subprocess.CompletedProcess(args, 0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(t, "_zrok2_exec_capture", fake_capture)
+        monkeypatch.setattr(t, "_ensure_account_token", lambda: "tok")
+        return t, state
+
+    def test_already_enabled_short_circuits(self, exec_results, monkeypatch):
+        import cove.tunnel as t
+        enable_calls = []
+
+        def fake(*args, **kwargs):
+            if args and args[0] == "status":
+                return subprocess.CompletedProcess(
+                    args, 0, stdout="Account Token | <<SET>>\n", stderr=""
+                )
+            enable_calls.append(args)
+            return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+        monkeypatch.setattr(t, "_zrok2_exec_capture", fake)
+        t._ensure_enabled()
+        assert enable_calls == []
+
+    def test_reenable_error_treated_as_enabled(self, exec_results, monkeypatch):
+        import cove.tunnel as t
+        monkeypatch.setattr(t, "_zrok2_exec_capture", lambda *a, **k: subprocess.CompletedProcess(a, 1, stdout="", stderr="") if a and a[0] == "status" else subprocess.CompletedProcess(a, 1, stdout="", stderr="you already have an enabled environment, zrok2 disable first"))
+        t._ensure_enabled()
