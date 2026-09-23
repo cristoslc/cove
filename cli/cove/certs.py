@@ -162,6 +162,18 @@ def _generate_leaf(
             x509.SubjectAlternativeName(san_entries),
             critical=False,
         )
+        # RFC 5280: the AKI on CA-issued certs is REQUIRED by macOS
+        # Security.framework / python-ssl; its absence makes verification
+        # fail with "Missing Authority Key Identifier" even though
+        # openssl CLI verifies fine.
+        .add_extension(
+            x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_cert.public_key()),
+            critical=False,
+        )
+        .add_extension(
+            x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+            critical=False,
+        )
         .sign(ca_key, hashes.SHA256())
     )
 

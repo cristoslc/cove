@@ -118,3 +118,18 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   (amd64 f607c294…, arm64 8864ba64…). Compose default demoted to the multi-arch
   manifest so Docker picks the matching arch (warning disappears on arm64 since the
   arm64 digest is pinned explicitly). 5 new tests (90 tunnel tests). Gate: 532 passed.
+- 2026-09-23 (implementation): Root cause of the 401 chain + share-name fix.
+  (a) The deployed leaf cert (cove.local.pem, Aug 12) lacked the Authority Key
+  Identifier extension — _generate_leaf in cli/cove/certs.py never added AKI/SKI.
+  openssl CLI verified OK but python ssl / macOS Security.framework rejected the
+  chain ("Missing Authority Key Identifier"), so Vault lookups failed silently →
+  _vault_get returned None → fell back to the placeholder ZROK_ACCOUNT_TOKEN=tok
+  in the deployed compose .env → zrok.io 401. Fixed at the source (AKI + SKI on
+  every generated leaf), re-issued the deployed cert, nginx reloaded; urllib now
+  verifies. (b) Cleared the fixture-placeholder token ("tok", "fresh-token") from
+  the deployed compose .env, the local op-cache, and the Vault cache.
+  (c) Ephemeral public shares no longer pass a client-invented -n token (409
+  shareConflict — the name must be reserved first); named shares now run
+  `zrok2 create name` first (idempotent). Private shares use server-generated
+  tokens unless pre-created via `zrok2 create share private --share-token`.
+  Gate: 536 passed.
