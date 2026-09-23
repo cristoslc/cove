@@ -151,3 +151,15 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   clickable; announced from `_share_public` for both foreground (streamed) and
   named (returned) shares. After the announcement, non-URL zrok2 chatter is
   suppressed (only post-URL lines stream). Gate: 544 passed.
+- 2026-09-23 (implementation): Two root-cause fixes from the live-share 301 loop.
+  (a) DOMAIN MISMATCH: zrok2's live public URLs are `<token>.shares.zrok.io`
+  (PLURAL) but the rendered nginx share-route blocks used `share.zrok.io`
+  (singular) → server_name never matched → shares hit the default HTTP server →
+  `if ($scheme = http) return 301 https://...` → infinite 301 loop (the zrok2
+  frontend re-enters over HTTP). ZROK2_DOMAIN corrected to plural everywhere;
+  filter/route render/tests updated. (b) STALE DEPLOYED NGINX: the running
+  cove-nginx predated the cove-tunnel-shares.conf mount+include — recreated and
+  re-rendered default.conf (deployed conf now has the include; the shares conf
+  was empty). (c) Ad-hoc (picker-picked) shares now capture the server-generated
+  token from the announced URL and persist share=service in COVE_TUNNEL_SHARES so
+  nginx routes them and `down` cleans up. Gate: 544 passed.
