@@ -221,7 +221,12 @@ def tunnel():
 @click.option("--private", "private_mode", is_flag=True,
               help="Private share: prints a share token, no public URL.")
 def up(target, name, private_mode):
-    """Start a share for TARGET (default: ingress, Host preserved)."""
+    """Start a share for TARGET (default: ingress, Host preserved).
+
+    The bare default only works if nginx has a vhost (or catch-all) matching
+    the public share name; for a specific service, pass its URL explicitly,
+    e.g. `cove tunnel up https://git.cove.local`.
+    """
     if name:
         name = validate_share_name(name)
     _ensure_sidecar()
