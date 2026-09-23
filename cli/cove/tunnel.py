@@ -410,11 +410,16 @@ def _ensure_enabled() -> None:
 
 
 def _share_public(target: str, name: str | None) -> str:
-    """Start a public share; return the public URL."""
+    """Start a public share; return the public URL.
+
+    Ephemeral (unnamed) shares use zrok2's server-generated token: passing a
+    client-invented `-n` token fails with 409 shareConflict ("error finding
+    name ... in namespace 'public'") because the name was never reserved."""
     args = ["share", "public", target, "--headless"]
     if target.startswith("https://"):
         args.append("--insecure")
     if name:
+        _ensure_name(name)
         args += ["-n", f"public:{name}"]
     result = _zrok2_exec_capture(*args, check=False)
     if result.returncode != 0:
@@ -430,14 +435,43 @@ def _share_public(target: str, name: str | None) -> str:
     return url
 
 
+def _ensure_name(name: str) -> None:
+    """Reserve `name` in the public namespace if not already reserved."""
+    listing = _zrok2_exec_capture("list", "names", check=False)
+    if listing.returncode == 0 and re.search(
+        rf"(?m)^.*\b{re.escape(name)}\b.*$", listing.stdout
+    ):
+        return
+    result = _zrok2_exec_capture("create", "name", name, check=False)
+    if result.returncode != 0 and "already" not in (
+        result.stderr + result.stdout
+    ).lower():
+        raise click.ClickException(
+            f"zrok2 create name {name!r} failed: "
+            f"{(result.stderr or result.stdout).strip()}"
+        )
+
+
 def _extract_url(output: str):
     match = re.search(rf"https://[a-z0-9.-]+{re.escape(ZROK2_DOMAIN)}\S*", output)
     return match.group(0).rstrip(".,;:") if match else None
 
 
-def _share_private(target: str, share_token: str) -> str:
-    """Start a private share with a vanity token; return the token."""
-    args = ["share", "private", target, "--share-token", share_token, "--headless"]
+def _share_private(target: str, share_token: str | None) -> str:
+    """Start a private share; return its token (vanity if pre-created)."""
+    args = ["share", "private", target, "--headless"]
+    if share_token:
+        # A vanity token must exist as a pre-created share record first.
+        pre = _zrok2_exec_capture("create", "share", "private", target,
+                                  "--share-token", share_token, check=False)
+        if pre.returncode != 0 and "already" not in (
+            pre.stderr + pre.stdout
+        ).lower():
+            raise click.ClickException(
+                f"zrok2 create share private failed: "
+                f"{(pre.stderr or pre.stdout).strip()}"
+            )
+        args += ["--share-token", share_token]
     if target.startswith("https://"):
         args.append("--insecure")
     result = _zrok2_exec_capture(*args, check=False)
@@ -446,7 +480,14 @@ def _share_private(target: str, share_token: str) -> str:
             "zrok2 share private failed: "
             f"{(result.stderr or result.stdout).strip()}"
         )
-    return share_token
+    return share_token or _extract_share_token(
+        result.stdout + result.stderr
+    ) or share_token or ""
+
+
+def _extract_share_token(output: str):
+    m = re.search(r"(?m)^\s*([a-z0-9]{8,})\s*$", output)
+    return m.group(1) if m else None
 
 
 def _list_shares() -> list[str]:
@@ -840,8 +881,9 @@ def up(target, name, private_mode):
     _ensure_shares_file()
     _ensure_sidecar()
     _ensure_enabled()
-    share_name = name or _generate_share_token()
+    share_name = name
     if private_mode:
+        share_name = name or _generate_share_token()
         _share_private(zrok_target, share_name)
         click.echo(
             f"Private share active. Access with: zrok2 access private {share_name}"
