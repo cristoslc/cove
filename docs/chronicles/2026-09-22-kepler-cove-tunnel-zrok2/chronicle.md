@@ -177,3 +177,10 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   fired → chatter suppression left the operator with zero output. `_extract_url`
   now synthesizes `https://<token>.shares.zrok.io` from the bare endpoint token
   (multi-line and JSON-escaped variants). 2 new tests (104 tunnel tests). Gate: 546.
+- 2026-09-23 (implementation): THE "no feedback" bug in `up` itself. The route-
+  state capture block read `_last_announced_token` BEFORE `_share_public` ran —
+  the dict is empty on a fresh run, so `up speedtest` (shorthand target, no
+  --public) returned silently at `if not share_name: return` and never started
+  the share. Now `_share_public` always runs (foreground stream announces the
+  URL), and the captured token is read afterwards for the route state. Also
+  hardened foreground Popen with stdin=DEVNULL. Gate: 547 passed.
