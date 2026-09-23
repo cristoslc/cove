@@ -1,5 +1,6 @@
 """CLI commands for the zrok2 public-tunnel sidecar (optional profile)."""
 
+import os
 import re
 import subprocess
 import sys
@@ -12,6 +13,13 @@ from cove.stateless import resolve_compose_dir
 
 ZROK2_IMAGE = "openziti/zrok2:2.0.4"
 ZROK2_DOMAIN = "share.zrok.io"
+# Digest pins per host architecture (manifest-list tags work too, but a
+# per-arch pin makes the pulled image explicit and arm64 hosts never pull
+# the amd64 layer by accident).
+ZROK2_DIGESTS = {
+    "amd64": "sha256:f607c294b79613f05e8f3dd255d3ef8bd853851dc5c8d806cc5b6d9092c83d16",
+    "arm64": "sha256:8864ba64136cc690c6fddd556b679e5f344b06855de74f0fafce9c3eb9300f76",
+}
 TUNNEL_OP_VAULT = "Private"
 TUNNEL_ITEM_TITLE = "Zrok Account"
 ACCOUNT_TOKEN_OP_REF = f"op://{TUNNEL_OP_VAULT}/{TUNNEL_ITEM_TITLE}/account_token"
@@ -357,10 +365,33 @@ def _zrok2_exec_capture(
     )
 
 
+def _host_arch() -> str:
+    """Return the Docker architecture of the host (amd64/arm64)."""
+    import platform
+
+    machine = platform.machine().lower()
+    if machine in ("x86_64", "amd64"):
+        return "amd64"
+    if machine in ("aarch64", "arm64"):
+        return "arm64"
+    raise click.ClickException(
+        f"Unsupported host architecture {machine!r} for the tunnel sidecar "
+        "(supported: amd64, arm64)."
+    )
+
+
+def _tunnel_image() -> str:
+    """Pinned per-arch image reference for the host's architecture."""
+    arch = _host_arch()
+    return f"{ZROK2_IMAGE}@{ZROK2_DIGESTS[arch]}"
+
+
 def _ensure_sidecar() -> None:
     """Start the tunnel sidecar (outbound-only, no published ports)."""
+    image = _tunnel_image()
     subprocess.run(
-        _compose_cmd("--profile", "tunnel", "up", "-d"), check=True
+        _compose_cmd("--profile", "tunnel", "up", "-d"), check=True,
+        env={**os.environ, "TUNNEL_IMAGE": image},
     )
 
 

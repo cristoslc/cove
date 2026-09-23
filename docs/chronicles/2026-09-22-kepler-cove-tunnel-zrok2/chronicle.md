@@ -110,3 +110,11 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   path has no TTY, so the TUI-enabled enable failed with "open /dev/tty: no such
   device or address". Platform-mismatch warning (linux/amd64 image on arm64 host)
   is cosmetic (Rosetta/QEMU emulated fine — status responded). Gate: 528 passed.
+- 2026-09-23 (implementation): Platform-aware image pinning (operator request). The
+  zrok2 image is multi-arch (amd64 + arm64 manifests exist); `cove tunnel up` now
+  pins per-arch via `TUNNEL_IMAGE` env when bringing up the sidecar —
+  `_host_arch()` maps platform.machine() → amd64/arm64 (loud failure on unsupported
+  arch), `_tunnel_image()` returns `openziti/zrok2:2.0.4@<per-arch-digest>`
+  (amd64 f607c294…, arm64 8864ba64…). Compose default demoted to the multi-arch
+  manifest so Docker picks the matching arch (warning disappears on arm64 since the
+  arm64 digest is pinned explicitly). 5 new tests (90 tunnel tests). Gate: 532 passed.
