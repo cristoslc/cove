@@ -527,7 +527,32 @@ def _extract_url(output: str):
     match = re.search(
         rf"https://[a-z0-9.-]+\.{re.escape(ZROK2_DOMAIN)}\S*", output
     )
-    return match.group(0).rstrip(".,;:") if match else None
+    if match:
+        return match.group(0).rstrip(".,;:")
+    # zrok2 2.0.x prints bare endpoint tokens (no scheme) in the "access
+    # your zrok share at the following endpoints" block — synthesize the
+    # https URL from the token.
+    m = re.search(
+        rf"(?im)^access your zrok share at the following endpoints:.*?$"
+        rf"^(?:\s*[-|•*]?\s*)([a-z0-9]+\.{re.escape(ZROK2_DOMAIN)})",
+        output, re.MULTILINE | re.DOTALL,
+    )
+    if m:
+        return f"https://{m.group(1)}"
+    m = re.search(
+        rf"(?im)^\s*(?:\S+,\s+)?([a-z0-9]+\.{re.escape(ZROK2_DOMAIN)})\s*$",
+        output,
+    )
+    if m:
+        return f"https://{m.group(1)}"
+    # JSON-log lines embed the endpoint after a literal "\n" escape:
+    m = re.search(
+        rf"endpoints:?[^\w]*(?:\\n)?\s*([a-z0-9]+\.{re.escape(ZROK2_DOMAIN)})",
+        output,
+    )
+    if m:
+        return f"https://{m.group(1)}"
+    return None
 
 
 def _share_private(target: str, share_token: str | None) -> str:
