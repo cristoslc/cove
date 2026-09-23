@@ -1,7 +1,7 @@
 ---
 title: "cove tunnel — managed public relay via zrok2"
 created: 2026-09-22
-status: Draft
+status: Draft (rework: service picker + Cove-managed share routes, 2026-09-22)
 source: docs/musings/cove-public-tunnels-bore-zrok.md (2026-09-22 update)
 ---
 
@@ -16,12 +16,29 @@ sidecar client container, closed-by-default shares.
 In:
 
 1. **`cove tunnel up [TARGET]`** — starts the tunnel sidecar on the compose network
-   (outbound-only, no published ports). TARGET is a `.cove` service name (default
-   routes through ingress, preserving Host). Prints the public URL
-   (`https://<name>.share.zrok.io`). Options:
-   - `--public <name>` — reserve a stable name (`zrok2 create name` + named share),
-     IaC-rendered so it survives restarts.
+   (outbound-only, no published ports). TARGET resolution (operator rework, 2026-09-22 —
+   no silent default, Cove manages nginx):
+   - Bare `cove tunnel up` → **interactive picker** of services discovered from
+     Cove's nginx ingress config (`compose/nginx/default.conf[.j2]`): every
+     proxied vhost becomes an entry shown as `service — target` (e.g.
+     `git — https://git.cove.local`). Regex-only vhosts, redirects, and health
+     endpoints are excluded. Non-TTY bare form fails loud listing services.
+     Unknown shorthand fails loud listing valid names.
+   - `cove tunnel up git` → service shorthand, resolved against the discovered
+     inventory.
+   - `cove tunnel up https://git.cove.local` → explicit URL power path.
+   - `--public <name>` — reserve a stable name (`<name>.share.zrok.io`,
+     4–32 lowercase alnum).
    - `--private` — private share mode; prints the share token for `zrok2 access private`.
+   - **Cove renders nginx for every public share**: a server block for
+     `<name>.share.zrok.io` is generated into
+     `compose/nginx/cove-tunnel-shares.conf` (new include mounted into nginx,
+     included from `default.conf.j2` after `user.d`), routed to the selected
+     service's upstream with `Host: $host` (ingress-host-rewrite single-identity
+     rule), nginx reloaded via `nginx -t` + `nginx -s reload` (previous file
+     restored on rejection). State is `COVE_TUNNEL_SHARES` (comma-separated
+     `share=service` pairs) in the compose `.env`; bringup seeds an empty
+     include so the bind-mount is never a directory. `down` removes the route.
 2. **`cove tunnel ls`** — list active shares (name, target, public URL/token, ephemeral/reserved).
 3. **`cove tunnel down [NAME]`** — tear down a share (and release ephemeral names).
 4. **Auth/account bootstrap** — account token from `cove creds` (1Password, ADR-017
@@ -80,8 +97,11 @@ uv run --directory cli pytest -x -q -m "not e2e and not staging"
 
 ## Acceptance
 
-1. `cove tunnel up 8000` with configured token → public HTTPS URL, Ctrl-C/down cleans up.
-2. Reserved name share declared in compose survives `cove tunnel down`/`up` with same URL.
+1. `cove tunnel up` (TTY) → picker; selecting `git` → public HTTPS URL whose
+   nginx route was rendered and reloaded by Cove; `cove tunnel down` removes it.
+2. `cove tunnel up git` shorthand → same flow without the picker; unknown name
+   fails loud listing valid services; bare form without TTY fails loud with the
+   service list (no silent default target).
 3. Private share reachable only via `zrok2 access private` from a second environment.
 4. No tunnel profile → stack unchanged, zero zrok references in `docker ps`.
 5. Non-e2e test suite green without network access.
