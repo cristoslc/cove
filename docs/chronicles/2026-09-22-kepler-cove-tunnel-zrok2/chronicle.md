@@ -133,3 +133,9 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   `zrok2 create name` first (idempotent). Private shares use server-generated
   tokens unless pre-created via `zrok2 create share private --share-token`.
   Gate: 536 passed.
+- 2026-09-23 (implementation): enable idempotency fix. `zrok2 status` exits 0 with
+  a Config table even when NOT enabled — the old check ("environment enabled" in
+  output) never matched, so enable re-ran and crashed with "you already have an
+  enabled environment". Now `_environment_enabled()` requires an Account Token
+  `<<SET>>` row in status output, and the enable error path treats "already have
+  an enabled environment" as success. Gate: 538 passed.
