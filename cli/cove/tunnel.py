@@ -395,17 +395,30 @@ def _ensure_sidecar() -> None:
     )
 
 
+def _environment_enabled() -> bool:
+    """True when the sidecar already has an enabled zrok2 environment."""
+    result = _zrok2_exec_capture("status", check=False)
+    if result.returncode != 0:
+        return False
+    output = result.stdout + result.stderr
+    # `zrok2 status` exit code 0 covers enabled environments; an enabled
+    # environment also prints an Account Token row. Treat "Config-only"
+    # output (no Account Token) as not enabled even when rc == 0.
+    return "account token" in output.lower() and "<<set>>" in output.lower()
+
+
 def _ensure_enabled() -> None:
     """Run `zrok2 enable` idempotently; state persists in the sidecar volume."""
-    env = _zrok2_exec_capture("status", check=False)
-    if env.returncode == 0 and "environment enabled" in (env.stdout + env.stderr).lower():
+    if _environment_enabled():
         return
     token = _ensure_account_token()
     result = _zrok2_exec_capture("enable", token, "--headless", check=False)
     if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        if "already have an enabled environment" in detail:
+            return
         raise click.ClickException(
-            "zrok2 enable failed: "
-            f"{(result.stderr or result.stdout).strip()}"
+            f"zrok2 enable failed: {detail}"
         )
 
 
