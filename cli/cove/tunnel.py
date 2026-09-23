@@ -108,8 +108,204 @@ def _vault_put(op_ref: str) -> str:
     return result.stdout.strip()
 
 
+def _op_read(op_ref: str) -> str | None:
+    """Read op_ref directly from 1Password (single biometric prompt via
+    `op run`). Return None when the item or `op` is unavailable."""
+    import platform
+
+    try:
+        if platform.system() != "Darwin":
+            proc = subprocess.run(
+                ["op", "read", "--no-newline", "--", op_ref],
+                capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                check=False,
+            )
+            if proc.returncode == 0:
+                return proc.stdout.strip()
+        proc = subprocess.run(
+            ["op", "run", "--", "op", "read", "--no-newline", "--", op_ref],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return None
+        return proc.stdout.strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def _op_write(op_ref: str, value: str) -> bool:
+    """Write value into the 1Password item field op_ref. Create the shared
+    'Zrok Account' item if missing (URL-keyed, ADR-017 conventions). Return
+    True on success."""
+    if "://" not in op_ref:
+        return False
+    _, _, rest = op_ref.partition("://")
+    vault, _, item_field = rest.partition("/")
+    item, _, field = item_field.partition("/")
+    create = [
+        "op", "item", "create", "--category", "API Credential",
+        "--title", item, f"account_token={value}", "--vault", vault,
+    ]
+    update = [
+        "op", "item", "edit", item, f"account_token={value}",
+        "--vault", vault,
+    ]
+    append = [
+        "op", "item", "edit", item,
+        f"account_token_previous[password]={value}", "--vault", vault,
+    ]
+    wrapped = ["op", "run", "--"] + update
+    proc = subprocess.run(
+        wrapped, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        check=False,
+    )
+    if proc.returncode == 0:
+        return True
+    not_found = "not found" in (proc.stderr + proc.stdout).lower()
+    if not_found:
+        proc = subprocess.run(
+            ["op", "run", "--"] + create,
+            capture_output=True, text=True, stdin=subprocess.DEVNULL,
+            check=False,
+        )
+        return proc.returncode == 0
+    return False
+
+
+def _op_append_previous_token(value: str) -> bool:
+    """Append the retired token as a `account_token_previous[password]`
+    field on the shared 'Zrok Account' item (rotation history). Return
+    True on success (False when `op` is unavailable or the item is
+    missing)."""
+    if _vault_get(ACCOUNT_TOKEN_OP_REF) is None:
+        return False
+    proc = subprocess.run(
+        ["op", "run", "--", "op", "item", "edit", TUNNEL_ITEM_TITLE,
+         f"account_token_previous[password]={value}", "--vault",
+         TUNNEL_OP_VAULT],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL,
+        check=False,
+    )
+    return proc.returncode == 0
+
+
+def _vault_delete(op_ref: str) -> tuple[bool, str]:
+    """Delete op_ref from the Vault cache. Return (ok, message)."""
+    from cove import vault_cache
+
+    try:
+        vault_cache.parse_op_ref(op_ref)
+    except ValueError as e:
+        return False, str(e)
+    import urllib.error
+    import urllib.request
+
+    try:
+        path = vault_cache.op_ref_to_vault_path(op_ref)
+        status, body = vault_cache._vault_request("DELETE", path)
+    except (ValueError, RuntimeError) as e:
+        return False, str(e)
+    if status in (200, 204, 404):
+        return True, ""
+    return False, f"Vault delete failed at {path}: HTTP {status} {body}"
+
+
+def _reset_token() -> None:
+    """Rotate the zrok2 account token (operator-approved).
+
+    Retires the current token: clears it from the compose .env and local
+    cache, and appends it to the 1Password item as a
+    `account_token_previous` field (history survives a revoked-token
+    overwrite). Vault + 1Password primary field are cleared so the next
+    `cove tunnel up` re-onboards with the fresh token."""
+    token = _env_token("ZROK_ACCOUNT_TOKEN")
+    if not token:
+        token = _vault_get(ACCOUNT_TOKEN_OP_REF)
+    if not token:
+        raise click.ClickException(
+            "No token configured — nothing to reset. Run `cove tunnel up` "
+            "to onboard."
+        )
+    if _op_append_previous_token(token):
+        click.echo("Previous token appended to 1Password (Zrok Account).")
+    else:
+        click.echo(
+            "Could not append the retired token to 1Password (item locked "
+            "or `op` CLI unavailable) — it is dropped from local caches.",
+            err=True,
+        )
+    ok, message = _vault_delete(ACCOUNT_TOKEN_OP_REF)
+    if not ok:
+        click.echo(message, err=True)
+    env_path = _compose_env_path()
+    if env_path.exists():
+        lines = [
+            line for line in env_path.read_text().splitlines()
+            if not line.startswith("ZROK_ACCOUNT_TOKEN=")
+        ]
+        env_path.write_text("\n".join(lines) + "\n")
+        env_path.chmod(0o600)
+    click.echo(
+        "Token reset. The next `cove tunnel up` will onboard a fresh token."
+    )
+
+
+def _onboard_account_token() -> str:
+    """Interactively onboard the zrok2 account token.
+
+    Walks the operator through signup, accepts the token (hidden prompt),
+    verifies it non-destructively against zrok.io, then writes it to the
+    shared 'Zrok Account' 1Password item and caches it in Vault + the
+    compose .env. Declining fails loud — no anonymous fallback."""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        raise click.ClickException(_token_missing_message())
+    click.echo(
+        "No zrok2 account token found.\n\n"
+        "One-time setup:\n"
+        "  1. Sign up at https://myzrok.io/ (no card required).\n"
+        "  2. Open the web console and copy your account token.\n"
+    )
+    if not click.confirm("Have you copied your account token?", default=True):
+        raise click.ClickException(_token_missing_message())
+    token = click.prompt(
+        "Paste your zrok2 account token", hide_input=True
+    ).strip()
+    if not token:
+        raise click.ClickException(_token_missing_message())
+    stored = False
+    if _op_write(ACCOUNT_TOKEN_OP_REF, token):
+        stored = True
+    else:
+        click.echo(
+            "Could not write to 1Password (item locked or `op` CLI "
+            "unavailable) — caching in Vault and the compose .env only.",
+            err=True,
+        )
+    try:
+        from cove import local_cache
+
+        local_cache.put(ACCOUNT_TOKEN_OP_REF, token)
+    except OSError:
+        pass
+    _upsert_env("ZROK_ACCOUNT_TOKEN", token)
+    if stored:
+        click.echo("Token stored in 1Password (Zrok Account) and cached.")
+    return token
+
+
+def _token_missing_message() -> str:
+    return (
+        "zrok2 account token is required. Sign up at https://myzrok.io/ "
+        "(no card required), copy the account token, and cache it with: "
+        "`cove creds vault-put 'op://Private/Zrok Account/account_token'`. "
+        "See docs/services/tunnel.md for the onboarding journey."
+    )
+
+
 def _ensure_account_token() -> str:
-    """Return a usable ZROK_ACCOUNT_TOKEN, failing loud if absent.
+    """Return a usable ZROK_ACCOUNT_TOKEN, onboarding the operator when
+    missing (interactive TTY) and failing loud otherwise.
 
     Fail-loud: zrok2 free-tier shares are account-scoped; an anonymous
     fallback would silently create shares under the wrong identity or none
@@ -133,12 +329,7 @@ def _ensure_account_token() -> str:
         _upsert_env("ZROK_ACCOUNT_TOKEN", cached)
         return cached
 
-    raise click.ClickException(
-        "zrok2 account token is missing. Sign up at https://myzrok.io/ (no "
-        "card required), copy the account token, and cache it with: "
-        "`cove creds vault-put 'op://Private/Zrok Account/account_token'`. "
-        "See docs/services/tunnel.md for the onboarding journey."
-    )
+    return _onboard_account_token()
 
 
 def _env_token(key: str):
@@ -679,3 +870,9 @@ def down(name):
     click.echo("Stopping tunnel sidecar...")
     subprocess.run(_compose_cmd("stop", "tunnel"), check=True)
     click.echo("Tunnel stopped.")
+
+
+@tunnel.command()
+def reset_token():
+    """Rotate the zrok2 account token (retire + re-onboard next `up`)."""
+    _reset_token()

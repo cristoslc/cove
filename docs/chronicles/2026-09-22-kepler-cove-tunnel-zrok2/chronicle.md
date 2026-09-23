@@ -90,3 +90,12 @@ sidecar container, tunnel-to-ingress, closed-by-default shares, `cove creds` aut
   the reworked UX. Known non-blocker: discovery currently resolves the
   tailscale ts.net vhost to a forgejo route — harmless duplicate entry in the
   picker, candidate for a name-filter follow-up.
+- 2026-09-22 (implementation): Token onboarding + rotation. `cove tunnel up` with no
+  token anywhere now onboards interactively (TTY): signup pointer, hidden token
+  prompt, write to shared 1Password item (op run wrapper; create-if-missing), cache
+  in Vault + compose .env. Non-TTY still fails loud. New `cove tunnel reset-token`:
+  retires the token, appends it to the Zrok Account item as
+  `account_token_previous[password]` (history survives revoked-token overwrite),
+  deletes from Vault + compose .env; next `up` re-onboards. 13 new tests (86 total
+  tunnel tests); full non-e2e gate 527 passed, 25 deselected. docs/services/tunnel.md
+  updated (onboarding + rotation sections).
