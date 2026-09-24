@@ -74,3 +74,25 @@ GitHub tracks draft status as a PR property (not title-based like Forgejo):
 | Fork | `gh repo fork` |
 | View | `gh repo view` |
 | Create | `gh repo create <name>` |
+
+## SSH (this repo's `github` remote)
+
+The `github` remote (`git@github.com:cristoslc/cove.git`) authenticates with the
+repo's dedicated `cove_signing` key, NOT the 1Password agent's first-accepted
+key. This is wired durably via repo-local git config:
+
+```
+git config core.sshCommand "ssh -i ~/.ssh/cove_signing -o IdentitiesOnly=yes -o ConnectTimeout=10"
+```
+
+Set once per checkout (already set on this workstation's `~/Documents/code/cove`).
+The `github.com-cove` SSH alias (`~/.ssh/config.d/cove.conf`, ssh.github.com:443)
+is the fallback path; bare `Host github.com` intentionally matches no per-project
+alias, so the agent offers every key and GitHub rejects repo access with the
+wrong one ("signing failed ... docker01 | cristos | id_ed25519"). If pushes to
+GitHub ever fail with that signature, the repo-local `core.sshCommand` is the fix.
+
+**Pattern for new projects:** when cloning a repo that lives on GitHub with a
+per-project swain-key, set `core.sshCommand` locally at clone time — never add
+a global `Host github.com` override (it would break every other project's
+key pinning).
