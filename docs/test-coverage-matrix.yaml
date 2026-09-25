@@ -349,3 +349,94 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "cove ade up"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "cove ade down"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove ade status"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "GET /health on ade.cove"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: manual
+      edge: manual
+      corner: skip
+  - path: "WebSocket upgrade (/ws) through ade.cove nginx (live)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: manual
+      edge: manual
+      corner: skip
+  - path: "ade.cove staging E2E against the isolated cove-staging compose project (BB_STAGING_URL routing; wrong Host does not reach bb)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: manual
+      corner: skip
+  - path: "cove-staging compose isolation (container names, host ports, data root, project name)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "ade.cove access control (allow loopback + private ranges + tailnet; deny public)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "ade compose definition (profile, pinned bb-app, wildcard bind, no host port, data volume, healthcheck)"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "nginx config rendering for ade.cove"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "TLS cert SANs include ade.cove"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "bringup.yml hosts entry includes ade.cove"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "ade container image build"
+    blast_radius: high
+    coverage:
+      happy: manual
+      sad: manual
+      edge: manual
+      corner: skip

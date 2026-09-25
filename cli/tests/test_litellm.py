@@ -1084,3 +1084,30 @@ class TestE2ELitellmStack:
                 verify=False,
                 timeout=10,
             )
+
+class TestStatusRobustness:
+    """`cove litellm status` must degrade to UNREACHABLE, not traceback, when
+    the upstream health probe hangs (review finding 6)."""
+
+    def test_status_reports_unreachable_on_timeout(self, monkeypatch):
+        import subprocess
+        from click.testing import CliRunner
+        from cove.litellm import litellm
+
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(COMPOSE_DIR))
+
+        def fake_run(cmd, **kwargs):
+            if list(cmd[:2]) == ["docker", "compose"]:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            raise subprocess.TimeoutExpired(cmd, 10)
+
+        with patch("cove.litellm.subprocess.run", side_effect=fake_run):
+            result = CliRunner().invoke(litellm, ["status"])
+
+        assert result.exit_code != 0, "status must exit non-zero when upstream hangs"
+        assert "UNREACHABLE" in result.output, (
+            f"status must report UNREACHABLE on timeout, got: {result.output}"
+        )
+        assert isinstance(result.exception, SystemExit), (
+            "timeout must not leak a traceback; status must raise SystemExit"
+        )

@@ -1,0 +1,94 @@
+# docker-compose.staging.yml — ISOLATED staging override for the branch stack.
+#
+# Used by scripts/staging/deploy-isolated.sh to run the branch as a PARALLEL
+# Docker Compose project in the same Colima VM:
+#
+#   docker compose -p cove-staging \
+#     -f docker-compose.yml -f docker-compose.staging.yml \
+#     --env-file <staging.env> --project-directory <compose dir> \
+#     --profile ade up -d
+#
+# Isolation contract (enforced by cli/tests/test_staging_isolation.py):
+#   - project name: cove-staging (also set here so omitting -p is still safe —
+#     explicit container_name values are NOT project-prefixed by compose, so
+#     the base file's `name: cove` would otherwise reuse live names),
+#   - every container_name is cove-staging-* (never equal to a live name),
+#   - every host port is remapped or removed: nginx 443 → 127.0.0.1:9443,
+#     forgejo SSH and dnsmasq UDP bindings are dropped entirely (the `!override`
+#     tag replaces the base port list — verified on Docker Compose 5.5.1),
+#   - data paths come from COVE_DATA_ROOT / FORGEJO_DATA_ROOT / NGINX_CONF_DIR
+#     in the staging --env-file (staging data root, staging-rendered nginx conf)
+#     so the live stack's data under ~/Documents/cove-data is never mounted.
+#
+# Only services needed for the ADE staging E2E keep host bindings. Everything
+# else (dnsmasq, dnsproxy, vault, ade) talks over the cove-staging network.
+# NOTE: the ade.cove nginx block proxies the stable service alias `ade`, so
+# renaming the container does not affect the upstream.
+
+name: cove-staging
+
+services:
+  forgejo:
+    container_name: cove-staging-forgejo
+    # No host SSH binding in staging.
+    ports: !override []
+
+  nginx:
+    container_name: cove-staging-nginx
+    # Single loopback binding; drops the base 80/8080 bindings (port 80 is
+    # hard-coded in base and cannot be env-remapped, hence the full override).
+    ports: !override
+      - "127.0.0.1:${STAGING_NGINX_HTTPS_PORT:-9443}:443"
+    # Same mount targets as base (drift-guarded by test_nginx_mount_targets_match_base),
+    # with the repo-relative ./certs/rootCA.pem replaced by the staging data-root
+    # copy so the staging bring-up never materializes paths inside the repo.
+    volumes: !override
+      - ${NGINX_CONF_DIR:-./nginx}/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ${NGINX_CONF_DIR:-./nginx}/landing.html:/usr/share/nginx/html/landing.html:ro
+      - ${NGINX_CONF_DIR:-./nginx}/pages.html:/usr/share/nginx/html/pages.html:ro
+      - ${NGINX_CONF_DIR:-./nginx}/cove-config-locations.conf:/etc/nginx/cove-config-locations.conf:ro
+      - ${NGINX_CONF_DIR:-./nginx}/cove-pages-locations.conf:/etc/nginx/cove-pages-locations.conf:ro
+      - ${NGINX_CONF_DIR:-./nginx}/cove-tunnel-shares.conf:/etc/nginx/cove-tunnel-shares.conf:ro
+      - ${COVE_DATA_ROOT}/certs:/certs:ro
+      - ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites:ro
+      - ${COVE_DATA_ROOT}/nginx/user.d:/etc/nginx/user.d:ro
+      - ${COVE_DATA_ROOT}/nginx/config.html:/etc/nginx/config.html:ro
+      - ${COVE_DATA_ROOT}/nginx/config/dns:/etc/nginx/config/dns:ro
+      - ${COVE_DATA_ROOT}/certs/rootCA.pem:/certs/rootCA.pem:ro
+
+  dnsmasq:
+    container_name: cove-staging-dnsmasq
+    # No host UDP binding in staging.
+    ports: !override []
+
+  dnsproxy:
+    container_name: cove-staging-dnsproxy
+
+  vault:
+    container_name: cove-staging-vault
+
+  litellm-db:
+    container_name: cove-staging-litellm-db
+
+  litellm:
+    container_name: cove-staging-litellm
+    # Loopback-only in base; dropped entirely in staging (nginx fronts it).
+    ports: !override []
+
+  headroom:
+    container_name: cove-staging-headroom
+    ports: !override []
+
+  forgejo-runner:
+    container_name: cove-staging-forgejo-runner
+
+  speedtest-tracker:
+    container_name: cove-staging-speedtest-tracker
+    # Loopback-only in base; dropped entirely in staging (nginx fronts it).
+    ports: !override []
+
+  ade:
+    container_name: cove-staging-ade-server
+
+  tunnel:
+    container_name: cove-staging-tunnel

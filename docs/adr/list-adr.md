@@ -9,3 +9,5 @@
 | ADR-015 | IaaS Graduation Test for Shared Platform Services | 2026-07-06 | 6bab1f8 | Superseded by ADR-016 |
 | ADR-016 | Two-Tier Service Adoption Rubric | 2026-07-06 | a58b380 |
 | ADR-017 | Unified Cove Admin Identity | 2026-08-12 | f654088 |
+| ADR-018 | ADE — Agentic Development Environment (bb as default harness) | 2026-09-25 | (accepted) |
+| ADR-019 | Activation Bundles for `cove up` | 2026-09-25 | (proposed) |
