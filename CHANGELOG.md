@@ -1,12 +1,16 @@
-## 0.6.0 (2026-09-23)
-
-- **`cove tunnel`** — managed public relay via zrok2 (PR #53). `cove tunnel up/ls/down/reset-token` with an interactive service picker, interactive token onboarding (1Password via ADR-017), platform-aware per-arch image pinning, Cove-rendered nginx share routes (rendered mid-stream, removed on Ctrl-C), orphan-share cleanup on `up`, clickable `?interstitial=1` links, and full Ctrl-C teardown. Docs: `docs/services/tunnel.md`.
-
 # Changelog
 
 All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## 0.7.0 (2026-09-25)
+
+- **ADE — Agentic Development Environment, Phase 1** (`cove ade`, PR #55, ADR-018) — the pinned `bb-app` server as an optional profiled service (`cove ade up|down|status|logs`), served at `https://ade.cove/` through nginx with WebSocket upgrade support and an ingress allow-list (loopback, private ranges, tailnet CGNAT; public internet denied). Data under `${cove_data_root}/ade/`; the port has a single source of truth (`ade_port`, threaded through the compose env, the container healthcheck, and the nginx upstream). Staging E2E now runs as an isolated compose project (`cove-staging`, nginx on 127.0.0.1:9443) so branch E2E no longer disturbs the live stack. See [docs/services/ade.md](docs/services/ade.md).
+
+## 0.6.0 (2026-09-23)
+
+- **`cove tunnel`** — managed public relay via zrok2 (PR #53). `cove tunnel up/ls/down/reset-token` with an interactive service picker, interactive token onboarding (1Password via ADR-017), platform-aware per-arch image pinning, Cove-rendered nginx share routes (rendered mid-stream, removed on Ctrl-C), orphan-share cleanup on `up`, clickable `?interstitial=1` links, and full Ctrl-C teardown. Docs: `docs/services/tunnel.md`.
 
 ## [0.5.1] — 2026-09-22
 
