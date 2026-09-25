@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # deploy.sh — deploy current branch to staging (local Cove stack).
 #
+# NOTE: this LEGACY mode runs `cove up`, which re-renders nginx and restarts
+# containers of the LIVE cove stack. For the isolated staging mode (parallel
+# cove-staging compose project on 127.0.0.1:9443, live stack untouched), use
+# deploy-isolated.sh instead.
+#
 # Accepts branch name as $1. Builds the wheel from the current branch,
 # installs it, re-renders nginx config via `cove up`, starts any new
 # compose profiles, and prints the staging URL to stdout.

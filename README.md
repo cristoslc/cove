@@ -12,6 +12,7 @@ A local development platform running on Docker Compose — a sheltered harbor wh
 | **dnsmasq** | Wildcard DNS resolver for offline `.cove.local` resolution | `127.0.0.1:5353` |
 | **Forgejo Actions Runner** | CI runner for Forgejo Actions workflows (optional, outbound-only) | No ingress |
 | **Speedtest Tracker** | Monitors the operator's WAN link (uptime/latency/bandwidth) | `https://speedtest.cove.local/` (optional) |
+| **ADE (bb server)** | Agentic development environment — bb harness server | `https://ade.cove/` (optional) |
 | **Observability** | Prometheus + Grafana metrics backend with OTLP ingestion for apps | `https://otel.cove.local/` |
 
 All services run in Docker Compose with `restart: unless-stopped`. Configuration changes take effect on every `cove up`.
@@ -78,5 +79,6 @@ Cove uses Forgejo as its Git forge. The `fj` CLI manages repositories, pull requ
 - [Architecture](docs/architecture.md) — system boundaries, bounded contexts, service topology, DNS strategy, data persistence
 - [Abstractions](docs/abstractions.md) — domain concepts: project, pipeline, secret, image, site, deployment, identity, workspace
 - [Forgejo Runner](docs/services/forgejo-runner.md) — optional CI runner for Forgejo Actions workflows
+- [ADE (bb server)](docs/services/ade.md) — optional agentic harness served at `ade.cove`
 - [Pages](docs/services/pages.md) — static site hosting via Forgejo Actions and nginx
 - [Data Inventory](docs/architecture/data-inventory.md) — every piece of state Cove holds, classified by source-of-truth and durability

@@ -244,6 +244,10 @@
           - --sans
           - vault.cove.local
           - --sans
+          - ade.cove
+          - --sans
+          - ade.cove.local
+          - --sans
           - litellm.cove
           - --sans
           - litellm.cove.local
@@ -283,6 +287,7 @@
         for host in \
           "git.cove" "git.cove.local" \
           "vault.cove" "vault.cove.local" \
+          "ade.cove" "ade.cove.local" \
           "litellm.cove" "litellm.cove.local" \
           "speedtest.cove" "speedtest.cove.local" \
           "hc.cove" "hc.cove.local" \
@@ -305,7 +310,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
+        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
         state: present
       failed_when: false
 
@@ -345,6 +350,7 @@
         - "{{ cove_data_root }}/dnsmasq"
         - "{{ cove_data_root }}/litellm"
         - "{{ cove_data_root }}/speedtest"
+        - "{{ cove_data_root }}/ade"
 
     - name: Create forgejo-runner data directory (restricted)
       ansible.builtin.file:
@@ -497,7 +503,25 @@
           FORGEJO_RUNNER_IMAGE={{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}
           FORGEJO_RUNNER_CONTAINER_NAME={{ forgejo_runner_container_name | default('cove-forgejo-runner') }}
           FORGEJO_RUNNER_MEM_LIMIT={{ forgejo_runner_mem_limit | default('512M') }}
+          ADE_IMAGE={{ ade_image | default('cove-ade:' ~ (ade_bb_app_version | default('0.43.4'))) }}
+          ADE_CONTAINER_NAME={{ ade_container_name | default('cove-ade-server') }}
+          ADE_BB_APP_VERSION={{ ade_bb_app_version | default('0.43.4') }}
+          ADE_PORT={{ ade_port | default('38886') }}
       when: not (compose_dir ~ "/.env") is exists
+
+    # ADE_PORT/ADE_CONTAINER_NAME are the only knobs the container and
+    # healthcheck read, while nginx is rendered from the Ansible var ade_port.
+    # Re-sync the .env entries on every `cove up` (not just first boot) so a
+    # changed ade_port cannot leave the container port ahead of the proxy.
+    - name: Ensure ADE env matches the Ansible vars (port / container name)
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+        mode: "0600"
+      loop:
+        - { key: "ADE_PORT", value: "{{ ade_port }}" }
+        - { key: "ADE_CONTAINER_NAME", value: "{{ ade_container_name }}" }
 
     - name: Render tunnel env (tunnel profile only)
       when: "'tunnel' in (cove_profiles | default(''))"

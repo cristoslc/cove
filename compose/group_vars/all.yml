@@ -56,6 +56,14 @@ nginx_conf_dir: "{{ playbook_dir }}/nginx"
 nginx_http_port: 8080
 nginx_https_port: 8443
 
+# --- ADE (bb server, optional) ---
+# Single source of truth for the ADE port: the nginx template and the
+# composed .env ADE_PORT both derive from ade_port, so the container port and
+# the proxy target cannot drift. Change ade_port (host_vars/group_vars) and
+# re-run `cove up`; bringup re-renders nginx and re-syncs .env ADE_PORT.
+ade_container_name: cove-ade-server
+ade_port: 38886
+
 # --- dnsmasq ---
 dnsmasq_conf_dir: "{{ playbook_dir }}/dnsmasq"
 dnsmasq_container_name: cove-dnsmasq

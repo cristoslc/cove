@@ -229,14 +229,19 @@ def status():
     )
     click.echo(result.stdout)
     if result.returncode != 0:
+        if result.stderr:
+            click.echo(result.stderr)
         raise SystemExit(result.returncode)
 
     click.echo("Checking /health/readiness through nginx...")
     for host in ("litellm.cove.local", "litellm.cove"):
-        health = subprocess.run(
-            ["curl", "-sf", "-H", f"Host: {host}", "https://127.0.0.1:8443/health/readiness"],
-            capture_output=True, text=True, timeout=10,
-        )
+        try:
+            health = subprocess.run(
+                ["curl", "-sf", "-H", f"Host: {host}", "https://127.0.0.1:8443/health/readiness"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            continue
         if health.returncode == 0:
             click.echo("  Health: OK")
             return
