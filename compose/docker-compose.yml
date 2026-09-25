@@ -268,6 +268,32 @@ services:
         limits:
           memory: ${SPEEDTEST_MEM_LIMIT:-512M}
 
+  ade:
+    profiles: ["ade"]
+    build:
+      context: ./ade
+      dockerfile: Dockerfile
+      args:
+        BB_APP_VERSION: ${ADE_BB_APP_VERSION:-0.43.4}
+    image: ${ADE_IMAGE:-cove-ade:0.43.4}
+    container_name: ${ADE_CONTAINER_NAME:-cove-ade-server}
+    restart: unless-stopped
+    volumes:
+      - ${COVE_DATA_ROOT}/ade:/data
+    environment:
+      BB_DATA_DIR: /data
+      BB_SERVER_BIND_HOST: "0.0.0.0"
+      BB_SERVER_PORT: "${ADE_PORT:-38886}"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:${ADE_PORT:-38886}/health"]
+      interval: 15s
+      start_period: 30s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${ADE_MEM_LIMIT:-2G}
+
   tunnel:
     profiles: ["tunnel"]
     # TUNNEL_IMAGE is pinned per-arch (see compose/tunnel.yml) by `cove tunnel up`;

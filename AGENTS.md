@@ -12,6 +12,7 @@ Read **[PURPOSE.md](PURPOSE.md)** for this project's identity, worldview, and fo
 - **`cove litellm`** manages the optional LiteLLM proxy service (hardened LLM proxy with Headroom compression). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://litellm.cove/` through nginx ingress. Security posture: version-pinned, nginx route-whitelisted, read-only container, env-var-only credentials. See [docs/services/litellm-proxy.md](docs/services/litellm-proxy.md).
 - **`cove speedtest`** manages the optional Speedtest Tracker service (WAN-link monitor). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://speedtest.cove/` through nginx ingress. The admin identity comes from the shared **`Cove Admin`** 1Password item (keyed to `https://cove.local/`, ADR-017); the APP_KEY lives in the `Speedtest Tracker` item keyed to `https://speedtest.cove.local/`. Both reused across all machines. See [docs/services/speedtest.md](docs/services/speedtest.md).
 - **`cove runner`** manages the optional Forgejo Actions Runner (CI runner). Subcommands: `up`, `down`, `status`, `logs`. No ingress URL (outbound-only service). Registration is IaC: `cove runner up` starts the container but does NOT register; `cove up` with the runner profile active registers it. See [docs/services/forgejo-runner.md](docs/services/forgejo-runner.md).
+- **`cove ade`** manages the optional ADE bb server (agentic harness). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://ade.cove/` through nginx with WebSocket upgrade. Runs pinned `bb-app` (build arg `ADE_BB_APP_VERSION`), data under `${cove_data_root}/ade/`, bound `0.0.0.0` inside the container. Direct-URL mode is unauthenticated by design — the Cove network is the trust boundary. Phase 1 starts the server only; host enrollment is Phase 2. See [docs/services/ade.md](docs/services/ade.md).
 
 ## IaC bias
 
@@ -79,5 +80,5 @@ Master coverage matrix: `docs/test-coverage-matrix.yaml`
 
 ## Staging E2E
 
-Staging deploys the branch to the local Docker stack and runs E2E tests against `https://127.0.0.1:8443` before merge. Scripts at `scripts/staging/` (`setup.sh`, `deploy.sh`, `e2e.sh`, `teardown.sh`).
+Staging runs the branch as an **isolated** Docker Compose project (`-p cove-staging`, nginx on `https://127.0.0.1:9443`) — the live stack is never re-rendered or restarted. Scripts: `scripts/staging/deploy-isolated.sh` (deploy), `e2e.sh` (tier 2 tests), `teardown.sh` (compose down -v + staging data removal). The legacy in-live mode (`deploy.sh`, port 8443) still exists but re-renders live nginx and restarts live containers; use it only deliberately.
 Full reference: `.agents/agents-md-detail/staging-e2e.md`.

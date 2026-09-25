@@ -13,6 +13,7 @@ import click
 from cove import __version__
 from cove.certs import ca_path, ensure_ca, root_ca_pem, sign_cert
 from cove.creds import creds
+from cove.ade import ade
 from cove.litellm import litellm
 from cove.speedtest import speedtest
 from cove.runner import runner
@@ -247,6 +248,7 @@ def sign(sans, key_file, cert_file):
 
 
 app.add_command(creds)
+app.add_command(ade)
 app.add_command(litellm)
 app.add_command(speedtest)
 app.add_command(runner)

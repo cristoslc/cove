@@ -41,6 +41,10 @@ All persistent state lives under `~/Documents/`. Plain directories on the host f
 
 Every service has a single FQDN. That FQDN is the same whether you are on the host machine, on your phone, or disconnected from every network. What changes is how the name resolves — dnsmasq and local resolver config offline, with MagicDNS or Tailscale Split DNS as an enhancement when present. The consumer never sees the difference.
 
+### Low-Isolation, Low-Friction by Default
+
+Everything Cove offers starts at the lowest-friction, lowest-isolation posture for the developer using it. The metric is the operator's developer experience — not what is cheapest for Cove itself to build. Convenience is the front door; isolation is a step-up you choose when a task earns it. A guardrail you must configure before anything works is a toll booth, and toll booths get routed around. Every step-up must cost one command (or one config line), and stepping back down must be just as easy.
+
 ### Self-Contained
 
 Cove requires exactly three things from the host: Python, uv, and a container runtime (Colima on macOS, Docker Engine on Linux). Everything else — services, certificates, DNS, runners — is brought and managed by Cove. Uninstalling means deleting the containers and the data directory. Nothing is left in system paths, launch daemons, or hidden dotfiles.
@@ -67,7 +71,7 @@ Cove is not for teams, not for production, not for multi-node clusters.
 - A Kubernetes distribution (k3s is the runtime, not the product).
 - A replacement for cloud CI (it's the local complement to it).
 - A managed service (you run it, you own the data).
-- **A development environment.** Cove does not ship coding harnesses, editors, LSPs, language runtimes, or any tool that reads/writes your source code. Cove is infrastructure — it provides the services development tools connect to (forge, vault, CI, registry, pages, observability). The tools themselves are the operator's responsibility (or a companion project's).
+- **A code editor.** Editors, LSPs, and language runtimes stay the operator's responsibility. Agentic development is different: the ADE (ADR-018) ships as part of Cove — a harness-agnostic execution layer with a default harness chosen for you, the way Vault is the default vault and Forgejo the default forge.
 
 ## Guiding Principle
 
