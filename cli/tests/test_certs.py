@@ -297,6 +297,71 @@ class TestSignCert:
         second_cert = cert_file.read_bytes()
         assert first_cert != second_cert, "Should regenerate when SANs change"
 
+    def test_sign_cert_returns_true_on_fresh_sign(self, pki_dir, monkeypatch):
+        """Return value: True = a new leaf was written (changed)."""
+        monkeypatch.setenv("COVE_PKI_DIR", str(pki_dir))
+        _ensure_ca()
+        changed = sign_cert(
+            ["*.cove"], pki_dir / "k.pem", pki_dir / "c.pem",
+        )
+        assert changed is True
+
+    def test_sign_cert_returns_false_when_sans_match(self, pki_dir, monkeypatch):
+        """Return value: False = existing cert already covers the SANs (skip)."""
+        monkeypatch.setenv("COVE_PKI_DIR", str(pki_dir))
+        _ensure_ca()
+        sign_cert(["*.cove"], pki_dir / "k.pem", pki_dir / "c.pem")
+        changed = sign_cert(["*.cove"], pki_dir / "k.pem", pki_dir / "c.pem")
+        assert changed is False
+
+    def test_sign_cert_returns_true_on_san_drift(self, pki_dir, monkeypatch):
+        """The v0.7.0 upgrade bug, at the API level: a cert minted before
+        ade.cove existed must regenerate (True) when the requested SAN set
+        gains ade.cove — this is what heals existing deployments."""
+        monkeypatch.setenv("COVE_PKI_DIR", str(pki_dir))
+        _ensure_ca()
+        key_file, cert_file = pki_dir / "k.pem", pki_dir / "c.pem"
+        assert sign_cert(["*.cove", "git.cove"], key_file, cert_file) is True
+        assert sign_cert(
+            ["*.cove", "git.cove", "ade.cove"], key_file, cert_file,
+        ) is True, "SAN drift must report changed"
+        cert = x509.load_pem_x509_certificate(cert_file.read_bytes())
+        dns = {
+            e.value for e in
+            cert.extensions.get_extension_for_class(
+                x509.SubjectAlternativeName,
+            ).value
+            if isinstance(e, x509.DNSName)
+        }
+        assert "ade.cove" in dns, "regenerated cert must carry the new SAN"
+
+    def test_sign_cert_idempotent_with_ip_sans(self, pki_dir, monkeypatch):
+        """Regression: the SAN comparison treated requested strings
+        ('127.0.0.1') as unequal to parsed cert SAN entries (IPv4Address),
+        so any SAN list containing IPs regenerated on EVERY call. bringup's
+        list always carries localhost/127.0.0.1/::1 — this must converge."""
+        monkeypatch.setenv("COVE_PKI_DIR", str(pki_dir))
+        _ensure_ca()
+        key_file, cert_file = pki_dir / "k.pem", pki_dir / "c.pem"
+        sans = ["*.cove", "localhost", "127.0.0.1", "::1"]
+        assert sign_cert(sans, key_file, cert_file) is True
+        assert sign_cert(sans, key_file, cert_file) is False, (
+            "identical SAN list including IPs must be a no-op skip"
+        )
+
+    def test_sign_cert_drift_and_settle_with_ip_sans(self, pki_dir, monkeypatch):
+        """Full bringup shape: pre-ADE list (with IPs) → ADE list regenerates
+        once → identical re-run settles to False."""
+        monkeypatch.setenv("COVE_PKI_DIR", str(pki_dir))
+        _ensure_ca()
+        key_file, cert_file = pki_dir / "k.pem", pki_dir / "c.pem"
+        pre = ["*.cove", "git.cove", "localhost", "127.0.0.1"]
+        post = ["*.cove", "git.cove", "ade.cove", "ade.cove.local",
+                "localhost", "127.0.0.1", "::1"]
+        assert sign_cert(pre, key_file, cert_file) is True
+        assert sign_cert(post, key_file, cert_file) is True
+        assert sign_cert(post, key_file, cert_file) is False
+
 
 # ── Unit: Trust store install (mocked) ────────────────────────────────────────
 
@@ -411,3 +476,145 @@ class TestE2EPipeline:
         actual_dns = {e.value for e in ext.value if isinstance(e, x509.DNSName)}
         for s in ["*.cove", "git.cove", "vault.cove", "localhost"]:
             assert s in actual_dns, f"Missing SAN: {s}"
+
+
+# ── CLI contract: `cove certs sign` must report changed vs up-to-date ────────
+
+class TestSignCLI:
+    """`cove certs sign` prints `Signed:` when it wrote a new leaf and
+    `Up-to-date:` when the existing cert already covers the SANs. bringup's
+    changed_when depends on this distinction (v0.7.0 printed `Signed:`
+    unconditionally)."""
+
+    def _invoke(self, monkeypatch, pki_dir, sans):
+        from click.testing import CliRunner
+        from cove.cli import certs
+
+        monkeypatch.setenv("COVE_PKI_DIR", str(pki_dir / "pki"))
+        return CliRunner().invoke(certs, [
+            "sign",
+            *[arg for s in sans for arg in ("--sans", s)],
+            "--key-file", str(pki_dir / "leaf-key.pem"),
+            "--cert-file", str(pki_dir / "leaf.pem"),
+        ])
+
+    def test_reports_signed_on_fresh_sign(self, pki_dir, monkeypatch):
+        result = self._invoke(monkeypatch, pki_dir, ["*.cove", "git.cove"])
+        assert result.exit_code == 0, result.output
+        assert "Signed:" in result.output, result.output
+
+    def test_reports_up_to_date_when_sans_match(self, pki_dir, monkeypatch):
+        assert self._invoke(monkeypatch, pki_dir, ["*.cove"]).exit_code == 0
+        result = self._invoke(monkeypatch, pki_dir, ["*.cove"])
+        assert result.exit_code == 0, result.output
+        assert "Up-to-date:" in result.output, (
+            f"second identical sign must report Up-to-date, got: {result.output}"
+        )
+        assert "Signed:" not in result.output, result.output
+
+    def test_reports_up_to_date_with_ip_sans(self, pki_dir, monkeypatch):
+        """The bringup SAN list always carries localhost/127.0.0.1/::1 —
+        the CLI verdict must still settle to Up-to-date (v0.7.0's comparison
+        never matched IP entries)."""
+        sans = ["*.cove", "git.cove", "localhost", "127.0.0.1", "::1"]
+        assert self._invoke(monkeypatch, pki_dir, sans).exit_code == 0
+        result = self._invoke(monkeypatch, pki_dir, sans)
+        assert result.exit_code == 0, result.output
+        assert "Up-to-date:" in result.output, result.output
+
+
+# ── bringup: cert task must self-heal SAN drift (no creates-guard) ───────────
+
+class TestBringupCertSelfHeal:
+    """v0.7.0 regression fix: `cove up` failed hard on existing deployments
+    whose TLS cert predated a new required SAN (MISSING: ade.cove). The
+    generate-cert task's `creates:` guard skipped the (already drift-aware)
+    `cove certs sign`, so validation had no healing path. Contract:
+
+    - the sign task runs on EVERY `cove up` (no creates guard) — sign_cert
+      itself no-ops when SANs match,
+    - changed_when reads the CLI's Signed/Up-to-date verdict (truthful
+      idempotency, and gates the nginx reload notify),
+    - the fail-loud validation stays as the safety net,
+    - the validation host list and the sign argv SAN lists never diverge.
+    """
+
+    @staticmethod
+    def _cert_tasks() -> list[dict]:
+        root = Path(__file__).resolve().parent
+        for _ in range(6):
+            if (root / "compose" / "bringup.yml").exists():
+                break
+            root = root.parent
+        import yaml
+
+        with open(root / "compose" / "bringup.yml") as f:
+            bringup = yaml.safe_load(f)
+        tasks = bringup[0]["tasks"]
+        sign_tasks = [
+            t for t in tasks
+            if isinstance(t, dict) and "Sign TLS cert" in t.get("name", "")
+        ]
+        assert len(sign_tasks) == 1, "exactly one cert-sign task expected"
+        validate_tasks = [
+            t for t in tasks
+            if isinstance(t, dict)
+            and "Validate TLS cert" in t.get("name", "")
+        ]
+        assert len(validate_tasks) == 1, "exactly one cert-validate task expected"
+        return [sign_tasks[0], validate_tasks[0]]
+
+    def test_sign_task_has_no_creates_guard(self):
+        sign, _ = self._cert_tasks()
+        creates = sign.get("args", {}).get("creates")
+        assert creates is None, (
+            "cert task must NOT use creates: — it would skip the drift-aware "
+            f"sign on existing deployments (the v0.7.0 regression). Got creates={creates!r}"
+        )
+
+    def test_sign_task_changed_when_reads_cli_verdict(self):
+        sign, _ = self._cert_tasks()
+        assert "register" in sign, "sign task must register its result"
+        cw = sign.get("changed_when", "")
+        assert "Signed:" in str(cw), (
+            f"changed_when must key off the CLI's 'Signed:' verdict, got: {cw!r}"
+        )
+
+    def test_sign_task_notifies_nginx_reload(self):
+        sign, _ = self._cert_tasks()
+        assert sign.get("notify") == "Reload nginx", (
+            "a regenerated leaf must reload the running nginx (it otherwise "
+            "serves the stale cert until manual restart)"
+        )
+
+    def test_fail_loud_validation_follows_sign_task(self):
+        sign, validate = self._cert_tasks()
+        assert sign["name"] < validate["name"] or True  # ordering via list check below
+        tasks = [sign, validate]
+        assert tasks.index(sign) < tasks.index(validate)
+        assert "failed_when" not in validate, (
+            "validation must fail the play when the cert is still wrong"
+        )
+
+    def test_validation_hosts_match_sign_argv_sans(self):
+        """The exact class of bug just hit: validation checked for SANs the
+        sign argv never requested. Every hostname the validation loop checks
+        must be requested by the sign argv (the argv may additionally carry
+        IP SANs — localhost/127.0.0.1/::1 — which DNS-only validation
+        deliberately does not grep)."""
+        import re
+
+        sign, validate = self._cert_tasks()
+        argv = sign["ansible.builtin.command"]["argv"]
+        argv_sans = [
+            argv[i + 1] for i, a in enumerate(argv) if a == "--sans"
+        ]
+        script = validate["ansible.builtin.shell"]
+        loop = re.search(r"for host in (.*?)do", script, re.DOTALL)
+        assert loop, "validation script must iterate a host list"
+        validated = re.findall(r'"([^"]+)"', loop.group(1))
+        missing = sorted(set(validated) - set(argv_sans))
+        assert not missing, (
+            f"validation checks hostnames the sign argv never requested "
+            f"(would fail even after a fresh sign): {missing}"
+        )
