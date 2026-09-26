@@ -426,6 +426,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "TLS cert SAN drift self-heal on existing deployments (sign task has no creates-guard; sign_cert regenerates on SAN drift and settles idempotent incl. IP SANs; changed_when gates nginx reload; validation hostlist is a subset of sign argv)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
   - path: "bringup.yml hosts entry includes ade.cove"
     blast_radius: medium
     coverage:

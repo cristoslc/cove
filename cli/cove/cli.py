@@ -243,8 +243,10 @@ def certs_root_ca_pem():
 @click.option("--cert-file", required=True, type=click.Path(path_type=Path))
 def sign(sans, key_file, cert_file):
     """Generate a TLS certificate signed by the root CA."""
-    sign_cert(list(sans), key_file, cert_file)
-    click.echo(f"Signed: {cert_file}")
+    if sign_cert(list(sans), key_file, cert_file):
+        click.echo(f"Signed: {cert_file}")
+    else:
+        click.echo(f"Up-to-date: {cert_file}")
 
 
 app.add_command(creds)

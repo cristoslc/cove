@@ -217,7 +217,15 @@
         dns_uuid: "{{ uuids.stdout_lines[1] }}"
         profile_uuid: "{{ uuids.stdout_lines[2] }}"
 
-    - name: Generate cert for *.cove + *.cove.local + per-machine wildcard
+    # Runs on EVERY `cove up` (no creates: guard): `cove certs sign` is
+    # drift-aware — it no-ops when the existing cert covers exactly the
+    # requested SANs and regenerates when they diverge (e.g. a cert minted
+    # before a new required hostname existed). The creates-guard here caused
+    # the v0.7.0 regression: existing deployments failed validation with
+    # MISSING: ade.cove because the healing sign never ran. changed_when
+    # reads the CLI's Signed/Up-to-date verdict; a regenerated leaf is only
+    # picked up by the running nginx after a reload, hence the notify.
+    - name: Sign TLS cert (idempotent — regenerates when SANs drift)
       ansible.builtin.command:
         argv:
           - cove
@@ -277,8 +285,9 @@
           - "{{ cove_data_root }}/certs/cove.local-key.pem"
           - --cert-file
           - "{{ cove_data_root }}/certs/cove.local.pem"
-      args:
-        creates: "{{ cove_data_root }}/certs/cove.local.pem"
+      register: cert_sign_result
+      changed_when: "'Signed:' in cert_sign_result.stdout"
+      notify: Reload nginx
 
     - name: Validate TLS cert covers required hostnames
       ansible.builtin.shell: |
@@ -302,7 +311,6 @@
           fi
         done
         echo "OK"
-      register: cert_check
       changed_when: false
 
     - name: Add *.cove hostnames to /etc/hosts

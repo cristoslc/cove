@@ -261,24 +261,48 @@ def ensure_ca() -> None:
         _install_ca_linux(cert_path)
 
 
-def sign_cert(sans: list[str], key_file: Path, cert_file: Path) -> None:
+def _san_key(name: str) -> tuple[str, str]:
+    """Canonical comparison key for a requested SAN: (kind, value) with IPs
+    normalized through ipaddress so '127.0.0.1' and IPv4Address('127.0.0.1')
+    compare equal. Without this, any SAN list containing IPs regenerated on
+    every call (parsed cert SANs are IPv4Address/IPv6Address objects, never
+    equal to the requested strings)."""
+    import ipaddress
+    try:
+        return ("ip", str(ipaddress.ip_address(name)))
+    except ValueError:
+        return ("dns", name)
+
+
+def sign_cert(sans: list[str], key_file: Path, cert_file: Path) -> bool:
     """Generate a TLS certificate signed by the root CA.
 
-    Idempotent — skips if the cert already exists with the same SANs.
-    To force regeneration, delete the output files first.
+    Drift-aware idempotent — regenerates when the requested SAN set differs
+    from the existing cert's (e.g. a deployment predating a newly required
+    SAN), skips when they match. The boolean return distinguishes the two:
+    True = a new leaf was written (changed), False = existing cert reused.
+    bringup's `changed_when` keys off this via the CLI's Signed/Up-to-date
+    output, and the nginx reload fires only on actual change.
 
     Args:
         sans: Subject Alternative Names (DNS names and IP addresses).
         key_file: Path to write the private key.
         cert_file: Path to write the certificate.
+
+    Returns:
+        True if a new certificate was generated, False if the existing one
+        already covered the requested SAN set.
     """
     if cert_file.exists() and key_file.exists():
         existing = x509.load_pem_x509_certificate(cert_file.read_bytes())
         try:
             ext = existing.extensions.get_extension_for_class(x509.SubjectAlternativeName)
-            existing_sans = {e.value for e in ext.value}
-            if set(sans) == existing_sans:
-                return
+            existing_sans = {
+                ("dns", e.value) if isinstance(e, x509.DNSName) else ("ip", str(e.value))
+                for e in ext.value
+            }
+            if {_san_key(s) for s in sans} == existing_sans:
+                return False
         except x509.ExtensionNotFound:
             pass
 
@@ -290,3 +314,4 @@ def sign_cert(sans: list[str], key_file: Path, cert_file: Path) -> None:
         key_file,
         cert_file,
     )
+    return True
