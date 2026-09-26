@@ -4,6 +4,12 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.7.1 (2026-09-25)
+
+### Fixed
+- **`cove up` failed on existing deployments after the 0.7.0 promote** — `MISSING: ade.cove` at TLS-cert validation. The cert task's `creates:` guard skipped the (already drift-aware) `cove certs sign` on machines whose cert predated ADE Phase 1, leaving validation no healing path. The sign task now runs on every `cove up`: `sign_cert` regenerates when the requested SAN set diverges from the installed cert and settles idempotent otherwise; the regenerated leaf triggers an nginx reload (notify), and the fail-loud validation remains the safety net. Two deeper fixes surfaced: the SAN comparison never matched IP entries (requested strings vs parsed `IPv4Address` objects — every real SAN list regenerated forever until normalized), and `cove certs sign` printed `Signed:` unconditionally, so Ansible could not distinguish changed from skipped (`Up-to-date:` added; bringup's `changed_when` keys off it). Validation's host list is now parity-checked against the sign argv in tests so the two can never silently diverge again.
+- **`cove --version` drift** (shipped in 0.7.0) — version now read from package metadata instead of a hardcoded literal.
+
 ## 0.7.0 (2026-09-25)
 
 - **ADE — Agentic Development Environment, Phase 1** (`cove ade`, PR #55, ADR-018) — the pinned `bb-app` server as an optional profiled service (`cove ade up|down|status|logs`), served at `https://ade.cove/` through nginx with WebSocket upgrade support and an ingress allow-list (loopback, private ranges, tailnet CGNAT; public internet denied). Data under `${cove_data_root}/ade/`; the port has a single source of truth (`ade_port`, threaded through the compose env, the container healthcheck, and the nginx upstream). Staging E2E now runs as an isolated compose project (`cove-staging`, nginx on 127.0.0.1:9443) so branch E2E no longer disturbs the live stack. See [docs/services/ade.md](docs/services/ade.md).
