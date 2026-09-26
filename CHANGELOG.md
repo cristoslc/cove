@@ -4,6 +4,12 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.0 (2026-09-26)
+
+### Added
+- **`cove ade update`** — keep bb current in cove without leaving the IaC rails. Resolves the target (npm latest or explicit `--version`), writes the pin + image tag into the compose `.env` (a persistent override — bringup never rewrites those keys), rebuilds the image, recreates the container (data volume untouched), waits for `/health` through nginx, and **rolls back automatically** on failed health (previous image tag stays local, so rollback is `cove ade update --version <old>`). `--check` reports running vs pinned vs latest without changing anything. The server is the bb version anchor: it serves its own tarball to enrolled machines and daemons self-update to its protocol, so updating the server updates the harness.
+- **`cove ade status` version visibility** — prints the running bb-app version (parsed from the container image tag) and warns when it diverges from the `.env` pin ("run `cove ade up`/`update` to converge"), keeping the override surface honest against the wheel default.
+
 ## 0.8.0 (2026-09-25)
 
 ### Changed
