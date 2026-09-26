@@ -4,6 +4,15 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.8.0 (2026-09-25)
+
+### Changed
+- **ADE is a core service** — `cove up` now starts the ADE bb server by default; no `cove ade up` second step (operator decision, ADR-018 day-one intent: "bb as the default harness, the way Vault is the default vault"). The `ade` compose profile is gone; a stopped ADE fails `cove status` like any core service; `cove ade down` stops it until the next `cove up`. `cove ade up` remains and is now service-scoped (`docker compose up -d --build ade`). First `cove up` after upgrade builds the ADE image (a few minutes).
+- **bb-app pin 0.43.4 → 0.44.0** — aligned with the operator's installed bb. Load-bearing for Phase 2 enrollment: bb machines install the server's own tarball (`/install/bb-app.tgz`) and a daemon never auto-downgrades to an older server protocol.
+
+### Added
+- **Phase 2 cutover runbook** — `docs/services/ade.md` (Machines): migrate `~/.bb` into the container volume, quit bb, enroll the Mac's daemon via `bb machine enroll --bootstrap-file` (bootstrap from `ade.cove` → Settings → Machines). Enrollment remains an explicit operator step — it stops the host bb server.
+
 ## 0.7.1 (2026-09-25)
 
 ### Fixed

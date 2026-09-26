@@ -8,7 +8,7 @@
 #   docker compose -p cove-staging \
 #     -f compose/docker-compose.yml -f compose/docker-compose.staging.yml \
 #     --env-file <staging.env> --project-directory compose \
-#     --profile ade up -d --build
+#     up -d --build
 #
 # Isolation guarantees (asserted by cli/tests/test_staging_isolation.py):
 #   - container names: cove-staging-* (never cove-nginx, cove-forgejo, ...),
@@ -158,7 +158,7 @@ COMPOSE_CMD=(docker compose -p "$STAGING_PROJECT"
     --project-directory "$COMPOSE_DIR"
     -f "$COMPOSE_DIR/docker-compose.yml"
     -f "$COMPOSE_DIR/docker-compose.staging.yml"
-    --profile ade)
+    )
 
 echo "Bringing up $STAGING_PROJECT (build may take a few minutes on first run)..." >&2
 if ! "${COMPOSE_CMD[@]}" up -d --build 2>&1 >&2; then

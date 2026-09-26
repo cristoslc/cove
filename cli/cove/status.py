@@ -28,6 +28,9 @@ SERVICES = [
     ("cove-vault", "Vault"),
     ("cove-dnsmasq", "dnsmasq"),
     ("cove-dnsproxy", "dnsproxy"),
+    # Core since 0.8.0 (operator decision 2026-09-25, ADR-018): the ADE
+    # ships as part of Cove — `cove up` starts it, a stopped ADE fails status.
+    ("cove-ade-server", "ADE"),
 ]
 
 OPTIONAL_SERVICES = [
@@ -35,7 +38,6 @@ OPTIONAL_SERVICES = [
     ("cove-headroom", "Headroom", "litellm"),
     ("cove-speedtest-tracker", "Speedtest", "speedtest"),
     ("cove-forgejo-runner", "Runner", "runner"),
-    ("cove-ade-server", "ADE", "ade"),
 ]
 
 NGINX_HTTPS_PORT = 8443

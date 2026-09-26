@@ -511,9 +511,9 @@
           FORGEJO_RUNNER_IMAGE={{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}
           FORGEJO_RUNNER_CONTAINER_NAME={{ forgejo_runner_container_name | default('cove-forgejo-runner') }}
           FORGEJO_RUNNER_MEM_LIMIT={{ forgejo_runner_mem_limit | default('512M') }}
-          ADE_IMAGE={{ ade_image | default('cove-ade:' ~ (ade_bb_app_version | default('0.43.4'))) }}
+          ADE_IMAGE={{ ade_image | default('cove-ade:' ~ (ade_bb_app_version | default('0.44.0'))) }}
           ADE_CONTAINER_NAME={{ ade_container_name | default('cove-ade-server') }}
-          ADE_BB_APP_VERSION={{ ade_bb_app_version | default('0.43.4') }}
+          ADE_BB_APP_VERSION={{ ade_bb_app_version | default('0.44.0') }}
           ADE_PORT={{ ade_port | default('38886') }}
       when: not (compose_dir ~ "/.env") is exists
 

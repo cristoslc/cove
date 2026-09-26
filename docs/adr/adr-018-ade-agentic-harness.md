@@ -85,6 +85,21 @@ Two points deserve ADR-level record because they are security-shaped:
 
 Host enrollment and live-server cutover remain Phase 2.
 
+### Implementation note (2026-09-25, second): ADE is default-on
+
+Phase 1 shipped the ADE as an opt-in profile; the operator inverted that the
+same day ("ade should come up by default, not require a second command") —
+which is what this ADR said all along ("the way Vault is the default vault").
+Since 0.8.0 the `ade` service carries no compose profile: every `cove up`
+starts it, `cove status` treats a stopped ADE as a core failure, and `cove
+ade down` only stops it until the next `cove up`. The pin moved to
+`bb-app@0.44.0` to match the operator's installed bb: bb machines install the
+server's own tarball (`/install/bb-app.tgz`) and a daemon never auto-downgrades
+to an older server protocol, so server/machine version alignment is load-bearing
+for Phase 2 enrollment. The Phase 2 cutover runbook (migrate `~/.bb` into the
+container volume, enroll the Mac's daemon) lives in `docs/services/ade.md`
+(Machines).
+
 ## See also
 
 - PURPOSE.md — Low-Isolation, Low-Friction by Default

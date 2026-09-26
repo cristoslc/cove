@@ -269,13 +269,15 @@ services:
           memory: ${SPEEDTEST_MEM_LIMIT:-512M}
 
   ade:
-    profiles: ["ade"]
+    # Core service (operator decision 2026-09-25): starts with every `cove up`,
+    # per ADR-018 — the ADE ships as part of Cove, the way Vault is the default
+    # vault. `cove ade down` stops it until the next `cove up`.
     build:
       context: ./ade
       dockerfile: Dockerfile
       args:
-        BB_APP_VERSION: ${ADE_BB_APP_VERSION:-0.43.4}
-    image: ${ADE_IMAGE:-cove-ade:0.43.4}
+        BB_APP_VERSION: ${ADE_BB_APP_VERSION:-0.44.0}
+    image: ${ADE_IMAGE:-cove-ade:0.44.0}
     container_name: ${ADE_CONTAINER_NAME:-cove-ade-server}
     restart: unless-stopped
     volumes:

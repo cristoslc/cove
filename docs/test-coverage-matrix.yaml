@@ -405,7 +405,7 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
-  - path: "ade compose definition (profile, pinned bb-app, wildcard bind, no host port, data volume, healthcheck)"
+  - path: "ade compose definition (core service — no profile, pinned bb-app, wildcard bind, no host port, data volume, healthcheck)"
     blast_radius: medium
     coverage:
       happy: executable
