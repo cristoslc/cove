@@ -93,8 +93,8 @@ drift.
 |---|---|---|
 | `ade_port` (Ansible: group_vars / host_vars) | `38886` | **Live-path knob.** Change this and re-run `cove up`; it drives the nginx upstream and the `.env` `ADE_PORT`. |
 | `ade_container_name` (Ansible) | `cove-ade-server` | Container name; re-synced into `.env` `ADE_CONTAINER_NAME` on `cove up`. |
-| `ADE_BB_APP_VERSION` | `0.44.0` | Pinned `bb-app` npm version (Dockerfile build arg). |
-| `ADE_IMAGE` | `cove-ade:0.44.0` | Built image tag; bringup derives the tag from `ADE_BB_APP_VERSION`. |
+| `ADE_BB_APP_VERSION` | `0.44.0` | Pinned `bb-app` npm version. **Wheel default** (Dockerfile/bringup). `cove ade update` writes an override into the compose `.env`, which persists across `cove up`; `cove ade status` warns on drift between the wheel default and the `.env` pin. |
+| `ADE_IMAGE` | `cove-ade:0.44.0` | Built image tag. Managed alongside the pin by `cove ade update` (prefix preserved — staging uses `cove-ade-staging`). |
 | `ADE_MEM_LIMIT` | `2G` | Container memory limit. |
 | `ADE_PORT` (compose `.env`) | `38886` | Container `BB_SERVER_PORT` and healthcheck; **derived from `ade_port` and rewritten on every `cove up`** — do not edit it by hand as a durable override. |
 
@@ -103,6 +103,34 @@ drift.
 compose `.env` is not a supported override: nginx is rendered by bringup from
 the Ansible var, so a hand-edited `.env` would move the container while nginx
 kept proxying to the old port — and the next `cove up` rewrites it anyway.
+
+## Updates — keeping bb current in cove
+
+The server container pins `bb-app` at image-build time, so updating = a new
+image with a new pin. **The server is the version anchor** for the whole
+harness: it serves its own `bb-app` tarball (`/install/bb-app.tgz`) to
+enrolled machines, and a daemon that meets a newer server protocol downloads
+that artifact and self-updates (it never auto-downgrades). So:
+
+```bash
+cove ade update           # latest bb-app on npm -> new image -> recreate; data preserved
+cove ade update --check   # running vs .env pin vs npm latest, no changes
+cove ade update --version 0.44.0   # explicit pin / rollback to a previous version
+```
+
+- **Pinned, never floating.** Like every Cove service, the ADE does not track
+  `latest` — updates are explicit and versioned, and the previous image tag
+  stays local so rollback is one command.
+- **Data survives.** Only the image changes; the `/data` volume (threads, DB,
+  settings) is untouched.
+- **Clients follow the server.** Update the server first; enrolled machines
+  self-update to its protocol, then the desktop app updates normally.
+- **Pin drift is visible.** `cove ade update` writes `ADE_BB_APP_VERSION` /
+  `ADE_IMAGE` into the compose `.env` (the supported runtime override —
+  bringup deliberately does not rewrite those two keys). `cove ade status`
+  prints the running version and warns when it diverges from the `.env` pin.
+  The wheel's *default* pin is realigned by ordinary pin-bump PRs, so a fresh
+  machine gets the same currency without overrides.
 
 ## Isolated staging E2E
 

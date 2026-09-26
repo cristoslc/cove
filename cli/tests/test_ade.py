@@ -233,8 +233,8 @@ class TestCLI:
 
     def test_ade_has_commands(self):
         from cove.ade import ade
-        assert set(ade.commands.keys()) == {"up", "down", "status", "logs"}, (
-            f"ade must expose up/down/status/logs, got: {list(ade.commands.keys())}"
+        assert set(ade.commands.keys()) == {"up", "down", "status", "logs", "update"}, (
+            f"ade must expose up/down/status/logs/update, got: {list(ade.commands.keys())}"
         )
 
     def test_ade_up_is_service_scoped_without_profile(self):
@@ -576,3 +576,188 @@ class TestResourcesSync:
             assert src.read_bytes() == dst.read_bytes(), (
                 f"bundled resources out of sync for {rel} — run sync_compose_resources.py"
             )
+
+
+class TestAdeUpdate:
+    """`cove ade update` — pinned, versioned, rollback-able server updates."""
+
+    @pytest.fixture()
+    def compose_env(self, tmp_path, monkeypatch):
+        """An isolated compose dir (inventory.yml + .env) so tests never touch
+        the repo's compose directory."""
+        d = tmp_path / "compose"
+        d.mkdir()
+        (d / "inventory.yml").write_text("{}\n")
+        (d / ".env").write_text(
+            "ADE_PORT=38886\nADE_CONTAINER_NAME=cove-ade-server\n"
+            "ADE_BB_APP_VERSION=0.44.0\nADE_IMAGE=cove-ade:0.44.0\n"
+        )
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(d))
+        return d
+
+    @staticmethod
+    def _mock_world(monkeypatch, *, running="cove-ade:0.44.0", latest="0.45.0",
+                    health_ok=True):
+        """Patch docker inspect/ps, curl health, npm registry, and capture
+        every subprocess call."""
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            cmd = list(cmd)
+            calls.append(cmd)
+            if cmd[:2] == ["docker", "inspect"]:
+                if running is None:
+                    return SimpleNamespace(returncode=1, stdout="", stderr="no such container")
+                return SimpleNamespace(returncode=0, stdout=running + "\n", stderr="")
+            if cmd[:2] == ["docker", "compose"]:
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            if cmd[0] == "curl":
+                rc = 0 if health_ok else 7
+                return SimpleNamespace(returncode=rc, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("cove.ade.subprocess.run", fake_run)
+
+        class FakeResp:
+            def raise_for_status(self): pass
+            def json(self): return {"version": latest}
+        monkeypatch.setattr(
+            "cove.ade.requests.get",
+            lambda *a, **kw: FakeResp(),
+        )
+        return calls
+
+    def _env(self):
+        return (Path(_pin_compose_dir_env()) / ".env").read_text()
+
+    def test_check_reports_and_touches_nothing(self, compose_env, monkeypatch):
+        from cove.ade import ade
+        calls = self._mock_world(monkeypatch)
+        result = CliRunner().invoke(ade, ["update", "--check"])
+        assert result.exit_code == 0, result.output
+        assert "0.44.0" in result.output and "0.45.0" in result.output
+        assert not any(c[:2] == ["docker", "compose"] for c in calls), (
+            "--check must not run docker compose"
+        )
+
+    def test_update_writes_both_env_keys_and_rebuilds(self, compose_env, monkeypatch):
+        from cove.ade import ade
+        calls = self._mock_world(monkeypatch, health_ok=True)
+        result = CliRunner().invoke(ade, ["update"])
+        assert result.exit_code == 0, result.output
+        env = (compose_env / ".env").read_text()
+        assert "ADE_BB_APP_VERSION=0.45.0" in env, env
+        assert "ADE_IMAGE=cove-ade:0.45.0" in env, env
+        ups = [c for c in calls if c[:2] == ["docker", "compose"] and "up" in c]
+        assert ups and "--build" in ups[0] and ups[0][-1] == "ade", ups
+
+    def test_update_skips_when_already_current(self, compose_env, monkeypatch):
+        from cove.ade import ade
+        calls = self._mock_world(monkeypatch, running="cove-ade:0.45.0",
+                                 latest="0.45.0")
+        result = CliRunner().invoke(ade, ["update"])
+        assert result.exit_code == 0, result.output
+        assert "already at" in result.output
+        assert not any(c[:2] == ["docker", "compose"] for c in calls)
+
+    def test_update_explicit_version_no_registry(self, compose_env, monkeypatch):
+        from cove.ade import ade
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            if cmd[:2] == ["docker", "inspect"]:
+                return SimpleNamespace(returncode=0, stdout="cove-ade:0.44.0\n", stderr="")
+            if cmd[0] == "curl":
+                return SimpleNamespace(returncode=0, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("cove.ade.subprocess.run", fake_run)
+        result = CliRunner().invoke(ade, ["update", "--version", "0.43.4"])
+        assert result.exit_code == 0, result.output
+        env = (compose_env / ".env").read_text()
+        assert "ADE_BB_APP_VERSION=0.43.4" in env and "ADE_IMAGE=cove-ade:0.43.4" in env
+
+    def test_update_rolls_back_on_failed_health(self, compose_env, monkeypatch):
+        from cove import ade as ade_mod
+        from cove.ade import ade
+        monkeypatch.setattr(ade_mod, "HEALTH_WAIT_S", 1)
+        monkeypatch.setattr(ade_mod, "HEALTH_POLL_S", 0.1)
+        calls = self._mock_world(monkeypatch, health_ok=False)
+        result = CliRunner().invoke(ade, ["update"])
+        assert result.exit_code != 0, result.output
+        assert "rolled back" in result.output
+        env = (compose_env / ".env").read_text()
+        assert "ADE_BB_APP_VERSION=0.44.0" in env, env
+        assert "ADE_IMAGE=cove-ade:0.44.0" in env, env
+        ups = [c for c in calls if c[:2] == ["docker", "compose"] and "up" in c]
+        assert len(ups) >= 2, "rollback must re-up the old image"
+
+    def test_update_rejects_junk_version(self, compose_env, monkeypatch):
+        from cove.ade import ade
+        calls = self._mock_world(monkeypatch)
+        result = CliRunner().invoke(ade, ["update", "--version", "0.45.0; rm -rf /"])
+        assert result.exit_code != 0
+        assert "Invalid bb-app version" in result.output
+        assert not any(c[:2] == ["docker", "compose"] for c in calls)
+
+    def test_update_registry_failure_fails_loud(self, compose_env, monkeypatch):
+        import requests as _rq
+        from cove.ade import ade
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["docker", "inspect"]:
+                return SimpleNamespace(returncode=0, stdout="cove-ade:0.44.0\n", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr("cove.ade.subprocess.run", fake_run)
+        monkeypatch.setattr(
+            "cove.ade.requests.get",
+            lambda *a, **kw: (_ for _ in ()).throw(_rq.ConnectionError("offline")),
+        )
+        result = CliRunner().invoke(ade, ["update"])
+        assert result.exit_code != 0
+        assert "--version" in result.output, result.output
+
+
+def _pin_compose_dir_env() -> str:
+    import os as _os
+    return _os.environ["COVE_COMPOSE_DIR"]
+
+
+class TestAdeStatusVersion:
+    """`cove ade status` surfaces the running bb-app version and any drift
+    between the container and the .env pin (the wheel-default vs override
+    visibility that keeps `cove ade update` honest)."""
+
+    def test_status_shows_version_and_drift(self, tmp_path, monkeypatch):
+        from cove.ade import ade
+
+        d = tmp_path / "compose"
+        d.mkdir()
+        (d / "inventory.yml").write_text("{}\n")
+        (d / ".env").write_text("ADE_BB_APP_VERSION=0.44.0\n")
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(d))
+
+        def fake_run(cmd, **kwargs):
+            cmd = list(cmd)
+            if cmd[:2] == ["docker", "compose"] and "ps" in cmd:
+                return SimpleNamespace(
+                    returncode=0,
+                    stdout="NAME            STATUS         PORTS\ncove-ade-server Up 5m          \n",
+                    stderr="",
+                )
+            if cmd[:2] == ["docker", "inspect"]:
+                return SimpleNamespace(returncode=0, stdout="cove-ade:0.43.4\n", stderr="")
+            if cmd[0] == "curl":
+                return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("cove.ade.subprocess.run", side_effect=fake_run):
+            result = CliRunner().invoke(ade, ["status"])
+
+        assert result.exit_code == 0, result.output
+        assert "bb-app: 0.43.4" in result.output, result.output
+        assert "0.44.0" in result.output and "converge" in result.output, (
+            f"drift between running 0.43.4 and .env pin 0.44.0 must warn, got: {result.output}"
+        )
