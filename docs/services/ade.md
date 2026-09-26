@@ -10,15 +10,15 @@ See ADR-018 (`docs/adr/adr-018-ade-agentic-harness.md`) and the Phase 1 plan
 ## Quick Start
 
 ```bash
-cove ade up        # build + start the ADE server (profile: ade)
+cove up            # starts the ADE server along with the rest of the stack
 cove ade status    # container + /health through nginx
 cove ade logs -f   # tail server output
-cove ade down      # stop (data preserved)
+cove ade down      # stop (data preserved; next `cove up` starts it again)
 ```
 
-Then open `https://ade.cove/`. The service is **off by default**; nothing is
-started unless the `ade` profile is chosen (`cove ade up` or `cove up` with the
-profile active).
+Then open `https://ade.cove/`. The ADE is a **core service** (since 0.8.0,
+operator decision per ADR-018): `cove up` starts it — no profile, no second
+command. `cove ade up` still exists to (re)build and start it on its own.
 
 ## What It Does
 
@@ -28,7 +28,9 @@ the server only; it does not touch the operator's existing bb instance.
 
 - **Container:** `cove-ade-server` (service name `ade`), built from
   `compose/ade/Dockerfile` on `node:24-bookworm-slim`, pinned to
-  `bb-app@0.43.4` via the `ADE_BB_APP_VERSION` build arg.
+  `bb-app@0.44.0` via the `ADE_BB_APP_VERSION` build arg (kept aligned with
+  the operator's installed bb — machines install the server's own tarball and
+  a daemon never auto-downgrades to an older server protocol).
 - **Data:** `/data` inside the container is `${cove_data_root}/ade/` on the
   host (Data in Documents), so the SQLite database and thread state survive
   image upgrades.
@@ -91,8 +93,8 @@ drift.
 |---|---|---|
 | `ade_port` (Ansible: group_vars / host_vars) | `38886` | **Live-path knob.** Change this and re-run `cove up`; it drives the nginx upstream and the `.env` `ADE_PORT`. |
 | `ade_container_name` (Ansible) | `cove-ade-server` | Container name; re-synced into `.env` `ADE_CONTAINER_NAME` on `cove up`. |
-| `ADE_BB_APP_VERSION` | `0.43.4` | Pinned `bb-app` npm version (Dockerfile build arg). |
-| `ADE_IMAGE` | `cove-ade:0.43.4` | Built image tag; bringup derives the tag from `ADE_BB_APP_VERSION`. |
+| `ADE_BB_APP_VERSION` | `0.44.0` | Pinned `bb-app` npm version (Dockerfile build arg). |
+| `ADE_IMAGE` | `cove-ade:0.44.0` | Built image tag; bringup derives the tag from `ADE_BB_APP_VERSION`. |
 | `ADE_MEM_LIMIT` | `2G` | Container memory limit. |
 | `ADE_PORT` (compose `.env`) | `38886` | Container `BB_SERVER_PORT` and healthcheck; **derived from `ade_port` and rewritten on every `cove up`** — do not edit it by hand as a durable override. |
 
@@ -154,17 +156,71 @@ host-originated requests arrive at nginx as the Docker gateway IP
 
 ## Out of scope (Phase 2)
 
-Cutting the operator's live bb server into this container, host re-enrollment,
-provider CLI logins in volumes, execution-machine containers (`cove ade up` as
-a machine provider), and bundle membership. This page documents server
-stand-up only.
+Bundle membership, provider CLI logins in volumes, execution-machine containers
+(`cove ade up` as a machine provider). Host enrollment moved from "out of
+scope" to documented runbook — see **Machines** below.
+
+## Machines — enrolling this Mac (Phase 2 cutover)
+
+bb's model is **one server, many machines**: the server stores threads, the
+database, and settings; every other machine and app connects to it. With the
+ADE as a core Cove service, the cove server is the server and the Mac enrolls
+as **machine #1** (ADR-018's day-one state).
+
+The catch: the Mac currently runs its **own** bb server (`bb machine list`
+shows role `server`) holding every existing thread — including agent sessions.
+One daemon serves one server, so enrollment is a **cutover**, not an add-on.
+Do it from a regular terminal, never from inside a bb session: quitting bb
+stops the host server and kills any session running under it.
+
+### Cutover runbook (operator-driven)
+
+1. **Stop the container server** — it started with a *fresh* database on its
+   first `cove up`, which the migration replaces:
+   `cove ade down`
+2. **Quit bb on the Mac** (menu-bar → Quit bb). The host server stops; open
+   sessions end. Nothing is lost — threads are on disk in `~/.bb`.
+3. **Migrate the host data into the container volume** (fresh container DB is
+   discarded; the host DB becomes the cove server's):
+   `rsync -a ~/.bb/ ~/Documents/cove-data/ade/`
+4. **Start the cove server with the migrated data:** `cove ade up` —
+   `https://ade.cove/` now serves the existing threads from the container.
+5. **Enroll the Mac's daemon** (from a terminal, bb still quit):
+   `bb machine enroll --bootstrap-file <path>` — generate the bootstrap from
+   the web UI at `https://ade.cove/` → **Settings → Machines → Add machine**.
+   If the daemon needs the server URL set first:
+   `bb settings general machineServerUrl https://ade.cove`.
+6. **Reconnect** — reopen bb (desktop app reconnects to the enrolled daemon)
+   or use `https://ade.cove/` in the browser.
+
+Skip steps 1–3 to enroll against a **fresh** server instead (existing threads
+stay with the retired host server's data in `~/.bb` — recoverable by re-running
+the migration later, from a stopped state on both sides).
+
+### Honest caveats (ADR-018 open question Q1)
+
+The enrollment mechanism is documented upstream (`bb machine enroll
+--bootstrap-file`, `bb settings general machineServerUrl`, servers serve their
+own `bb-app` tarball at `/install/bb-app.tgz` so machine and server versions
+stay aligned) but has **not been live-verified end-to-end here** — over the
+cove network from the host, `https://ade.cove` is the expected server URL.
+Expect friction on the first run; the fallback is enrollment through the
+web UI's bootstrap bundle only.
+
+### What it does NOT do
+
+- **No automatic enrollment.** `cove up` starts the server; enrolling the Mac
+  (or any machine) remains an explicit operator cutover, because it stops the
+  host server.
+- **No execution-machine containers yet** (Phase 3: `cove ade` provisioning
+  provider machines, Forgejo-runner shape).
 
 ## What It Does NOT Do
 
 - **No host port.** The container is reached only over the cove network through
   nginx; there is no `127.0.0.1` mapping.
 - **No application auth.** See "Auth posture".
-- **No enrollment.** Phase 1 starts the server; it does not enroll the host or
-  any other machine.
+- **No automatic enrollment.** The server starts with `cove up`; enrolling the
+  Mac or any machine is the explicit Phase 2 cutover (see "Machines").
 - **No 1Password seed.** The server has no shared admin identity; identities are
   managed by bb itself.

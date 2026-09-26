@@ -42,20 +42,22 @@ def _run_checked(cmd: list[str], action: str) -> None:
 
 @click.group()
 def ade():
-    """Manage the ADE bb server (optional agentic harness).
+    """Manage the ADE bb server (agentic harness, core service).
 
     The ADE runs the pinned `bb-app` server in a container on the cove
     network and serves the bb web UI at https://ade.cove/ through nginx.
-    Direct-URL mode carries no application auth: the trust boundary is the
-    Cove network and ingress. See docs/services/ade.md.
+    It starts with `cove up` (no profile needed since 0.8.0); `down` stops
+    it until the next `cove up`. Direct-URL mode carries no application
+    auth: the trust boundary is the Cove network and ingress. See
+    docs/services/ade.md.
     """
 
 
 @ade.command()
 def up():
-    """Start the ADE bb server."""
+    """Ensure the ADE bb server is built and running."""
     click.echo("Starting ADE bb server...")
-    _run_checked(_compose_cmd("--profile", "ade", "up", "-d", "--build"), "up")
+    _run_checked(_compose_cmd("up", "-d", "--build", ADE_SERVICE), "up")
     click.echo(f"ADE bb server is running at {ADE_URL}")
 
 

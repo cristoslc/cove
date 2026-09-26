@@ -1,9 +1,8 @@
-"""Tests for the ADE (bb server) optional profiled service.
+"""Tests for the ADE (bb server) — a CORE Cove service since 0.8.0.
 
-Per the plan (`docs/plans/ade-harness-phase1.md`), the ADE is an optional
-profiled Cove service (`profile: ade`) running the pinned `bb-app` server,
-reachable at `ade.cove` through nginx. It mirrors the litellm/speedtest/runner
-pattern for optional services.
+Operator decision 2026-09-25 (ADR-018): the ADE ships as part of Cove, the
+way Vault is the default vault — `cove up` starts it, no profile needed.
+It mirrors the forgejo/vault pattern for core services.
 
 Run all:   pytest cli/tests/test_ade.py
 Run unit:  pytest cli/tests/test_ade.py -m "not e2e and not staging"
@@ -102,10 +101,14 @@ class TestComposeServiceDefinition:
         data = _load_compose()
         assert "ade" in data["services"], "ade service missing from compose"
 
-    def test_ade_has_profile(self):
+    def test_ade_has_no_profile(self):
+        """Core since 0.8.0: no profile key — every `cove up` starts the ADE
+        (operator decision 2026-09-25, ADR-018 day-one intent)."""
         data = _load_compose()
-        profiles = data["services"]["ade"].get("profiles", [])
-        assert "ade" in profiles, 'ade service must have profiles: ["ade"]'
+        profiles = data["services"]["ade"].get("profiles")
+        assert not profiles, (
+            f"ade must NOT carry a profile (core service — cove up starts it), got: {profiles}"
+        )
 
     def test_ade_has_build_context(self):
         data = _load_compose()
@@ -234,7 +237,7 @@ class TestCLI:
             f"ade must expose up/down/status/logs, got: {list(ade.commands.keys())}"
         )
 
-    def test_ade_up_uses_profile_flag_before_subcommand(self):
+    def test_ade_up_is_service_scoped_without_profile(self):
         from cove.ade import ade
 
         captured = []
@@ -250,8 +253,11 @@ class TestCLI:
         compose = [c for c in captured if c[:2] == ["docker", "compose"]]
         assert compose, f"no docker compose call captured: {captured}"
         cmd = compose[0]
-        assert "--profile" in cmd and cmd.index("--profile") < cmd.index("up"), (
-            f"--profile must precede 'up' (global flag), got: {cmd}"
+        assert "--profile" not in cmd, (
+            f"ade is a core service — up must not pass --profile, got: {cmd}"
+        )
+        assert cmd[-1] == "ade", (
+            f"up must be scoped to the ade service (not the whole stack), got: {cmd}"
         )
 
     def test_ade_down_uses_stop(self):
@@ -540,16 +546,22 @@ class TestBringupIntegration:
         )
 
 
-class TestStatusOptionalServices:
-    def test_ade_in_optional_services(self):
+class TestStatusCoreService:
+    """ADE is core since 0.8.0: a stopped ADE fails `cove status` (like a
+    stopped Forgejo), and `cove up` no longer treats it as a reconcilable
+    optional profile."""
+
+    def test_ade_in_core_services(self):
+        from cove.status import SERVICES
+        names = [c[0] for c in SERVICES]
+        assert "cove-ade-server" in names, "ADE must be a core service in status.py"
+
+    def test_ade_not_in_optional_services(self):
         from cove.status import OPTIONAL_SERVICES
         names = [c[0] for c in OPTIONAL_SERVICES]
-        assert "cove-ade-server" in names, "ADE must be an optional service in status.py"
-
-    def test_ade_profile_is_ade(self):
-        from cove.status import OPTIONAL_SERVICES
-        profile = [c[2] for c in OPTIONAL_SERVICES if c[0] == "cove-ade-server"]
-        assert profile == ["ade"], f"ADE profile must be 'ade', got: {profile}"
+        assert "cove-ade-server" not in names, (
+            "ADE must not be an optional service — cove up always starts it"
+        )
 
 
 class TestResourcesSync:
