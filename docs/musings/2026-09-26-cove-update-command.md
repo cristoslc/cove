@@ -1,106 +1,93 @@
 # Musing: `cove update` and `cove update auto`
 
+**Status:** Proposal (musing → ADR)
 **Date:** 2026-09-26
-**Status:** Proposal (musing — no ADR yet)
-**Trigger:** operator question after `cove ade update` shipped (#58): "do we need a new musing on a `cove update` and `cove update auto` (scheduled)?"
+**Revised same day** — first draft proposed "notify-only by default" for
+scheduling. Operator correction: that recreates the busywork auto exists to
+kill. The opt-in **is** the approval. This version is rewritten around that.
 
-## The problem, stated plainly
+## The commitment we already made
 
-Cove services are pinned, and each has its own update surface:
+Pinning built-in services means Cove ships their updates. There is no
+opting out of the maintenance — only deferring it, badly. The staleness
+audit (2026-09-26) says we are already deferring it badly:
 
-| Service | Update mechanism today |
-|---|---|
-| ADE (bb-app) | `cove ade update` (PR #58) — npm target → .env pin → rebuild → health → auto-rollback |
-| LiteLLM / Headroom | pin in compose; update = repo PR + promote (wheel IS the deploy) |
-| Speedtest Tracker | image pin in bringup; update = PR + promote |
-| Forgejo / Vault / nginx / dnsproxy | image pins in compose; same |
-| **cove CLI itself** | manual promote flow: gate → sync → build → `uv tool install --force` |
+| Service | Cove pin | Upstream | Behind |
+|---|---|---|---|
+| Forgejo | `:15` (floating major) | **v16.0.5** (16.0.x since ~Jul, patched same-day with 15.0.9) | **one major** |
+| LiteLLM | `cove-litellm:1.84.0` (custom build) | pypi 1.102.1 | ~18 minors |
+| Speedtest | `v1.14.5-ls162` | `v1.15.0-ls173` | one minor, 11 ls-revisions |
+| Vault | `1.20` **digest-pinned** | (digest pin = zero float) | manual-only by design |
+| nginx | `1.27-alpine` (floats in major) | 1.27.5 stable | current |
+| bb-app (ADE) | `0.44.0` wheel default | 0.44.0 | current, and now has `cove ade update` |
 
-So today "update cove" means: know which of six things moved, write the right
-PR, pass the gate, promote, reinstall, run `cove up`. Nothing is wrong with
-any single step — but nothing tells the operator *what is stale*, and nothing
-automates the safe parts. The question is whether a `cove update` surface and
-a scheduled `cove update auto` should exist, and what they may touch.
+Forgejo at 15 isn't negligence — 15.0.9 still gets same-day security patches —
+but it *is* a full major of accumulated migration debt waiting for whoever
+finally does the bump by hand. LiteLLM at 1.84 vs 1.102 is worse: a custom
+Docker build nobody re-cuts until something breaks. This is what "pinned"
+means without a scheduler: **staleness with extra steps**.
 
-## Tensions (why this needs thinking, not just code)
+## The control point is setup, not each update
 
-1. **Promote is deliberately manual.** AGENTS.md: stable tool reflects
-   *released* state only; gate must be green; sashay-aware. Any `cove update
-   auto` that reinstalls the CLI from trunk bypasses all of that. Hard
-   constraint, not a preference.
-2. **The failure mode is proven.** The cert-SAN regression (v0.7.0 → 0.7.1)
-   shipped *because* the upgrade path of an existing deployment was never
-   exercised. Unattended upgrades multiply the number of upgrade paths that
-   must be pre-verified — and we cannot pre-verify what we don't gate.
-3. **Pinned-never-floating is the posture.** litellm, forgejo, vault, bb-app:
-   every pin exists so an update is an explicit, versioned, rollback-able
-   event. `auto` must not quietly float anything.
-4. **The bb precedent cuts both ways.** bb itself auto-updates *machines* to
-   the server's protocol (`--auto-update`, never downgrade) — the harness's
-   own model says: anchor the version in one place, let followers converge.
-   Cove could mirror that: main is the anchor, `cove update` converges a
-   machine to it. But cove's "client" is the operator's whole stack, not a
-   disposable daemon.
+First draft had `auto` defaulting to notify-only, on the theory that a human
+should approve each update. Wrong: an auto mode that pings the operator is a
+reminder system, not a maintenance system. The approval happens once — at
+setup, per service, as a **tier choice** — and after that the schedule runs
+without the operator in the loop. What the operator approves at setup is the
+tier, and the tier encodes blast radius:
 
-## Proposal: three tiers, not two commands
+- **`float`** — re-pull the existing pin (forgejo `:15`, nginx `1.27-alpine`)
+  on cadence: minors and patches land automatically, **majors notify and
+  wait** (a major is a migration, and migrations deserve a scheduled operator
+  session, not a Tuesday-morning surprise). Fixes the second gap this audit
+  exposed: bringup pulls with `--pull missing`, so even our floating tags
+  never actually refresh on an existing machine.
+- **`auto`** — apply anything upstream ships, with pre-apply volume snapshot
+  and automatic rollback on failed health. Admission criteria: the service
+  already proves it can revert itself (ADE qualifies: version-tagged images,
+  health-gated, auto-rollback — `cove ade update`'s whole design). Speedtest
+  qualifies with a snapshot step. This tier is the default for anything
+  Cove builds itself.
+- **`manual`** — Vault (digest pin exists precisely because unseal and
+  migration are ceremonies), Forgejo major bumps (data migrations, downtime
+  window). The operator can *raise* a service into manual; they cannot
+  silently fall out of their chosen tier.
 
-**`cove update --check`** (always safe, schedulable) — a read-only staleness
-report across every surface:
+`cove update auto` registers the launchd job at the chosen tiers and reports
+what it did (`cove update log`, notifications on rollback — rollback is the
+one event that always pages a human). `cove update --check` survives as the
+read-only view, and `cove status` surfaces "N updates pending" — visibility
+without decision fatigue.
 
-- CLI: installed version vs latest tagged release on git.cove
-- services: running image tag vs repo pin vs upstream latest (ade via npm
-  registry; forgejo/litellm/speedtest via their registries)
-- output: what's stale, what command or PR updates it
+## What the CLI update surface looks like
 
-**`cove update`** (explicit, per-surface) — applies what the operator names:
+```
+cove update --check                 # staleness report (all services + CLI)
+cove update apply [--service S]     # one-shot apply within the configured tier
+cove update auto --tier ade=auto,speedtest=auto,forgejo=float,vault=manual
+cove update log                     # what auto did, when, and whether it rolled back
+```
 
-- `cove update ade [--version X]` → delegates to the existing
-  `cove ade update` (already built)
-- `cove update cli` → fetches the latest tagged release artifact from
-  git.cove, verifies the tag, reinstalls the tool — the *release* action, not
-  a trunk action, so the sashay rule holds (tagged releases only)
-- litellm/speedtest/forgejo pins stay PR-gated (image digests, seed migrations,
-  admin identity — these are not mechanical bumps)
+LiteLLM's custom build moves to a scheduled image re-cut (`auto` tier once
+its build is health-gated the way ADE's is) — that is the fix for the 1.84 →
+1.102 gap, not a manual PR per bump.
 
-**`cove update auto`** (scheduled, opt-in, conservative by default) — a
-launchd job (macOS; systemd elsewhere) running on a cadence:
+## The CLI's own updates
 
-- default tier: **notify only** — run `--check`, push findings to ntfy (the
-  notification-service musing already exists) and/or the bb host; never change
-  anything unattended
-- opt-in tier: `--apply-ade` — auto-run `cove ade update` when the only change
-  is a bb-app patch/minor bump, because that path already has: version-tagged
-  images, automatic rollback on failed health, and the server-anchors-machines
-  model. bb-app is the one service whose update is already *self-healing* by
-  construction; it is the right first auto-apply surface
-- never: Forgejo/Vault (stateful, migration-bearing), never the CLI wheel
-  itself, never on a metered/unstable link
+`cove update cli` reinstalls the stable tool from the latest **tagged**
+release — never trunk (the sashay rule stands). Patch releases auto-apply
+under `auto`; minor/major CLI releases notify, because a CLI bump can change
+bringup behavior (v0.7.0's cert regression is the standing counterexample —
+and note it was *caught* by the self-heal that shipped in its patch, which is
+the argument that auto-apply with real rollback is safer than scheduled
+manual bumps that pile up).
 
-The principle: **automate the check, automate the revertible, never automate
-the gate.** `--check` + notify is the 80% win; auto-apply is a narrow,
-explicitly-named carve-out for paths that already carry their own rollback.
+## Open questions (for the ADR discussion, not this musing)
 
-## What this musing is NOT deciding
-
-- Whether `cove update` belongs in the CLI vs a separate tool (CLI — it needs
-  compose context, creds, and the state machine).
-- ntfy vs bb notifications as the channel (separate musing).
-- Repo-side automation (a CI check that opens a PR when an upstream pin lags —
-  the Dependabot pattern, which this repo has history with). Noted as a
-  follow-on, not part of the first cut.
-
-## Recommendation
-
-Yes — musing first, ADR later. Concretely:
-
-1. Land `cove update --check` as the read-only staleness report (small, pure
-   wins, rides the `cove ade update` pattern).
-2. Add `cove update cli` (tagged-release-only reinstall) — but only after a
-   staging test proves the tagged-wheel install path, given the SAN lesson.
-3. Ship `cove update auto` in notify-only mode; `--apply-ade` gated behind an
-   explicit flag and its own ADR-016-style adoption argument.
-
-Open questions for the discussion: cadence (daily? on `cove up`? on wake?),
-whether `--check` results should surface in `cove status`, and whether
-multi-machine fleets (post-Phase-2) want the server to *push* version intent
-to machines rather than each machine checking independently.
+- Cadence: daily at a fixed hour, on wake, or piggybacked on `cove up`?
+- Snapshot mechanism per service (volume tar? compose-level?) and retention.
+- Post-Phase-2 fleets: does the cove ADE server *push* version intent to
+  enrolled machines (bb already does exactly this for its own daemons), or do
+  machines check independently?
+- Whether `cove update auto` should also drive the *repo-side* pin bumps
+  ( Dependabot-style PRs so the wheel default never lags the .env override).
