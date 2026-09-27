@@ -1,6 +1,7 @@
 """Click entrypoint and group registration."""
 
 import getpass
+import sys
 import os
 import platform
 import shutil
@@ -103,7 +104,10 @@ def init(force, purge):
 @click.option("--no-provision", is_flag=True, help="Skip Forgejo provisioning")
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
-def up(no_provision, no_upgrade, log):
+@click.option("--non-interactive", is_flag=True,
+              help="No prompts (scheduled runs): skip the BECOME prompt; elevation "
+                   "tasks are idempotent no-ops on established machines.")
+def up(no_provision, no_upgrade, log, non_interactive=False):
     """Bring up cove containers and provision Forgejo.
 
     Compose dir is resolved in order: COVE_COMPOSE_DIR env, ./compose,
@@ -164,12 +168,24 @@ def up(no_provision, no_upgrade, log):
     # stable LocalHostName, so override the fact to keep Ansible consistent.
     base_cmd.extend(["-e", f"ansible_hostname={host_vars_file.stem}"])
 
-    become_pass = getpass.getpass("BECOME password: ")
+    # Scheduled runs (`cove update --quiet` → `cove up --non-interactive`)
+    # have no TTY and no password. The become-requiring bringup tasks
+    # (/etc/hosts, pf) are idempotent no-ops on established machines and
+    # tolerate failure.
+    if non_interactive:
+        become_pass = ""
+    else:
+        become_pass = getpass.getpass("BECOME password: ")
     ansible_env["ANSIBLE_BECOME_PASSWORD"] = become_pass
 
     running_profiles = _detect_running_optional_profiles()
     if running_profiles:
         base_cmd.extend(["-e", f"cove_profiles={','.join(running_profiles)}"])
+    # Scheduled updates force re-pull so floating tags (forgejo:15, nginx)
+    # actually receive new upstream patches instead of freezing at first pull.
+    pull_policy = os.environ.pop("COVE_PULL_POLICY", None)
+    if pull_policy:
+        base_cmd.extend(["-e", f"pod_pull_policy={pull_policy}"])
 
     if not no_provision:
         click.echo("Pulling credentials from 1Password...")
@@ -255,6 +271,9 @@ app.add_command(litellm)
 app.add_command(speedtest)
 app.add_command(runner)
 app.add_command(tunnel)
+from cove.update import update
+
+app.add_command(update)
 
 
 @app.command()

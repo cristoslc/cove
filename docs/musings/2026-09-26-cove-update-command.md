@@ -6,7 +6,56 @@
 scheduling. Operator correction: that recreates the busywork auto exists to
 kill. The opt-in **is** the approval. This version is rewritten around that.
 
-## The commitment we already made
+## Decision (2026-09-26, operator) — supersedes the tier design
+
+> "cove is meant for convenience, not for enterprise controls. We're making a
+> commitment with our vendor update policy. `cove update` should just mean
+> "get the latest version of cove cli and then update all the
+> containers/images/services/etc. to the version it specifies, with whatever
+> migrations are necessary". `cove update auto` should just set up daily
+> updates."
+
+So the design collapses to the vendor-update model:
+
+- **`cove update`** = update the cove CLI to the latest tagged release, then
+  bring the whole stack to whatever that release specifies (pins, images,
+  migrations — via the normal `cove up` flow, which Forgejo's own data
+  migrations and Vault's unseal flow already ride). One command, one source
+  of truth: the released cove version. No per-service decisions at update
+  time.
+- **`cove update auto`** = register a daily launchd job that runs it. Set up
+  once; after that there is no operator in the loop.
+- Per-service escape hatches (`cove ade update --version X`) remain for
+  targeted pins and rollbacks, but they are escape hatches, not the model.
+
+The first draft's tier ceremony (float/auto/manual per service, notify-only
+scheduling) is **superseded** — it solved a governance problem the operator
+has declined to have. What survives from the first draft: the staleness
+audit below (it made the case), and the constraint that scheduled runs must
+be non-interactive (see below).
+
+### Scheduling constraint
+
+A daily job cannot prompt for a BECOME password or a 1Password biometric.
+`cove update` in quiet mode therefore rides the passwordless-sudo path
+AGENTS.md already offers (`/etc/sudoers.d/cove` for the narrow bringup
+sudoers set) and skips provisioning; the tasks that need elevation
+(/etc/hosts, pf redirect) are idempotent and already `failed_when: false`, so
+an established machine converges without a prompt. First-boot and any task
+that genuinely fails still surface in `cove update log` — rollback events and
+failures always notify; routine successes are silent by design.
+
+---
+
+## superseded first draft (kept for the record)
+
+The original tier proposal — notify-only default, float/auto/manual per
+service, manual Vault/Forgejo-major carve-outs — is superseded. Its honest
+residue: the staleness audit below, and the principle that Forgejo major
+bumps and Vault upgrades still get a scheduled operator session (they are
+migrations, not updates).
+
+## The commitment we already made (audit, 2026-09-26)
 
 Pinning built-in services means Cove ships their updates. There is no
 opting out of the maintenance — only deferring it, badly. The staleness
@@ -72,22 +121,17 @@ LiteLLM's custom build moves to a scheduled image re-cut (`auto` tier once
 its build is health-gated the way ADE's is) — that is the fix for the 1.84 →
 1.102 gap, not a manual PR per bump.
 
-## The CLI's own updates
+### The CLI's own updates
 
-`cove update cli` reinstalls the stable tool from the latest **tagged**
-release — never trunk (the sashay rule stands). Patch releases auto-apply
-under `auto`; minor/major CLI releases notify, because a CLI bump can change
-bringup behavior (v0.7.0's cert regression is the standing counterexample —
-and note it was *caught* by the self-heal that shipped in its patch, which is
-the argument that auto-apply with real rollback is safer than scheduled
-manual bumps that pile up).
+`cove update` **is** the CLI's own update — it installs the latest tagged
+release first, then converges the stack to it. Never trunk (the sashay rule
+stands); the wheel attached to a tagged release is the only artifact `update`
+consumes.
 
-## Open questions (for the ADR discussion, not this musing)
+## Open questions (parked, not blocking)
 
-- Cadence: daily at a fixed hour, on wake, or piggybacked on `cove up`?
-- Snapshot mechanism per service (volume tar? compose-level?) and retention.
-- Post-Phase-2 fleets: does the cove ADE server *push* version intent to
-  enrolled machines (bb already does exactly this for its own daemons), or do
-  machines check independently?
-- Whether `cove update auto` should also drive the *repo-side* pin bumps
-  ( Dependabot-style PRs so the wheel default never lags the .env override).
+- Cadence: daily at a fixed hour vs on-wake. Default: daily.
+- Whether staleness surfaces in `cove status` output.
+- Post-Phase-2 fleets: the cove ADE server can push version intent to enrolled
+  machines (bb already does exactly this for its own daemons) — revisit when
+  machine #2 exists.
