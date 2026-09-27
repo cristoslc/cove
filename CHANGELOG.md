@@ -4,11 +4,18 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.9.0 (2026-09-26)
+## 0.10.0 (2026-09-26)
 
 ### Added
 - **`cove ade update`** — keep bb current in cove without leaving the IaC rails. Resolves the target (npm latest or explicit `--version`), writes the pin + image tag into the compose `.env` (a persistent override — bringup never rewrites those keys), rebuilds the image, recreates the container (data volume untouched), waits for `/health` through nginx, and **rolls back automatically** on failed health (previous image tag stays local, so rollback is `cove ade update --version <old>`). `--check` reports running vs pinned vs latest without changing anything. The server is the bb version anchor: it serves its own tarball to enrolled machines and daemons self-update to its protocol, so updating the server updates the harness.
 - **`cove ade status` version visibility** — prints the running bb-app version (parsed from the container image tag) and warns when it diverges from the `.env` pin ("run `cove ade up`/`update` to converge"), keeping the override surface honest against the wheel default.
+
+- **`cove update`** — one command, one source of truth: install the latest **tagged** cove release, then converge the whole stack (containers, images, migrations) to the pins that release ships, via the normal bring-up flow. Forgejo data migrations and Vault upgrades ride inside it. Never trunk — the wheel attached to a tagged release is the only artifact `update` consumes. `cove update --check` reports installed vs latest vs running pins, changing nothing. Per-service escape hatches (`cove ade update --version X`) remain for targeted pins and rollbacks.
+- **`cove update auto`** — schedules `cove update --quiet` daily via launchd (default 09:17; `--off` removes it). The opt-in **is** the approval: after setup there is no operator in the loop. Quiet runs skip the BECOME prompt (`--non-interactive` up-path; elevation tasks are idempotent no-ops on established machines) and force re-pull so floating tags (`forgejo:15`, nginx) actually receive upstream patches instead of freezing at first pull.
+- **Musing** — `docs/musings/2026-09-26-cove-update-command.md`: the vendor-update commitment, the staleness audit (Forgejo one major behind, LiteLLM ~18 minors), and the design record including the superseded first draft.
+
+### Changed
+- `cove up` gained `--non-interactive` (skips the BECOME prompt; for scheduled use) and honors `COVE_PULL_POLICY` so updates can force image re-pulls.
 
 ## 0.8.0 (2026-09-25)
 
