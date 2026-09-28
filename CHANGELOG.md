@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.0 (2026-09-26)
+
+### Added
+- **`cove up --all`** — launches every optional service along with the default ones. The bringup pod starts Runner with the core services (ADE is core since 0.8.0); the LiteLLM and Speedtest flows run right after the provisioning chain, so their 1Password/Vault credentials are prepared before their containers start (Vault must be up for `vault-get`/`vault-put`). The tunnel stays out — shares are created interactively with `cove tunnel up`. A credential failure on one optional service is reported without aborting the bringup (optional stays optional, same contract as `cove status`).
+
 ## 0.8.0 (2026-09-25)
 
 ### Changed
