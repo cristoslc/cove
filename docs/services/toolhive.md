@@ -36,7 +36,7 @@ MCP servers enter the harbor only through the seeded catalog:
 
   Digests are the multi-arch indexes verified 2026-09-28 against their registries. The filesystem server declares **no read/write mounts** in the seed: granting file access is an explicit runtime decision (declare per-server mounts through the ToolHive API), never a seed default.
 
-- **Default permission profile:** [compose/toolhive/cove-default.json](../../compose/toolhive/cove-default.json) (`cove-sandboxed`) — no read/write mounts, no outbound allow, not privileged. Seeded to `${COVE_DATA_ROOT}/toolhive/profiles/cove-default.json`, mounted read-only at `/profiles`. Mirrors ToolHive's built-in `none` profile.
+- **Default permission profile:** [compose/toolhive/cove-default.json](../../compose/toolhive/cove-default.json) (`cove-sandboxed`) — no read/write mounts, no outbound allow, not privileged. Seeded to `${COVE_DATA_ROOT}/toolhive/profiles/cove-default.json`, mounted read-only at `/profiles`. Mirrors ToolHive's built-in `none` profile. Phase 1 registers no workloads, so the profile is seeded but unused — it is wired for Phase 2 consumption, when `cove mcp` assigns it per server.
 - **Adding a server:** edit `compose/toolhive/registry.json` in the repo (pinned image ref, explicit permissions), re-seed, and it exists on every machine. Never register servers ad-hoc in a running container.
 
 ## Auth Posture (security)
@@ -59,7 +59,7 @@ MCP servers enter the harbor only through the seeded catalog:
 | **Registry** | Curated, IaC-declared, mounted `:ro`; no `:latest` anywhere (every image ref carries a version tag); remote catalog fetch off. |
 | **Profiles** | Default profile `cove-sandboxed`: no mounts, no outbound, not privileged. Network-only servers must declare their outbound scope per-server in the registry. |
 | **Version** | Pinned to `v0.51.4@sha256:5e1e2536…` (multi-arch index verified 2026-09-28; no `latest`). |
-| **Image posture** | Distroless ko image, runs as non-root (operator uid:gid via `TOOLHIVE_UID`/`TOOLHIVE_GID`, default 1000:1000). No shell/curl inside — the compose healthcheck runs the bundled `thv list`, which discovers the API and verifies `/health` with the startup nonce. |
+| **Image posture** | Distroless ko image, runs as non-root (uid:gid 1000:1000 by default, overridable at the compose layer). No shell/curl inside — the compose healthcheck runs the bundled `thv list`, which discovers the API and verifies `/health` with the startup nonce. |
 | **Memory** | Memory-limited (`TOOLHIVE_MEM_LIMIT`, 512M default). |
 | **Data** | All state under `${COVE_DATA_ROOT}/toolhive/` (config, state, profiles, registry) per the Data in Documents rule. |
 | **LiteLLM** | `disable_mcp: true` stays permanent (CVE-2026-42271) with a cross-reference comment; guard test `TestLitellmMcpGuard` enforces it. |
