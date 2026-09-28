@@ -46,10 +46,13 @@ def _get(path: str, host: str = MCP_HOST, **kw) -> requests.Response:
 
 
 def test_health_route_answers():
-    """GET /health with Host: mcp.cove proxies to the ToolHive API health."""
+    """GET /health with Host: mcp.cove proxies to the ToolHive API health.
+
+    ToolHive's healthy signal is HTTP 204 No Content (empty body) — the same
+    signal `cove toolhive status` accepts via `curl -sf`.
+    """
     r = _get("/health")
-    assert r.status_code == 200, f"status {r.status_code}: {r.text[:200]}"
-    assert r.text.strip(), "health payload is empty"
+    assert r.status_code == 204, f"status {r.status_code}: {r.text[:200]}"
 
 
 def test_management_api_returns_403():
@@ -65,8 +68,8 @@ def test_management_api_returns_403():
 def test_wrong_host_does_not_reach_toolhive():
     """The Host header selects the mcp.cove block: another vhost must not serve it."""
     r = _get("/health", host="git.cove")
-    # ToolHive /health answers 200; git.cove (Forgejo in staging) must not.
-    served_toolhive = r.status_code == 200
+    # ToolHive /health answers 204; git.cove (Forgejo in staging) must not.
+    served_toolhive = r.status_code == 204
     assert not served_toolhive, (
         "git.cove vhost unexpectedly served the toolhive health route"
     )
