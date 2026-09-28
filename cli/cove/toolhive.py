@@ -44,7 +44,12 @@ def up():
 
 @toolhive.command()
 def down():
-    """Stop the ToolHive MCP gateway (workload data preserved)."""
+    """Stop the ToolHive MCP gateway (workload data preserved).
+
+    compose stop only stops the toolhive control plane; any thv-spawned
+    sibling MCP-server workload containers keep running until stopped
+    via the ToolHive API (a Phase 2 `cove mcp` hook owns that lifecycle).
+    """
     click.echo("Stopping ToolHive MCP gateway...")
     subprocess.run(_compose_cmd("stop", "toolhive"), check=True)
     click.echo("ToolHive MCP gateway stopped.")
