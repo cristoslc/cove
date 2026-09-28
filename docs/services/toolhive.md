@@ -80,7 +80,7 @@ Data lives at `~/Documents/cove-data/toolhive/`. The `.env` is written by `cove 
 ## Lifecycle
 
 - `cove toolhive up` — start (uses `--profile mcp`, does not touch core services).
-- `cove toolhive down` — stop (uses `stop`, preserves workload data).
+- `cove toolhive down` — stop (uses `stop`, preserves workload data). Note: compose stop only stops the control plane — thv-spawned sibling MCP-server containers keep running until stopped via the ToolHive API (Phase 2 `cove mcp` hook).
 - `cove toolhive status` — check through nginx on `mcp.cove` via 8443 (`/health`).
 - `cove toolhive logs` — tail logs.
 - `cove up --all` — starts the `mcp` profile along with the other optional services (no credential step needed before the bringup starts it).
