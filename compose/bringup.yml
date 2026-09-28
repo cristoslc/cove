@@ -264,6 +264,10 @@
           - --sans
           - speedtest.cove.local
           - --sans
+          - mcp.cove
+          - --sans
+          - mcp.cove.local
+          - --sans
           - hc.cove
           - --sans
           - hc.cove.local
@@ -299,6 +303,7 @@
           "ade.cove" "ade.cove.local" \
           "litellm.cove" "litellm.cove.local" \
           "speedtest.cove" "speedtest.cove.local" \
+          "mcp.cove" "mcp.cove.local" \
           "hc.cove" "hc.cove.local" \
           "ca.cove" "ca.cove.local" \
           "*.cove" "*.cove.local" \
@@ -318,7 +323,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
+        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local mcp.cove mcp.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
         state: present
       failed_when: false
 
@@ -359,6 +364,9 @@
         - "{{ cove_data_root }}/litellm"
         - "{{ cove_data_root }}/speedtest"
         - "{{ cove_data_root }}/ade"
+        - "{{ cove_data_root }}/toolhive/config"
+        - "{{ cove_data_root }}/toolhive/state"
+        - "{{ cove_data_root }}/toolhive/profiles"
 
     - name: Create forgejo-runner data directory (restricted)
       ansible.builtin.file:
@@ -426,6 +434,7 @@
         - "{{ cove_data_root }}/dnsmasq/cove.conf"
         - "{{ cove_data_root }}/nginx/config.html"
         - "{{ cove_data_root }}/litellm/config.yaml"
+        - "{{ cove_data_root }}/toolhive/registry.json"
       register: data_mount_targets
     - name: Fail if a Docker-created directory wedges a data-root mount
       ansible.builtin.fail:
@@ -444,6 +453,33 @@
         dest: "{{ cove_data_root }}/litellm/config.yaml"
         mode: "0644"
       when: not (cove_data_root ~ "/litellm/config.yaml") is exists
+
+    # TOOLHIVE -----------------------------------------------------------------
+    # IaC: the curated registry, the default permission profile, and the
+    # ToolHive config (pointing the control plane at the local registry) are
+    # seeded into ${COVE_DATA_ROOT}/toolhive/. First boot only — operator
+    # edits to the deployed copies are preserved (litellm config pattern).
+    # The control-plane container mounts registry.json and /profiles :ro.
+    - name: Seed ToolHive curated registry (first boot only)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/toolhive/registry.json"
+        dest: "{{ cove_data_root }}/toolhive/registry.json"
+        mode: "0644"
+        force: false
+
+    - name: Seed ToolHive default permission profile (first boot only)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/toolhive/cove-default.json"
+        dest: "{{ cove_data_root }}/toolhive/profiles/cove-default.json"
+        mode: "0644"
+        force: false
+
+    - name: Render ToolHive config from template (first boot only)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/toolhive/config.yaml.j2"
+        dest: "{{ cove_data_root }}/toolhive/config/toolhive/config.yaml"
+        mode: "0644"
+      when: not (cove_data_root ~ "/toolhive/config/toolhive/config.yaml") is exists
 
     - name: Render dnsmasq config from template
       ansible.builtin.template:
@@ -508,6 +544,10 @@
           SPEEDTEST_CONTAINER_NAME={{ speedtest_container_name | default('cove-speedtest-tracker') }}
           SPEEDTEST_PORT={{ speedtest_port | default('8982') }}
           SPEEDTEST_APP_KEY={{ speedtest_app_key | default('') }}
+          TOOLHIVE_IMAGE={{ toolhive_image | default('ghcr.io/stacklok/toolhive:v0.51.4@sha256:5e1e253610db23188e3cab766949612f8b0c138627ec55fb754562a9610d4f9a') }}
+          TOOLHIVE_CONTAINER_NAME={{ toolhive_container_name | default('cove-toolhive') }}
+          TOOLHIVE_PORT={{ toolhive_port | default('8090') }}
+          TOOLHIVE_MEM_LIMIT={{ toolhive_mem_limit | default('512M') }}
           FORGEJO_RUNNER_IMAGE={{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}
           FORGEJO_RUNNER_CONTAINER_NAME={{ forgejo_runner_container_name | default('cove-forgejo-runner') }}
           FORGEJO_RUNNER_MEM_LIMIT={{ forgejo_runner_mem_limit | default('512M') }}

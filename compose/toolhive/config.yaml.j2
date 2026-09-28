@@ -1,0 +1,7 @@
+# ToolHive control-plane config (rendered by bringup.yml, first boot only).
+# Points the API server at the IaC-declared curated registry mounted
+# read-only at /registry/registry.json. No remote registry URL is set:
+# remote catalog fetch stays disabled (offline-first, docs/plans/
+# toolhive-mcp-gateway.md). New MCP servers enter the harbor only through
+# the seeded registry.
+local_registry_path: /registry/registry.json
