@@ -4,6 +4,14 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.9.1 (2026-09-28)
+
+### Fixed
+- **`cove up` failed at the nginx reload handler after a template re-render** — `open() "/etc/nginx/conf.d/default.conf" failed (2: No such file or directory)`. On macOS/Colima, file bind-mounts pin the host inode at container creation, and bringup's `template`/`copy` renders are atomic (rename → new inode), so the running cove-nginx mount served a stale inode (link-count 0) and `nginx -s reload` — which re-opens every config file — died with ENOENT, killing `cove up` at the handler flush. The handler now restarts the container (re-resolves the bind by path, ~1s blip) instead of exec-reloading; a bringup structure test pins the contract. Live-stack remediation: `docker restart cove-nginx`.
+
+### Added
+- **Tech-debt note on dual-host release drift** — `docs/tech-debt/dual-host-release-drift.md`: releases must exist on both GitHub and Forgejo (tags/releases/wheels currently diverge between the hosts; the stale goreleaser workflow can only fail); fix shape for automated dual-host publishing. v0.9.1 is the first release cut manually on both hosts as the stopgap.
+
 ## 0.9.0 (2026-09-26)
 
 ### Added
