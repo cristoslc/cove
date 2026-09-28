@@ -28,7 +28,7 @@ MCP servers enter the harbor only through the seeded catalog:
 - **Source of truth:** [compose/toolhive/registry.json](../../compose/toolhive/registry.json) — upstream MCP registry wire format (`data.servers[]`; the legacy `{"servers": {...}}` shape is rejected by ToolHive v0.51.x). Seeded into `${COVE_DATA_ROOT}/toolhive/registry.json` on first boot and mounted **read-only** into the control plane (`/registry/registry.json`). `thv`'s config points at it via `local_registry_path`; **remote catalog fetch is disabled** (offline-first — no remote registry URL is set).
 - **Curated servers (Phase 1):**
 
-| Server | Image (pinned; verified digest) | Posture |
+| Server | Image (pinned by tag in `registry.json`; digest verified at seed time) | Posture |
 |--------|-------------------------------|---------|
 | `io.github.stacklok/filesystem` | `docker.io/mcp/filesystem:1.0.2` (sha256:7030b3d3…) | **Sandboxed — NO mounts by default** |
 | `io.github.stacklok/fetch` | `ghcr.io/stackloklabs/gofetch/server:1.0.5` (sha256:e488829d…) | Network-only (outbound fetching is the feature; no mounts) |
@@ -48,7 +48,7 @@ MCP servers enter the harbor only through the seeded catalog:
 - **ToolHive UI/API (control plane):** no non-loopback route in Phase 1. The container's own port binding is `127.0.0.1:${TOOLHIVE_PORT:-8090}`, and the nginx vhost 403s every management path. MCP tool calls (Phase 2) will go container-to-container on the compose network.
 - **The UI/API route opens in Phase 2**, when data-plane consumers exist — per the plan's guard, behind an auth layer first ([docs/plans/toolhive-mcp-gateway.md](../plans/toolhive-mcp-gateway.md)).
 
-> **Guard:** if a future change exposes the ToolHive UI/API beyond loopback (a `0.0.0.0` host port, a proxied management route, or a second ingress), an auth layer (nginx basic-auth or OIDC) must land first. Guard tests: `test_mcp_block_returns_403_by_default` fails on any proxied path outside `/health`; `test_toolhive_binds_localhost_only` fails on any `0.0.0.0` binding.
+> **Guard:** if a future change exposes the ToolHive UI/API beyond loopback (a `0.0.0.0` host port, a proxied management route, or a second ingress), an auth layer (nginx basic-auth or OIDC) must land first. Guard tests: `test_mcp_block_returns_403_by_default` fails on a proxied catch-all (`location /`); `test_toolhive_binds_localhost_only` fails on any `0.0.0.0` binding. Known limit: the 403 test inspects the catch-all only — an additional proxying location added later would slip past it and needs its own guard.
 
 ## What's Hardened
 
