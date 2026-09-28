@@ -27,6 +27,7 @@ from unittest.mock import patch
 
 import pytest
 import yaml
+from click.testing import CliRunner
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 
@@ -473,4 +474,123 @@ class TestLitellmMcpGuard:
             content = f.read()
         assert "toolhive" in content.lower(), (
             "config.yaml.j2 must cross-reference the ToolHive MCP gateway plan"
+        )
+
+
+class TestCLI:
+    """Validate the cove toolhive CLI module."""
+
+    def test_toolhive_group_imports(self):
+        from cove.toolhive import toolhive
+        assert toolhive is not None
+
+    def test_toolhive_group_registered(self):
+        from cove.cli import app
+        commands = list(app.commands.keys())
+        assert "toolhive" in commands, "toolhive group must be registered in cli.py"
+
+    def test_toolhive_has_up_command(self):
+        from cove.toolhive import toolhive
+        commands = list(toolhive.commands.keys())
+        assert "up" in commands
+
+    def test_toolhive_has_down_command(self):
+        from cove.toolhive import toolhive
+        commands = list(toolhive.commands.keys())
+        assert "down" in commands
+
+    def test_toolhive_has_status_command(self):
+        from cove.toolhive import toolhive
+        commands = list(toolhive.commands.keys())
+        assert "status" in commands
+
+    def test_toolhive_has_logs_command(self):
+        from cove.toolhive import toolhive
+        commands = list(toolhive.commands.keys())
+        assert "logs" in commands
+
+    def test_toolhive_up_uses_profile_flag(self):
+        """cove toolhive up must use --profile mcp so it doesn't start core
+        services."""
+        source = (PROJECT_ROOT / "cli" / "cove" / "toolhive.py").read_text()
+        assert "--profile" in source and "mcp" in source, (
+            "cove toolhive up must use --profile mcp"
+        )
+
+    def test_toolhive_up_profile_before_subcommand(self):
+        """docker compose requires --profile as a GLOBAL flag BEFORE the
+        subcommand (Docker Compose 5.4.0). `cove toolhive up` must pass
+        `--profile mcp` before `up`, not after (same regression root cause
+        as litellm/speedtest)."""
+        from cove.toolhive import toolhive
+
+        captured: list[list[str]] = []
+
+        def fake_subprocess_run(cmd, **kwargs):
+            captured.append(list(cmd))
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch("cove.toolhive.subprocess.run", side_effect=fake_subprocess_run):
+            runner = CliRunner()
+            result = runner.invoke(toolhive, ["up"])
+
+        assert result.exit_code == 0, f"cove toolhive up failed: {result.output}"
+        assert captured, "no subprocess call captured"
+        compose_cmds = [c for c in captured if c and c[0] == "docker" and len(c) > 1 and c[1] == "compose"]
+        assert compose_cmds, f"no docker compose call captured: {captured}"
+        cmd = compose_cmds[0]
+        up_idx = cmd.index("up")
+        assert "--profile" in cmd, f"--profile missing from compose cmd: {cmd}"
+        prof_idx = cmd.index("--profile")
+        assert prof_idx < up_idx, (
+            f"--profile must precede 'up' (global flag), got cmd: {cmd}"
+        )
+
+    def test_toolhive_down_uses_stop_not_down(self):
+        """cove toolhive down must use 'stop' not 'down' to avoid stopping
+        core Cove services."""
+        source = (PROJECT_ROOT / "cli" / "cove" / "toolhive.py").read_text()
+        assert '"stop"' in source or "'stop'" in source, (
+            "cove toolhive down must use 'stop' command, not 'down'"
+        )
+
+    def test_toolhive_status_checks_through_nginx(self):
+        """cove toolhive status must check through nginx (Host: mcp.cove),
+        not directly on the loopback host port."""
+        source = (PROJECT_ROOT / "cli" / "cove" / "toolhive.py").read_text()
+        assert "mcp.cove" in source, (
+            "cove toolhive status must check through nginx with Host: mcp.cove"
+        )
+
+    def test_toolhive_status_checks_8443_not_direct_port(self):
+        """The status health probe must go through nginx (8443), never the
+        direct loopback port — keeps the ingress the single front door."""
+        source = (PROJECT_ROOT / "cli" / "cove" / "toolhive.py").read_text()
+        assert "8443" in source, "status must check through nginx (8443), not a direct port"
+
+
+class TestStatusOptionalServices:
+    """Validate status.py includes ToolHive as an optional service."""
+
+    def test_toolhive_in_optional_services(self):
+        from cove.status import OPTIONAL_SERVICES
+        entries = [tuple(e) for e in OPTIONAL_SERVICES]
+        assert ("cove-toolhive", "ToolHive", "mcp") in entries, (
+            "ToolHive must be in OPTIONAL_SERVICES as (cove-toolhive, ToolHive, mcp)"
+        )
+
+    def test_toolhive_not_in_required_services(self):
+        """ToolHive is optional — it must NOT be in the required SERVICES list."""
+        from cove.status import SERVICES
+        names = [name for _, name in SERVICES]
+        assert "ToolHive" not in names, (
+            "ToolHive must NOT be in required SERVICES — it's optional"
+        )
+
+    def test_up_all_starts_mcp_profile(self):
+        """cove up --all must include the mcp profile in the bringup
+        COMPOSE_PROFILES (toolhive has no credential step — runner pattern)."""
+        source = (PROJECT_ROOT / "cli" / "cove" / "cli.py").read_text()
+        assert '"runner"' in source and '"mcp"' in source, (
+            "cove up --all must start the mcp profile alongside runner"
         )
