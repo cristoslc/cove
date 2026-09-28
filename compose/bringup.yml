@@ -637,7 +637,14 @@
 
   handlers:
     - name: Reload nginx
-      ansible.builtin.command: docker exec {{ nginx_container_name }} nginx -s reload
+      # macOS/Colima: file bind-mounts pin the host inode at container
+      # creation, and the template/copy renders above are atomic (rename →
+      # new inode). The running container's mount then serves a stale inode
+      # (link-count 0, open() → ENOENT) and `nginx -s reload` — which must
+      # re-open every config file — dies with "No such file or directory"
+      # (2026-09-28 incident). A restart re-resolves the bind by path and
+      # boots nginx on the fresh files; correct on Linux too (~1s blip).
+      ansible.builtin.command: docker restart {{ nginx_container_name }}
       environment:
         DOCKER_HOST: "{{ docker_host_detect.stdout }}"
-      changed_when: false
+      changed_when: true
