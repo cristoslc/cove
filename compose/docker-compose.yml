@@ -278,8 +278,10 @@ services:
     restart: unless-stopped
     # API server (`thv serve`): binds 0.0.0.0 inside the container so the
     # compose port mapping (loopback host side) and the nginx upstream
-    # (compose network) both reach it. Non-loopback exposure is only via
-    # nginx at mcp.cove; the host binding is 127.0.0.1.
+    # (compose network) both reach it. The host binding is 127.0.0.1;
+    # mcp.cove (the only non-loopback route) returns 403 for everything
+    # except /health in Phase 1 (no data-plane consumers; UI/API opens
+    # in Phase 2).
     command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
     # Runs as the operator uid:gid so the bind-mounted state dirs (owned by
     # the ansible user) are writable; the image's default user is 65532.

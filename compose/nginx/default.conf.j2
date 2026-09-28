@@ -191,10 +191,15 @@ server {
 # toolhive is an optional profiled service. Using a variable for the
 # upstream host defers DNS resolution to request time, so nginx starts
 # even when the toolhive container is not running.
+# Phase 1 has no data-plane consumers, so this vhost returns 403 for
+# everything except /health (which `cove toolhive status` health-checks
+# through nginx). /health is restricted to private-range clients with the
+# same allow/deny ACL as ade.cove. The UI/API route opens in Phase 2, when
+# consumers exist (docs/plans/toolhive-mcp-gateway.md).
 # The upstream targets the CONTAINER port (8080) on the compose network —
 # nginx is inside the network; ${TOOLHIVE_PORT} is the loopback-only host
 # port. HTTP/1.1 + Upgrade/Connection + long timeouts and buffering off
-# for streamable HTTP/SSE.
+# for streamable HTTP/SSE (kept for the Phase 2 route reopening).
 server {
     listen 443 ssl;
     server_name mcp.cove mcp.cove.local;
@@ -205,8 +210,19 @@ server {
     resolver 127.0.0.11 valid=10s;
     set $toolhive_upstream http://toolhive:8080;
 
-    location / {
-        proxy_pass $toolhive_upstream$request_uri;
+    location = /health {
+        # Phase 1: the management API is not exposed — only the health probe
+        # transits this vhost, and only from private ranges (ADE-style ACL:
+        # LAN RFC1918, tailnet CGNAT 100.64/10, container ranges, loopback).
+        allow 127.0.0.1;
+        allow ::1;
+        allow 10.0.0.0/8;
+        allow 172.16.0.0/12;
+        allow 192.168.0.0/16;
+        allow 100.64.0.0/10;
+        deny all;
+
+        proxy_pass $toolhive_upstream;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection $connection_upgrade;
@@ -217,6 +233,13 @@ server {
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_buffering off;
+    }
+
+    location / {
+        # Everything else is the unauthenticated ToolHive management API —
+        # Phase 1 exposes none of it (plan auth posture; UI/API opens in
+        # Phase 2 behind an auth layer).
+        return 403;
     }
 }
 

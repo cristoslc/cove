@@ -21,6 +21,7 @@ Run e2e:   pytest cli/tests/test_toolhive.py -m e2e
 """
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -367,14 +368,46 @@ class TestNginxConfig:
         )
         assert "resolver 127.0.0.11" in rendered
 
-    def test_mcp_block_proxies_all_paths(self):
-        """The ToolHive API is the MCP gateway surface — all paths proxy
-        through nginx (isolation via the loopback port binding, like litellm)."""
+    def test_mcp_block_returns_403_by_default(self):
+        """Phase 1 has no data-plane consumers — the mcp.cove vhost must
+        return 403 for everything except /health (operator ruling on the PR
+        review blocker). Everything under location / is the unauthenticated
+        ToolHive management API; the UI/API route opens in Phase 2."""
         rendered = _render_nginx()
         block = self._extract_toolhive_block(rendered)
-        assert "proxy_pass $toolhive_upstream" in block, (
-            "mcp.cove must proxy all paths to the ToolHive API"
+        catchall = re.search(r"location / \{(.*?)\}", block, re.DOTALL)
+        assert catchall, "mcp.cove must have a catch-all location /"
+        assert "return 403;" in catchall.group(1), (
+            "mcp.cove location / must return 403 (Phase 1: no data-plane consumers)"
         )
+        assert "proxy_pass" not in catchall.group(1), (
+            "mcp.cove must not proxy the ToolHive management API through location /"
+        )
+
+    def test_mcp_health_proxied_with_private_range_acl(self):
+        """Only /health transits mcp.cove (`cove toolhive status` health-checks
+        through nginx), and only for private-range clients — the ADE-style
+        allow/deny ACL copied from the ade.cove block."""
+        rendered = _render_nginx()
+        block = self._extract_toolhive_block(rendered)
+        health = re.search(r"location = /health \{(.*?)\n    \}", block, re.DOTALL)
+        assert health, "mcp.cove must have an exact-match location = /health"
+        body = health.group(1)
+        assert "proxy_pass $toolhive_upstream" in body, (
+            "location = /health must proxy to the deferred-DNS toolhive upstream"
+        )
+        for acl in (
+            "allow 127.0.0.1;",
+            "allow ::1;",
+            "allow 10.0.0.0/8;",
+            "allow 172.16.0.0/12;",
+            "allow 192.168.0.0/16;",
+            "allow 100.64.0.0/10;",
+            "deny all;",
+        ):
+            assert acl in body, (
+                f"location = /health must carry the private-range ACL ({acl})"
+            )
 
     def test_mcp_block_ws_sse_headers(self):
         """Streamable HTTP/SSE need HTTP/1.1, Upgrade/Connection headers, and
