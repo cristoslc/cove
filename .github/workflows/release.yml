@@ -1,21 +1,60 @@
+# GitHub-side release automation: on a v* tag push, build the wheel and
+# create (or refresh) the GitHub release with notes from the matching
+# CHANGELOG section.
+#
+# NOTE: this is the GitHub half only. Releases MUST also land on Forgejo
+# (git.cove) with the wheel attached — hosted runners cannot reach the
+# LAN-only Forgejo host, so the Forgejo half is done by scripts/release.sh
+# (the canonical dual-host release command). See AGENTS.md (Promote) and
+# docs/tech-debt/dual-host-release-drift.md.
+#
+# History: this file was a goreleaser/Go scaffold that never matched the
+# Python project (no .goreleaser.yaml, go-version pin, no releases since
+# v0.5.0). Replaced 2026-09-28 with the uv wheel build below.
+
 name: release
 
 on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: write
+
 jobs:
-  goreleaser:
+  wheel-release:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+
+      - uses: actions/setup-python@v5
         with:
-          go-version: "1.22"
-      - uses: goreleaser/goreleaser-action@v5
-        with:
-          args: release --clean
+          python-version: "3.13"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Sync compose resources into the bundle
+        run: python3 cli/scripts/sync_compose_resources.py
+
+      - name: Build wheel
+        working-directory: cli
+        run: uv build --wheel --out-dir dist
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          awk -v ver="$VER" '$0 ~ "^## "ver {f=1;next} f&&/^## /{f=0} f' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "No '## ${VER}' section in CHANGELOG.md" >&2; exit 1; }
+
+      - name: Create or refresh GitHub release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          WHEEL=$(ls cli/dist/cove_cli-*-py3-none-any.whl)
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --clobber "$WHEEL"
+          else
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "cove-cli ${GITHUB_REF_NAME#v}" --notes-file notes.md "$WHEEL"
+          fi
