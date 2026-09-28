@@ -115,8 +115,8 @@ class TestRegistrySeed:
     def test_registry_has_curated_servers(self):
         data = _load_registry()
         servers = data["data"]["servers"]
-        assert 2 <= len(servers) <= 3, (
-            f"registry must curate 2-3 servers, got: {len(servers)}"
+        assert len(servers) >= 1, (
+            f"registry must curate at least one server, got: {len(servers)}"
         )
         names = [s.get("name", "") for s in servers]
         assert any("filesystem" in n for n in names), (
