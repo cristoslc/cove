@@ -18,6 +18,7 @@ from cove.litellm import litellm
 from cove.speedtest import speedtest
 from cove.runner import runner
 from cove.tunnel import tunnel
+from cove.toolhive import toolhive
 from cove.project import (
     _inject, _strip, _container_env, _render_context, _render_guidance,
     _render_agents_block, _write_detail_cove, _write_fj_detail, _write_gh_detail,
@@ -55,7 +56,8 @@ def _start_optional_services() -> None:
     by the CLI first (LiteLLM proxy + Headroom, Speedtest Tracker: 1Password/
     Vault seeds injected into the compose .env before `docker compose up`).
     Runner has no credential step: the bringup playbook starts it via its
-    COMPOSE_PROFILES env (ADE is core since 0.8.0).
+    COMPOSE_PROFILES env (ADE is core since 0.8.0; ToolHive likewise has no
+    credential step in phase 1 and joins the bringup profiles).
 
     A failure on one service is reported but does not abort `cove up` —
     optional services stay optional (same contract as `cove status`)."""
@@ -200,9 +202,11 @@ def up(no_provision, no_upgrade, all_, log):
     # provisioning chain (Vault must be up for the vault-get/vault-put calls).
     # Runner has no such step: the bringup starts it via its COMPOSE_PROFILES
     # env (ADE is core since 0.8.0 — the bringup starts it unconditionally).
+    # ToolHive is the same: no credential step in phase 1 (per-server secrets
+    # are Phase 2), so its profile joins the bringup like the runner's.
     # Running optionals are still reconciled by the bringup (their .env
     # credentials already exist).
-    bringup_profiles = ["runner"] if all_ else []
+    bringup_profiles = ["runner", "mcp"] if all_ else []
     for profile in _detect_running_optional_profiles():
         if profile not in bringup_profiles:
             bringup_profiles.append(profile)
@@ -299,6 +303,7 @@ app.add_command(litellm)
 app.add_command(speedtest)
 app.add_command(runner)
 app.add_command(tunnel)
+app.add_command(toolhive)
 
 
 @app.command()
