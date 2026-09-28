@@ -239,3 +239,34 @@ class TestOverrideDrift:
             v["target"] for v in ade_config["services"]["nginx"].get("volumes", [])
         }
         assert staging_targets == base_nginx_volumes
+
+
+class TestTeardownProfileCoverage:
+    """teardown.sh must enable every profile deploy-isolated.sh can start.
+
+    A profile-gated service whose profile is not enabled in the teardown's
+    compose down is not part of the project for that down (and
+    --remove-orphans does not catch it), leaving an orphan container behind
+    (observed: cove-staging-toolhive survived a --profile ade teardown).
+    """
+
+    def test_teardown_enables_every_deploy_profile(self):
+        deploy_profiles = set(
+            re.findall(
+                r"--profile\s+([a-z0-9_-]+)",
+                (PROJECT_ROOT / "scripts" / "staging" / "deploy-isolated.sh").read_text(),
+            )
+        )
+        assert deploy_profiles, "deploy-isolated.sh declares no --profile flags"
+        teardown_text = (
+            PROJECT_ROOT / "scripts" / "staging" / "teardown.sh"
+        ).read_text()
+        teardown_profiles = set(
+            re.findall(r"--profile\s+([a-z0-9_-]+)", teardown_text)
+        )
+        missing = deploy_profiles - teardown_profiles
+        assert not missing, (
+            f"teardown.sh does not enable profile(s) {sorted(missing)} that "
+            f"deploy-isolated.sh can start; profile-gated containers would "
+            f"survive teardown as orphans"
+        )
