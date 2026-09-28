@@ -50,6 +50,29 @@ def _detect_running_optional_profiles() -> list[str]:
     return profiles
 
 
+def _start_optional_services() -> None:
+    """Start the optional services whose containers need credentials prepared
+    by the CLI first (LiteLLM proxy + Headroom, Speedtest Tracker: 1Password/
+    Vault seeds injected into the compose .env before `docker compose up`).
+    Runner has no credential step: the bringup playbook starts it via its
+    COMPOSE_PROFILES env (ADE is core since 0.8.0).
+
+    A failure on one service is reported but does not abort `cove up` —
+    optional services stay optional (same contract as `cove status`)."""
+    for group, label in ((litellm, "litellm"), (speedtest, "speedtest")):
+        cmd = group.commands.get("up")
+        if cmd is None or cmd.callback is None:
+            continue
+        try:
+            cmd.callback()
+        except click.ClickException as exc:
+            click.echo(f"{label} not started: {exc.format_message()}", err=True)
+            click.echo(f"Retry with: `cove {label} up`", err=True)
+        except subprocess.CalledProcessError:
+            click.echo(f"{label} not started (docker compose failed).", err=True)
+            click.echo(f"Retry with: `cove {label} up`", err=True)
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="cove")
 def app():
@@ -102,8 +125,9 @@ def init(force, purge):
 @app.command()
 @click.option("--no-provision", is_flag=True, help="Skip Forgejo provisioning")
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
+@click.option("--all", "all_", is_flag=True, help="Also start all optional services (LiteLLM + Headroom, Runner, Speedtest). The tunnel is excluded: shares are created interactively with `cove tunnel up`.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
-def up(no_provision, no_upgrade, log):
+def up(no_provision, no_upgrade, all_, log):
     """Bring up cove containers and provision Forgejo.
 
     Compose dir is resolved in order: COVE_COMPOSE_DIR env, ./compose,
@@ -114,6 +138,8 @@ def up(no_provision, no_upgrade, log):
         cove up
 
         cove up --no-provision
+
+        cove up --all
 
         cove up --log
     """
@@ -167,9 +193,21 @@ def up(no_provision, no_upgrade, log):
     become_pass = getpass.getpass("BECOME password: ")
     ansible_env["ANSIBLE_BECOME_PASSWORD"] = become_pass
 
-    running_profiles = _detect_running_optional_profiles()
-    if running_profiles:
-        base_cmd.extend(["-e", f"cove_profiles={','.join(running_profiles)}"])
+    # `cove up --all` starts every optional service. LiteLLM and Speedtest
+    # need credentials prepared by the CLI (1Password/Vault seeds injected
+    # into the compose .env) BEFORE their containers start, so their profiles
+    # stay out of the bringup compose up and their `up` flows run after the
+    # provisioning chain (Vault must be up for the vault-get/vault-put calls).
+    # Runner has no such step: the bringup starts it via its COMPOSE_PROFILES
+    # env (ADE is core since 0.8.0 — the bringup starts it unconditionally).
+    # Running optionals are still reconciled by the bringup (their .env
+    # credentials already exist).
+    bringup_profiles = ["runner"] if all_ else []
+    for profile in _detect_running_optional_profiles():
+        if profile not in bringup_profiles:
+            bringup_profiles.append(profile)
+    if bringup_profiles:
+        base_cmd.extend(["-e", f"cove_profiles={','.join(bringup_profiles)}"])
 
     if not no_provision:
         click.echo("Pulling credentials from 1Password...")
@@ -181,6 +219,12 @@ def up(no_provision, no_upgrade, log):
         _run_ansible(compose_dir / "bootstrap_vault.yml", "Bootstrapping Vault...")
         _run_ansible(compose_dir / "provision_vault_user.yml", "Provisioning Vault user...")
         _run_ansible(provision, "Provisioning Forgejo...")
+
+    if all_:
+        _start_optional_services()
+        click.echo(
+            "Tunnel not included: shares are created interactively with `cove tunnel up`."
+        )
 
     from cove.status import check_all, print_status
     results = check_all()

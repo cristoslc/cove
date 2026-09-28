@@ -8,6 +8,8 @@ Speedtest Tracker monitors the operator's **internet connection** — uptime, la
 # No manual APP_KEY setup needed — `cove speedtest up` auto-generates it
 # and stores it in 1Password + Vault + the compose .env on first run.
 cove speedtest up
+# or start every optional service at once (credentials handled first):
+# cove up --all
 
 # Check it's running
 cove speedtest status

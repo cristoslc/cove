@@ -36,6 +36,7 @@ Releases are listed at <https://github.com/cristoslc/cove/releases>. The wheel f
 ```bash
 cove up --no-sudo        # Bring up containers, bootstrap Vault, provision Forgejo
 cove up --no-provision   # Bring up containers only (skip Forgejo setup)
+cove up --all            # Same as `cove up` + all optional services (tunnel excluded)
 cove down                # Stop containers, keep data
 cove down --volumes      # Stop containers and remove volumes
 cove uninstall --yes     # Destroy everything: containers, data, keychain, cache
@@ -48,6 +49,7 @@ cove uninstall --yes     # Destroy everything: containers, data, keychain, cache
 | `cove up` | Full pipeline: batch-pull → bringup → bootstrap Vault → provision Forgejo |
 | `cove up --no-sudo` | Same as above, skips `/etc/hosts` and pf NAT elevation |
 | `cove up --no-provision` | Bring up containers only |
+| `cove up --all` | Full pipeline + all optional services: Runner starts with the pod (ADE is core), LiteLLM and Speedtest flows run right after the provisioning chain (credentials first). Tunnel excluded — `cove tunnel up` creates shares interactively |
 | `cove down` | Stop containers (data preserved) |
 | `cove down --volumes` | Stop containers and remove volumes |
 | `cove uninstall --yes` | Destroy all cove containers, data, keychain entries, and cache |
