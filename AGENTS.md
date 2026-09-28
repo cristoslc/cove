@@ -45,6 +45,18 @@ The `cove` CLI is installed as a **uv tool** (`~/.local/bin/cove`) from a wheel 
   uv build --wheel --out-dir cli/dist             # from cli/
   uv tool install --force --from cli/dist/cove_cli-<ver>-py3-none-any.whl
   ```
+- **Publish — BOTH hosts, always.** A release is not cut until it exists on
+  **GitHub** (`github` remote, the public install path) AND **Forgejo**
+  (`origin`, git.cove), each with the wheel attached and notes from its
+  CHANGELOG section. Canonical command after tagging:
+  ```
+  scripts/release.sh <ver>      # pushes tag to origin+github, publishes both hosts, idempotent
+  ```
+  The Forgejo host is LAN-only, so GitHub-hosted runners cannot publish there —
+  `.github/workflows/release.yml` covers the GitHub side on tag push, while the
+  Forgejo half always goes through `scripts/release.sh` from the operator's
+  machine. See docs/tech-debt/dual-host-release-drift.md (the 2026-09-28 drift
+  this rule closes: GitHub releases had stopped at v0.5.0).
 - **Rollback** on breakage (restore the last tagged release, then re-promote):
   ```
   git checkout v<last-tag> -- cli/ compose/   # restore canonical source for the tag
