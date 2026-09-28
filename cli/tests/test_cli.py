@@ -278,7 +278,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
             bringup_call = mock_run.call_args_list[0][0][0]
             bringup_args = [str(a) for a in bringup_call]
@@ -311,7 +311,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
             bringup_call = mock_run.call_args_list[0][0][0]
             args_list = [str(a) for a in bringup_call]
@@ -340,7 +340,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=False, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=False, no_upgrade=True, all_=False, log=False)
 
             assert mock_getpass.call_count == 1, (
                 f"BECOME password must be prompted once, got {mock_getpass.call_count}"
@@ -362,7 +362,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
             assert mock_run.call_count == 1
 
     def test_full_up_calls_all_in_correct_order(self, tmp_path, monkeypatch):
@@ -385,7 +385,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=False, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=False, no_upgrade=True, all_=False, log=False)
             assert mock_run.call_count == 5
 
             all_args = [mock_run.call_args_list[i][0][0] for i in range(5)]
@@ -434,7 +434,7 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
             mock_detect.assert_called_once()
             bringup_call = mock_run.call_args_list[0][0][0]
@@ -464,13 +464,117 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
             bringup_call = mock_run.call_args_list[0][0][0]
             bringup_args = [str(a) for a in bringup_call]
             assert not any("speedtest" in a for a in bringup_args), (
                 f"no profiles when nothing running, got: {bringup_args}"
             )
+
+    def test_up_all_passes_runner_to_bringup(self, tmp_path, monkeypatch):
+        """cove up --all must include the runner profile in the bringup
+        COMPOSE_PROFILES (no credential dance for the runner). Litellm and
+        speedtest must NOT be in it: their containers need CLI-prepared
+        credentials first, so they start through their own flows right after
+        the provisioning chain. ADE is core since 0.8.0 — no profile."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            _invoke_callback(
+                "up", no_provision=True, no_upgrade=True, all_=True, log=False
+            )
+
+            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_args = [str(a) for a in bringup_call]
+            assert any("cove_profiles=runner" in a for a in bringup_args), (
+                f"bringup must receive cove_profiles=runner, got: {bringup_args}"
+            )
+            assert not any("ade" in a for a in bringup_args), (
+                f"ADE is core (no profile) — must not appear in profiles, got: {bringup_args}"
+            )
+
+    def test_up_all_starts_litellm_and_speedtest_after_bringup(
+        self, tmp_path, monkeypatch
+    ):
+        """cove up --all must run the litellm and speedtest up flows after the
+        bringup (they prepare credentials, then start their containers)."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        calls = []
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch.object(
+            cove.litellm.litellm.commands["up"],
+            "callback",
+            side_effect=lambda: calls.append("litellm"),
+        ), patch.object(
+            cove.speedtest.speedtest.commands["up"],
+            "callback",
+            side_effect=lambda: calls.append("speedtest"),
+        ):
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            _invoke_callback(
+                "up", no_provision=True, no_upgrade=True, all_=True, log=False
+            )
+
+            assert calls == ["litellm", "speedtest"], (
+                f"litellm and speedtest up flows must run after bringup, got: {calls}"
+            )
+
+    def test_up_all_tolerates_optional_service_failure(self, tmp_path, monkeypatch):
+        """A credential failure on one optional service must not abort
+        `cove up --all` — optional services stay optional (same contract as
+        `cove status`). The remaining service flow and the status check must
+        still run."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch.object(
+            cove.litellm.litellm.commands["up"],
+            "callback",
+            side_effect=click.ClickException("Cove Admin item missing"),
+        ), patch.object(
+            cove.speedtest.speedtest.commands["up"], "callback"
+        ) as mock_speedtest:
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            _invoke_callback(
+                "up", no_provision=True, no_upgrade=True, all_=True, log=False
+            )
+
+            mock_speedtest.assert_called_once()
+            mock_check.assert_called_once()
 
 
 class TestCoveStatusCommand:
@@ -1024,7 +1128,7 @@ class TestNoUpgradeFlag:
         ), patch("cove.cli.getpass.getpass", return_value="secret"):
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
-            _invoke_callback("up", 
+            _invoke_callback("up", all_=False,
                 no_provision=True, no_upgrade=True, log=False
             )
             mock_reextract.assert_not_called()

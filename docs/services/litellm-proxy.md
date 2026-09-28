@@ -11,6 +11,8 @@ export OPENAI_API_KEY="sk-proj-..."
 
 # Start the proxy
 cove litellm up
+# or start every optional service at once (credentials handled first):
+# cove up --all
 
 # Check it's running
 cove litellm status
