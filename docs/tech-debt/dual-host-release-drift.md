@@ -1,7 +1,7 @@
 # Releases must exist on both GitHub and Forgejo — today they drift
 
 **Found:** 2026-09-28, while cutting v0.9.0 (`cove up --all`)
-**Status:** Open — v0.9.1 released manually on both hosts as a stopgap; automation still missing.
+**Status:** Historical gap CLOSED 2026-09-28 — v0.6.0–v0.9.0 backfilled on both hosts (wheels rebuilt from tags), `scripts/release.sh` is the canonical dual-host publisher, and `.github/workflows/release.yml` (replaced goreleaser scaffold) automates the GitHub side on tag push. Residual: Forgejo-side CI not wired — the runner could publish it, but it needs a Forgejo secret + workflow (`​.forgejo/workflows/`), so the Forgejo half stays with the local script.
 
 ## Required state
 
@@ -42,21 +42,30 @@ two histories tell different stories about what shipped.
 3. **No single command owns "publish".** The knowledge lives in chronicles
    (`docs/chronicles/*/2026-09-25T152500-v0.7.0-promote.md`) instead of a script.
 
-## Fix shape
+## Fix shape — SHIPPED 2026-09-28
 
-- Replace `release.yml` (or add `cli/scripts/release.py`): on a tag push —
-  build the wheel, create the GitHub release **and** the Forgejo release with
-  the wheel attached, notes extracted from the tag's CHANGELOG section
-  (`gh release create --notes` / `fj release create --asset`).
-- Push tags to both remotes in one step (origin + github).
-- Backfill the drift: at minimum release objects + wheels for v0.6.0+ on both
-  hosts (rebuild wheels from tags; dist/ already holds a few).
-- Record the dual-host requirement in AGENTS.md's promote section so the next
-  manual release cannot forget a host.
+- `scripts/release.sh <ver>` (repo root `scripts/`) — canonical dual-host
+  publish: pushes the tag to `origin` + `github`, extracts the version's
+  CHANGELOG section as notes, creates/uploads the GitHub release, creates the
+  Forgejo release, wheel attached everywhere. Idempotent (existing releases
+  are detected and skipped/filled).
+- `.github/workflows/release.yml` — rewritten from the dead goreleaser
+  scaffold to a uv wheel build + GitHub release on `v*` tag push (GitHub side
+  only; it cannot reach the LAN-only Forgejo).
+- AGENTS.md Promote section now states the both-hosts requirement and points
+  at `scripts/release.sh`.
+- Backfill: releases + wheels for v0.6.0, v0.7.0, v0.7.1, v0.8.0, v0.9.0 on
+  both hosts (wheels rebuilt from their tags in throwaway worktrees; verified
+  era-correct bundled compose). GitHub tags v0.7.0–v0.8.0 were pushed
+  (they had never left git.cove); v0.9.1 re-marked `--latest` after the
+  backfill briefly displaced it.
+- The pre-backfill wheels in `cli/dist/` for ≤ 0.5.1 were left as historical
+  artifacts; releases ≤ 0.5.x were not touched.
 
-## Stopgap applied for v0.9.1
+## Backfill provenance
 
-Manual dual-host release: tag pushed to both remotes, `gh release create` +
-`fj release create` with `cli/dist/cove_cli-<ver>-py3-none-any.whl` attached
-and the 0.9.1 CHANGELOG section as notes. Later releases should reuse — then
-retire — this manual path.
+Backfilled wheels are rebuilt from the tagged source (`git worktree add
+--detach` → sync_compose_resources → `uv build --wheel`), not retrieved from
+any prior build — dist/ held no wheels for 0.6.0+ (only a 0.6.0 sdist). Each
+wheel's bundled compose was spot-checked against its era (0.6.0: no ADE; 0.9.0:
+ADE core, no profile).
