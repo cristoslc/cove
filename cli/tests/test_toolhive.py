@@ -1,23 +1,24 @@
-"""Tests for ToolHive MCP gateway hardening: seed files, compose config,
+"""Unit guard tests for the ToolHive MCP gateway: seed files, compose config,
 nginx routing, CLI module, and the LiteLLM disable_mcp cross-guard.
 
-Unit/integration tests (always runnable):
+All tests here are unit guards (always runnable, no live stack):
   - Validate compose/toolhive/registry.json parses and has no unpinned image refs
   - Validate the default permission profile is sandboxed (no mounts, no outbound)
   - Validate compose service definition (profile, ro socket, loopback port, limits)
-  - Validate nginx template renders mcp.cove server block with WS/SSE headers
+  - Validate the nginx template renders the mcp.cove block with the Phase-1
+    403-except-/health posture (private-range ACL on /health, deferred-DNS
+    upstream, WS/SSE headers)
   - Validate bringup.yml seeds the registry and sets .env defaults
-  - Validate CLI module imports and has correct subcommands
+  - Validate the CLI module imports and has correct subcommands (subprocess
+    mocked — no live compose calls)
   - Cross-guard: LiteLLM config still disables MCP (CVE-2026-42271)
 
-E2E tests (require live stack, run with `pytest -m e2e`):
-  - compose up --profile mcp starts the control plane
-  - /health returns 204 through nginx
-  - docker.sock mount is read-only
+No e2e coverage exists for toolhive in this file: the live-stack paths
+(compose up with --profile mcp, /health through nginx on a running stack,
+ro docker.sock under the real runtime) are deferred to staging E2E per
+docs/plans/toolhive-mcp-gateway.md step 8.
 
-Run all:   pytest cli/tests/test_toolhive.py
-Run unit:  pytest cli/tests/test_toolhive.py -m "not e2e"
-Run e2e:   pytest cli/tests/test_toolhive.py -m e2e
+Run:  pytest cli/tests/test_toolhive.py
 """
 
 import json
