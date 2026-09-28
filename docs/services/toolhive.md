@@ -2,7 +2,7 @@
 
 ToolHive is Cove's **MCP gateway** — an optional, profiled service (`profile: mcp`, lifecycle via `cove toolhive up|down|status|logs`) that runs MCP servers as sibling containers on the Cove network, each constrained by a permission profile and explicit mounts. It is the only MCP surface in Cove: LiteLLM's MCP endpoints stay permanently disabled (`disable_mcp: true`, CVE-2026-42271). It mirrors the litellm/speedtest/runner optional-service pattern.
 
-- **Gateway address:** `https://mcp.cove/` (through Cove's nginx ingress; the ToolHive API/UI itself binds `127.0.0.1:${TOOLHIVE_PORT:-8090}` only — never published beyond loopback).
+- **Gateway address:** `https://mcp.cove/` (through Cove's nginx ingress; in Phase 1 the vhost serves 403 for everything except `/health` — see Auth Posture). The ToolHive API/UI itself binds `127.0.0.1:${TOOLHIVE_PORT:-8090}` only — never published beyond loopback.
 - **Scope:** Phase 1 of [docs/plans/toolhive-mcp-gateway.md](../plans/toolhive-mcp-gateway.md) — control plane, curated registry, ingress, CLI lifecycle. The `cove mcp` data-plane wrapper (Phase 2) and per-project scopes (Phase 3) are not built yet.
 
 ## Quick Start
@@ -41,18 +41,20 @@ MCP servers enter the harbor only through the seeded catalog:
 
 ## Auth Posture (security)
 
-`mcp.cove` is LAN/Tailscale-reachable (nginx publishes `0.0.0.0:8443`), so the posture is stated, not implicit. It follows the ADE precedent (ADR-018):
+`mcp.cove` is LAN/Tailscale-reachable (nginx publishes `0.0.0.0:8443`), so the posture is stated, not implicit. As built in Phase 1 (operator ruling on the PR review blocker):
 
-- **MCP tool-call/API surface:** unauthenticated **by design** — the Cove network is the trust boundary (same posture as `ade.cove`).
-- **ToolHive UI/API (control plane):** reachable through `mcp.cove` but the container's own port binding is `127.0.0.1:${TOOLHIVE_PORT:-8090}` — the host never exposes it beyond loopback; the only non-loopback route is the nginx ingress above. The control plane manages sibling containers, so exposure is bounded by the trust boundary plus ToolHive's own permission profiles.
+- **Everything on `mcp.cove` returns 403 except `/health`.** Phase 1 has no data-plane consumers, so the vhost exposes none of the ToolHive management API. `cove toolhive status` health-checks through nginx on `/health`; that is the only path that transits the vhost.
+- **`/health` is restricted to private-range clients** with the ADE-style allow/deny ACL copied from the `ade.cove` block: loopback, RFC1918 LAN ranges, tailnet CGNAT 100.64/10, container ranges; `deny all` for the public internet.
+- **ToolHive UI/API (control plane):** no non-loopback route in Phase 1. The container's own port binding is `127.0.0.1:${TOOLHIVE_PORT:-8090}`, and the nginx vhost 403s every management path. MCP tool calls (Phase 2) will go container-to-container on the compose network.
+- **The UI/API route opens in Phase 2**, when data-plane consumers exist — per the plan's guard, behind an auth layer first ([docs/plans/toolhive-mcp-gateway.md](../plans/toolhive-mcp-gateway.md)).
 
-> **Guard:** if a future change exposes the ToolHive UI/API beyond loopback (a `0.0.0.0` host port or a second ingress), an auth layer (nginx basic-auth or OIDC) must land first. The guard test `test_toolhive_binds_localhost_only` fails on any `0.0.0.0` binding.
+> **Guard:** if a future change exposes the ToolHive UI/API beyond loopback (a `0.0.0.0` host port, a proxied management route, or a second ingress), an auth layer (nginx basic-auth or OIDC) must land first. Guard tests: `test_mcp_block_returns_403_by_default` fails on any proxied path outside `/health`; `test_toolhive_binds_localhost_only` fails on any `0.0.0.0` binding.
 
 ## What's Hardened
 
 | Layer | Mitigation |
 |-------|-----------|
-| **Network** | API/UI binds `127.0.0.1:${TOOLHIVE_PORT:-8090}:8080` only. No `0.0.0.0` host port; reachable beyond loopback only through nginx at `mcp.cove`. |
+| **Network** | API/UI binds `127.0.0.1:${TOOLHIVE_PORT:-8090}:8080` only. No `0.0.0.0` host port; the only non-loopback route (nginx at `mcp.cove`) returns 403 for everything except `/health`, which is private-range-ACL'd. |
 | **Socket** | `/var/run/docker.sock` mounted **read-only**, control-plane only; container gets the docker gid via `group_add` (Forgejo-runner pattern). Per-MCP-server blast radius is constrained by ToolHive permission profiles and explicit per-server mounts, not by the socket. |
 | **Registry** | Curated, IaC-declared, mounted `:ro`; no `:latest` anywhere (every image ref carries a version tag); remote catalog fetch off. |
 | **Profiles** | Default profile `cove-sandboxed`: no mounts, no outbound, not privileged. Network-only servers must declare their outbound scope per-server in the registry. |
