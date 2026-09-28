@@ -352,8 +352,8 @@ class TestNginxConfig:
         assert "mcp.cove.local" in rendered
 
     def test_mcp_block_after_speedtest(self):
-        """The mcp.cove block must come after the speedtest block (plan:
-        placed after the speedtest block)."""
+        """The mcp.cove block must come after the speedtest block (stable
+        render ordering for the optional-service blocks)."""
         rendered = _render_nginx()
         assert rendered.index("server_name speedtest.cove") < rendered.index("server_name mcp.cove"), (
             "mcp.cove block must be placed after the speedtest block"
