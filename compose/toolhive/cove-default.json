@@ -1,0 +1,13 @@
+{
+  "name": "cove-sandboxed",
+  "read": [],
+  "write": [],
+  "network": {
+    "outbound": {
+      "insecure_allow_all": false,
+      "allow_host": [],
+      "allow_port": []
+    }
+  },
+  "privileged": false
+}
