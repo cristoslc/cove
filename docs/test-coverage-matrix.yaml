@@ -482,7 +482,7 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
-  - path: "compose/toolhive/registry.json seed (upstream wire format, 2-3 curated servers, no :latest refs, filesystem no-mounts, fetch network-only)"
+  - path: "compose/toolhive/registry.json seed (upstream wire format, at least 1 curated server, no :latest refs, filesystem no-mounts, fetch network-only)"
     blast_radius: high
     coverage:
       happy: executable
