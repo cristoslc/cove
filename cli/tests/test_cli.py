@@ -83,6 +83,43 @@ class TestDeploymentManifests:
             "docker_compose_v2 wait should be false to avoid sealed-Vault failures"
         )
 
+    def test_bringup_nginx_handler_restarts_not_exec_reload(self):
+        """The 'Reload nginx' handler must restart the container, not
+        `docker exec … nginx -s reload`.
+
+        Regression (2026-09-28): bringup re-renders nginx/default.conf via
+        the ansible template module (atomic rename → new inode). On
+        macOS/Colima, file bind-mounts pin the inode at container creation,
+        so the running container's mount goes stale (link-count 0,
+        open() → ENOENT) and exec'd `nginx -s reload` — which re-opens
+        every config file — fails with "No such file or directory",
+        killing `cove up` at the handler flush. A container restart
+        re-resolves the bind by path and boots nginx on the fresh files.
+        """
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+
+        with open(bp) as f:
+            data = yaml.safe_load(f)
+
+        handlers = data[0]["handlers"] if isinstance(data, list) else data.get("handlers", [])
+        reload_handlers = [
+            h for h in handlers
+            if isinstance(h, dict) and h.get("name") == "Reload nginx"
+        ]
+        assert reload_handlers, "Missing 'Reload nginx' handler"
+        handler = reload_handlers[0]
+
+        cmd = handler.get("ansible.builtin.command", "")
+        assert "nginx -s reload" not in cmd, (
+            "'Reload nginx' must not exec `nginx -s reload`: file bind-mounts "
+            "pin the inode on macOS/Colima and go stale after atomic template "
+            "renders (open() → ENOENT). Restart the container instead."
+        )
+        assert "restart" in cmd and "nginx_container_name" in cmd, (
+            f"'Reload nginx' must restart the nginx container, got: {cmd!r}"
+        )
+
     def test_bringup_bootstraps_compose_plugin(self):
         """The docker CLI alone lacks `docker compose`; bringup must bootstrap it.
 
