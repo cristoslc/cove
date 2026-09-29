@@ -447,3 +447,101 @@ workflow_paths:
       sad: manual
       edge: manual
       corner: skip
+  - path: "cove toolhive up"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "cove toolhive down"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove toolhive status"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "GET /health on mcp.cove (through nginx)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: manual
+      corner: skip
+  - path: "toolhive compose definition (profile mcp, digest-pinned image, ro docker.sock, loopback-only binding, memory limit, thv-based healthcheck)"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "compose/toolhive/registry.json seed (upstream wire format, at least 1 curated server, no :latest refs, filesystem no-mounts, fetch network-only)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "ToolHive default permission profile sandboxed (cove-default.json: no mounts, no outbound, not privileged)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "nginx config rendering for mcp.cove (deferred-DNS variable upstream, WS/SSE headers)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "TLS cert SANs include mcp.cove"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "bringup.yml hosts entry includes mcp.cove"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "bringup.yml seeds ToolHive registry + permission profile into data root (first boot only, mount-target directory-wedge guard)"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "bringup .env includes TOOLHIVE_IMAGE / TOOLHIVE_PORT / TOOLHIVE_MEM_LIMIT"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove up --all starts the mcp profile (no credential step, runner pattern)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "LiteLLM disable_mcp stays true with ToolHive cross-reference (CVE-2026-42271 cross-guard)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip

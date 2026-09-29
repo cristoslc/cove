@@ -268,6 +268,61 @@ services:
         limits:
           memory: ${SPEEDTEST_MEM_LIMIT:-512M}
 
+  toolhive:
+    profiles: ["mcp"]
+    # Pinned by tag AND digest (multi-arch index verified 2026-09-28, latest
+    # release v0.51.4). Distroless ko image: entrypoint /ko-app/thv, no
+    # shell/curl — the healthcheck uses the bundled thv binary.
+    image: ${TOOLHIVE_IMAGE:-ghcr.io/stacklok/toolhive:v0.51.4@sha256:5e1e253610db23188e3cab766949612f8b0c138627ec55fb754562a9610d4f9a}
+    container_name: ${TOOLHIVE_CONTAINER_NAME:-cove-toolhive}
+    restart: unless-stopped
+    # API server (`thv serve`): binds 0.0.0.0 inside the container so the
+    # compose port mapping (loopback host side) and the nginx upstream
+    # (compose network) both reach it. The host binding is 127.0.0.1;
+    # mcp.cove (the only non-loopback route) returns 403 for everything
+    # except /health in Phase 1 (no data-plane consumers; UI/API opens
+    # in Phase 2).
+    command: ["serve", "--host", "0.0.0.0", "--port", "8080"]
+    # Runs as the operator uid:gid so the bind-mounted state dirs (owned by
+    # the ansible user) are writable; the image's default user is 65532.
+    user: "${TOOLHIVE_UID:-1000}:${TOOLHIVE_GID:-1000}"
+    # The docker socket is root:<docker-gid> mode 660 inside the VM — add
+    # the gid so the control plane can spawn sibling MCP-server containers
+    # (same pattern the Forgejo runner uses).
+    group_add:
+      - "${TOOLHIVE_DOCKER_GID:-991}"
+    environment:
+      XDG_CONFIG_HOME: /state/toolhive-config
+      XDG_DATA_HOME: /state/toolhive-data
+      XDG_STATE_HOME: /state/toolhive-data
+    volumes:
+      # XDG config (contains local_registry_path -> /registry/registry.json)
+      - ${COVE_DATA_ROOT}/toolhive/config:/state/toolhive-config
+      # ToolHive state, logs, workload status, server discovery file
+      - ${COVE_DATA_ROOT}/toolhive/state:/state/toolhive-data
+      # Curated registry + permission profiles: read-only — the control plane
+      # must not rewrite the IaC-declared catalog.
+      - ${COVE_DATA_ROOT}/toolhive/registry.json:/registry/registry.json:ro
+      - ${COVE_DATA_ROOT}/toolhive/profiles:/profiles:ro
+      # Control-plane-only socket mount: sibling MCP-server containers are
+      # constrained by ToolHive permission profiles and explicit per-server
+      # mounts, not by the socket mount itself.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "127.0.0.1:${TOOLHIVE_PORT:-8090}:8080"
+    healthcheck:
+      # Distroless image (no shell/curl — verified): thv list discovers the
+      # API via the XDG state discovery file and verifies /health with the
+      # startup nonce — fails if the API server is down.
+      test: ["CMD", "/ko-app/thv", "list"]
+      interval: 30s
+      start_period: 15s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: ${TOOLHIVE_MEM_LIMIT:-512M}
+
   ade:
     # Core service (operator decision 2026-09-25): starts with every `cove up`,
     # per ADR-018 — the ADE ships as part of Cove, the way Vault is the default

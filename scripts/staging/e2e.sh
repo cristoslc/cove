@@ -18,12 +18,15 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 CLI_DIR="$REPO_ROOT/cli"
 
 # Scope: the ISOLATED staging stack (deploy-isolated.sh, port 9443) serves the
-# ADE staging surface only, so only the module written for it runs. The legacy
-# in-live staging (deploy.sh, port 8443) serves the FULL staging tier sweep
-# (including the dual-marked live-stack tests in test_e2e_dns.py).
+# ADE staging surface plus the toolhive staging surface (when the branch
+# declares the mcp profile), so only the modules written for it run. The
+# legacy in-live staging (deploy.sh, port 8443) serves the FULL staging tier
+# sweep (including the dual-marked live-stack tests in test_e2e_dns.py).
 TARGET=""
 case "$STAGING_URL" in
-    *:9443) TARGET="tests/test_e2e_ade_staging.py" ;;
+    *:9443)
+        TARGET="tests/test_e2e_ade_staging.py tests/test_e2e_toolhive_staging.py"
+        ;;
 esac
 
 echo "Running E2E tests against: $STAGING_URL" >&2

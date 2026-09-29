@@ -1,0 +1,119 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stacklok/toolhive-core/main/registry/types/data/upstream-registry.schema.json",
+  "version": "1.0.0",
+  "meta": {
+    "last_updated": "2026-09-28T00:00:00Z"
+  },
+  "data": {
+    "servers": [
+      {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.stacklok/filesystem",
+        "description": "Filesystem MCP server. Sandboxed in Cove: NO mounts by default (per docs/plans/toolhive-mcp-gateway.md). Declare explicit mounts at runtime via the ToolHive API, never by editing this seed.",
+        "version": "1.0.0",
+        "packages": [
+          {
+            "registryType": "oci",
+            "identifier": "docker.io/mcp/filesystem:1.0.2",
+            "transport": {
+              "type": "stdio"
+            }
+          }
+        ],
+        "_meta": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "io.github.stacklok": {
+              "docker.io/mcp/filesystem:1.0.2": {
+                "status": "Active",
+                "tier": "Community",
+                "tags": [
+                  "filesystem",
+                  "sandboxed"
+                ],
+                "args": [
+                  "/projects"
+                ],
+                "permissions": {
+                  "network": {
+                    "outbound": {}
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.stacklok/fetch",
+        "description": "Fetch MCP server — network-only: outbound HTTP(S) fetching is the feature; no mounts declared (mirrors the upstream toolhive-catalog entry).",
+        "version": "1.0.0",
+        "packages": [
+          {
+            "registryType": "oci",
+            "identifier": "ghcr.io/stackloklabs/gofetch/server:1.0.5",
+            "transport": {
+              "type": "streamable-http",
+              "url": "http://localhost:8080"
+            }
+          }
+        ],
+        "_meta": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "io.github.stacklok": {
+              "ghcr.io/stackloklabs/gofetch/server:1.0.5": {
+                "status": "Active",
+                "tier": "Community",
+                "tags": [
+                  "fetch",
+                  "network-only"
+                ],
+                "permissions": {
+                  "network": {
+                    "outbound": {
+                      "insecure_allow_all": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+        "name": "io.github.stacklok/time",
+        "description": "Time MCP server — IANA timezone queries and conversions; no mounts, no outbound network needed (sandboxed).",
+        "version": "1.0.0",
+        "packages": [
+          {
+            "registryType": "oci",
+            "identifier": "ghcr.io/stacklok/dockyard/uvx/mcp-server-time:2026.8.18",
+            "transport": {
+              "type": "streamable-http"
+            }
+          }
+        ],
+        "_meta": {
+          "io.modelcontextprotocol.registry/publisher-provided": {
+            "io.github.stacklok": {
+              "ghcr.io/stacklok/dockyard/uvx/mcp-server-time:2026.8.18": {
+                "status": "Active",
+                "tier": "Community",
+                "tags": [
+                  "time",
+                  "sandboxed"
+                ],
+                "permissions": {
+                  "network": {
+                    "outbound": {}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ]
+  }
+}
