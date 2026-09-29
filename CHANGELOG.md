@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.0 (2026-09-28)
+
+### Added
+- **ToolHive MCP gateway (`cove toolhive`)** — optional `mcp` profile service at `https://mcp.cove/`; Cove's only MCP surface (LiteLLM's MCP endpoints stay disabled for CVE-2026-42271). One pinned `thv` control-plane container (read-only docker.sock, loopback-bound UI/API) manages sibling MCP-server containers constrained by permission profiles and explicit mounts; curated IaC registry (`compose/toolhive/registry.json`: filesystem/fetch/time seed servers, tag-pinned, remote fetch off for offline-first); nginx vhost returns 403 for everything except exact-match `/health` (private-range ACL) — the UI/API route opens in Phase 2 behind an auth layer. `cove toolhive up|down|status|logs`, `cove up --all` includes it; staging E2E (`deploy-isolated.sh` profile wiring, tier-2 auth-posture tests, teardown profile guard). Docs: `docs/services/toolhive.md`; plan: `docs/plans/toolhive-mcp-gateway.md` (Forgejo PR #59).
+
 ## 0.9.1 (2026-09-28)
 
 ### Fixed
