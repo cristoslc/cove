@@ -83,7 +83,13 @@ if docker info >/dev/null 2>&1; then
         DOWN_ARGS=(-p "$STAGING_PROJECT"
             -f "$COMPOSE_DIR/docker-compose.yml"
             -f "$COMPOSE_DIR/docker-compose.staging.yml"
+            # Enable every profile deploy-isolated.sh may have started; a
+            # profile-gated service whose profile is NOT enabled here is not
+            # part of the project for this down (and --remove-orphans does
+            # not catch it), leaving an orphan container behind (observed:
+            # cove-staging-toolhive survived a --profile ade teardown).
             --profile ade
+            --profile mcp
             down -v --remove-orphans)
         DOWN_CMD=(docker compose)
         if [[ -f "$STAGING_DATA_ROOT/staging.env" ]]; then
