@@ -38,6 +38,7 @@ OPTIONAL_SERVICES = [
     ("cove-headroom", "Headroom", "litellm"),
     ("cove-speedtest-tracker", "Speedtest", "speedtest"),
     ("cove-forgejo-runner", "Runner", "runner"),
+    ("cove-toolhive", "ToolHive", "mcp"),
 ]
 
 NGINX_HTTPS_PORT = 8443
