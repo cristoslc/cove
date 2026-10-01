@@ -3,6 +3,7 @@
 import getpass
 import os
 import platform
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -124,6 +125,46 @@ def init(force, purge):
     click.echo(f"cove {__version__} ready. Run `cove up` to bring up services.")
 
 
+def _report_ansible_failure(playbook: Path, lines: list[str], logfile: Path) -> None:
+    """Print a readable failure report for a failed ansible-playbook run.
+
+    Extracts the failing task's origin (playbook:line) and its error message
+    from the captured output, then points at the full log file. Fall back to
+    the last lines of output when the expected Ansible markers are missing.
+    """
+    origin = ""
+    msg = ""
+    for line in lines:
+        if line.startswith("Origin: "):
+            origin = line[len("Origin: "):].strip()
+        m = re.search(r'"msg": "(.+?)", "', line)
+        if m:
+            msg = m.group(1).replace('\\"', '"').replace("\\n", "\n")
+    task_name = ""
+    for line in lines:
+        m = re.match(r"failed: \[[^\]]+\] \(item=(.*)\)", line.strip())
+        if m:
+            task_name = m.group(1)
+            break
+    click.echo(click.style("\n✗ Ansible play failed: ", fg="red", bold=True) + playbook.name, err=True)
+    if task_name:
+        click.echo(f"  Item:    {task_name}", err=True)
+    if origin:
+        click.echo(f"  Origin:  {origin}", err=True)
+    if msg:
+        click.echo("  Problem:", err=True)
+        for out_line in msg.splitlines():
+            click.echo(f"    {out_line}", err=True)
+        if "rm -rf" in msg:
+            click.echo("  Fix: re-run the suggested command, then `cove up`.", err=True)
+    if not (task_name or origin or msg):
+        # Unrecognized failure shape: show the tail of the raw output.
+        click.echo("  Last output:", err=True)
+        for out_line in lines[-15:]:
+            click.echo(f"    {out_line.rstrip()}", err=True)
+    click.echo(f"  Full log: {logfile}", err=True)
+
+
 @app.command()
 @click.option("--no-provision", is_flag=True, help="Skip Forgejo provisioning")
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
@@ -167,21 +208,26 @@ def up(no_provision, no_upgrade, all_, log):
     def _run_ansible(playbook, label):
         click.echo(label)
         cmd = base_cmd + [str(playbook)]
+        # Always capture the stream so a failure can produce a readable
+        # report instead of Ansible's raw fatal dump at the bottom of the
+        # terminal (and so failure logs always exist for debugging).
+        ansible_env["ANSIBLE_NOCOLOR"] = "1"
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        logfile = (log_dir or Path.home() / ".local" / "share" / "cove" / "logs") / f"{ts}-{playbook.name}.log"
         if log:
-            assert log_dir is not None
-            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            logfile = log_dir / f"{ts}-{playbook.name}.log"
-            with open(logfile, "w") as f:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ansible_env)
-                for line in proc.stdout or []:
-                    click.echo(line, nl=False)
-                    f.write(line)
-                proc.wait()
-                result = proc
             click.echo(f"  log: {logfile}")
-        else:
-            result = subprocess.run(cmd, env=ansible_env)
+        logfile.parent.mkdir(parents=True, exist_ok=True)
+        lines: list[str] = []
+        with open(logfile, "w") as f:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ansible_env)
+            for line in proc.stdout or []:
+                click.echo(line, nl=False)
+                lines.append(line)
+                f.write(line)
+            proc.wait()
+        result = proc
         if result.returncode != 0:
+            _report_ansible_failure(playbook, lines, logfile)
             raise SystemExit(result.returncode)
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
