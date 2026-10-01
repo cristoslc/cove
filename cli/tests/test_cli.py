@@ -26,6 +26,26 @@ def _project_root() -> Path:
 PROJECT_ROOT = _project_root()
 COMPOSE_DIR = PROJECT_ROOT / "compose"
 
+
+@pytest.fixture(autouse=True)
+def _fake_ansible_popen(monkeypatch):
+    """_run_ansible always tees ansible output through subprocess.Popen.
+    Fake it so CLI up-flow tests never invoke the real ansible-playbook."""
+    class _Proc:
+        def __init__(self, returncode=0, out=()):
+            self.stdout = iter(out)
+            self.returncode = returncode
+
+        def wait(self):
+            return self.returncode
+    holder: dict[str, list] = {"returncode": 0, "out": (), "calls": []}
+
+    def _popen_factory(*args, **kwargs):
+        holder["calls"].append(args[0])
+        return _Proc(returncode=holder["returncode"], out=holder["out"])
+    monkeypatch.setattr("cove.cli.subprocess.Popen", _popen_factory)
+    return holder
+
 import cove.cli
 from cove.stateless import resolve_compose_dir
 
@@ -291,7 +311,7 @@ class TestFindComposeDir:
 
 
 class TestCoveUpCommand:
-    def test_up_passes_stable_ansible_hostname_override(self, tmp_path, monkeypatch):
+    def test_up_passes_stable_ansible_hostname_override(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up must pass `-e ansible_hostname=<stable>` so Ansible's
         gathered fact (kernel hostname) cannot diverge from the stable hostname
         used for cert SANs, host_vars, and 1Password op_refs. Without this
@@ -317,7 +337,7 @@ class TestCoveUpCommand:
 
             _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
-            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_call = _fake_ansible_popen["calls"][0]
             bringup_args = [str(a) for a in bringup_call]
             assert any(
                 a == "-e" or a.startswith("ansible_hostname=") for a in bringup_args
@@ -330,7 +350,7 @@ class TestCoveUpCommand:
                 f"got: {hostname_override}"
             )
 
-    def test_up_no_become_prompt_per_playbook(self, tmp_path, monkeypatch):
+    def test_up_no_become_prompt_per_playbook(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up must NOT pass -K to ansible-playbook — it caches the BECOME
         password once via getpass and passes it via ANSIBLE_BECOME_PASSWORD env."""
         compose_sub = tmp_path / "compose"
@@ -350,7 +370,7 @@ class TestCoveUpCommand:
 
             _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
-            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_call = _fake_ansible_popen["calls"][0]
             args_list = [str(a) for a in bringup_call]
             assert "-K" not in args_list, (
                 "cove up must not pass -K (uses ANSIBLE_BECOME_PASSWORD env var instead)"
@@ -383,7 +403,7 @@ class TestCoveUpCommand:
                 f"BECOME password must be prompted once, got {mock_getpass.call_count}"
             )
 
-    def test_no_provision_skips_forgejo(self, tmp_path, monkeypatch):
+    def test_no_provision_skips_forgejo(self, tmp_path, monkeypatch, _fake_ansible_popen):
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -400,9 +420,14 @@ class TestCoveUpCommand:
             mock_check.return_value = []
 
             _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
-            assert mock_run.call_count == 1
+            assert len(_fake_ansible_popen["calls"]) == 1, (
+                "no-provision up must run exactly one playbook (bringup)"
+            )
+            assert any(
+                "bringup.yml" in str(p) for p in _fake_ansible_popen["calls"][0]
+            )
 
-    def test_full_up_calls_all_in_correct_order(self, tmp_path, monkeypatch):
+    def test_full_up_calls_all_in_correct_order(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """Batch-pull must come first, then bringup, then vault bootstrap, then provision."""
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
@@ -423,36 +448,38 @@ class TestCoveUpCommand:
             mock_check.return_value = []
 
             _invoke_callback("up", no_provision=False, no_upgrade=True, all_=False, log=False)
-            assert mock_run.call_count == 5
+            playbooks = [
+                next(str(p) for p in reversed(cmd) if str(p).endswith(".yml"))
+                for cmd in _fake_ansible_popen["calls"]
+            ]
+            run_cmds = [str(c[0][0]) for c in mock_run.call_args_list]
 
-            all_args = [mock_run.call_args_list[i][0][0] for i in range(5)]
-
-            call_0_args = [str(a) for a in all_args[0]]
-            assert any("batch-pull" in a for a in call_0_args), (
-                "first call must be batch-pull"
+            assert len(playbooks) == 4, (
+                f"full up must run 4 playbooks, got: {playbooks}"
+            )
+            assert len(run_cmds) == 1 and "batch-pull" in run_cmds[0], (
+                "batch-pull (subprocess.run) must come first"
             )
 
-            call_1_args = [str(a) for a in all_args[1]]
-            assert any("bringup.yml" in p for p in call_1_args), (
-                "second call must be bringup.yml"
-            )
+            def _occurred(cmd_name: str) -> bool:
+                return any(cmd_name in p for p in playbooks)
 
-            call_2_args = [str(a) for a in all_args[2]]
-            assert any("bootstrap_vault.yml" in p for p in call_2_args), (
-                "third call must be bootstrap_vault.yml"
+            order = [
+                playbooks.index(next(p for p in playbooks if "bringup.yml" in p)),
+                playbooks.index(next(p for p in playbooks if "bootstrap_vault.yml" in p)),
+                playbooks.index(next(p for p in playbooks if "provision_vault_user.yml" in p)),
+                playbooks.index(next(p for p in playbooks if "provision_forgejo.yml" in p)),
+            ]
+            assert order == sorted(order), (
+                f"playbook order must be bringup, bootstrap_vault, "
+                f"provision_vault_user, provision_forgejo; got: {playbooks}"
             )
+            assert _occurred("bringup.yml")
+            assert _occurred("bootstrap_vault.yml")
+            assert _occurred("provision_vault_user.yml")
+            assert _occurred("provision_forgejo.yml")
 
-            call_3_args = [str(a) for a in all_args[3]]
-            assert any("provision_vault_user.yml" in p for p in call_3_args), (
-                "fourth call must be provision_vault_user.yml"
-            )
-
-            call_4_args = [str(a) for a in all_args[4]]
-            assert any("provision_forgejo.yml" in p for p in call_4_args), (
-                 "fifth call must be provision_forgejo.yml"
-            )
-
-    def test_up_passes_running_optional_profiles_to_bringup(self, tmp_path, monkeypatch):
+    def test_up_passes_running_optional_profiles_to_bringup(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up must detect running optional services and pass their compose
         profiles to bringup.yml so they get reconciled (recreated with current
         config). Stopped optionals must NOT be started."""
@@ -474,7 +501,7 @@ class TestCoveUpCommand:
             _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
             mock_detect.assert_called_once()
-            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_call = _fake_ansible_popen["calls"][0]
             bringup_args = [str(a) for a in bringup_call]
             assert any("bringup.yml" in a for a in bringup_args), (
                 "first call must be bringup.yml"
@@ -483,7 +510,7 @@ class TestCoveUpCommand:
                 f"bringup must receive cove_profiles=speedtest, got: {bringup_args}"
             )
 
-    def test_up_no_profiles_when_no_optionals_running(self, tmp_path, monkeypatch):
+    def test_up_no_profiles_when_no_optionals_running(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """When no optional services are running, cove up must not pass any
         profiles (so it doesn't start stopped optionals)."""
         compose_sub = tmp_path / "compose"
@@ -503,13 +530,13 @@ class TestCoveUpCommand:
 
             _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
-            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_call = _fake_ansible_popen["calls"][0]
             bringup_args = [str(a) for a in bringup_call]
             assert not any("speedtest" in a for a in bringup_args), (
                 f"no profiles when nothing running, got: {bringup_args}"
             )
 
-    def test_up_all_passes_runner_to_bringup(self, tmp_path, monkeypatch):
+    def test_up_all_passes_runner_to_bringup(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up --all must include the runner profile in the bringup
         COMPOSE_PROFILES (no credential dance for the runner). Litellm and
         speedtest must NOT be in it: their containers need CLI-prepared
@@ -534,7 +561,7 @@ class TestCoveUpCommand:
                 "up", no_provision=True, no_upgrade=True, all_=True, log=False
             )
 
-            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_call = _fake_ansible_popen["calls"][0]
             bringup_args = [str(a) for a in bringup_call]
             assert any("cove_profiles=runner" in a for a in bringup_args), (
                 f"bringup must receive cove_profiles=runner, got: {bringup_args}"
@@ -612,6 +639,73 @@ class TestCoveUpCommand:
 
             mock_speedtest.assert_called_once()
             mock_check.assert_called_once()
+
+    def test_bringup_failure_reports_readable_error(self, tmp_path, monkeypatch, capsys, _fake_ansible_popen):
+        """An ansible playbook failure must print a friendly report (origin,
+        problem, log path) instead of Ansible's raw fatal dump, write a log
+        file even without --log, and exit with Ansible's return code."""
+        out = [
+            "PLAY [all] ********",
+            "TASK [Fail if a non-empty directory wedges a data-root mount] ***",
+            'fatal: [localhost] (item=/Users/x/cove-data/toolhive/registry.json): '
+            '{"msg": "registry.json exists as a NON-EMPTY DIRECTORY. '
+            'Remove it and re-run: rm -rf /Users/x/cove-data/toolhive/registry.json && cove up", "changed": false}',
+            "Origin: /Users/cove/compose/bringup.yml:439:7",
+            "NO MORE HOSTS LEFT",
+            "PLAY RECAP",
+        ]
+        _fake_ansible_popen["returncode"] = 2
+        _fake_ansible_popen["out"] = out
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass", return_value="secret"
+        ), patch("cove.cli.ensure_host_vars", return_value=tmp_path / "hv.yml"), patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch("cove.cli.Path.home", return_value=tmp_path):
+            with pytest.raises(SystemExit) as exc:
+                _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+        assert exc.value.code == 2
+
+        err = capsys.readouterr().err
+        assert "Ansible play failed: bringup.yml" in err, f"missing failure header, got: {err}"
+        assert "Origin:" in err, "report must include the failing task's origin"
+        assert "NON-EMPTY DIRECTORY" in err, "report must include the error message"
+        assert "rm -rf" in err and "cove up" in err, "report must surface the suggested fix"
+        assert "Full log:" in err, "report must point at the log file"
+
+        import re as _re
+        log_path = _re.search(r"Full log: (.+)", err).group(1).strip()
+        assert Path(log_path).exists(), "failure log must be written even without --log"
+        assert "NON-EMPTY DIRECTORY" in Path(log_path).read_text()
+
+    def test_ansible_failure_unknown_shape_prints_output_tail(self, tmp_path, monkeypatch, capsys, _fake_ansible_popen):
+        """When the failure output has no parseable Origin/msg markers, the
+        report must fall back to showing the tail of the raw output and the
+        log path, never a bare exit with no explanation."""
+        _fake_ansible_popen["returncode"] = 4
+        _fake_ansible_popen["out"] = ["ERROR! something exploded", "more context"]
+
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass", return_value="secret"
+        ), patch("cove.cli.ensure_host_vars", return_value=tmp_path / "hv.yml"), patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            with pytest.raises(SystemExit):
+                _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+
+        err = capsys.readouterr().err
+        assert "Ansible play failed: bringup.yml" in err
+        assert "Last output:" in err and "something exploded" in err
+        assert "Full log:" in err
 
 
 class TestCoveStatusCommand:
