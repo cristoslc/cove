@@ -20,6 +20,7 @@ from cove.speedtest import speedtest
 from cove.runner import runner
 from cove.tunnel import tunnel
 from cove.toolhive import toolhive
+from cove.sudoers import sudo, passwordless_sudo_ok
 from cove.project import (
     _inject, _strip, _container_env, _render_context, _render_guidance,
     _render_agents_block, _write_detail_cove, _write_fj_detail, _write_gh_detail,
@@ -238,8 +239,13 @@ def up(no_provision, no_upgrade, all_, log):
     # stable LocalHostName, so override the fact to keep Ansible consistent.
     base_cmd.extend(["-e", f"ansible_hostname={host_vars_file.stem}"])
 
-    become_pass = getpass.getpass("BECOME password: ")
-    ansible_env["ANSIBLE_BECOME_PASSWORD"] = become_pass
+    # Prompt for the BECOME password only when the operator has not installed
+    # the passwordless sudoers drop-in (`cove sudo setup`).
+    if passwordless_sudo_ok():
+        ansible_env["ANSIBLE_BECOME_PASSWORD"] = ""
+    else:
+        become_pass = getpass.getpass("BECOME password: ")
+        ansible_env["ANSIBLE_BECOME_PASSWORD"] = become_pass
 
     # `cove up --all` starts every optional service. LiteLLM and Speedtest
     # need credentials prepared by the CLI (1Password/Vault seeds injected
@@ -350,6 +356,7 @@ app.add_command(speedtest)
 app.add_command(runner)
 app.add_command(tunnel)
 app.add_command(toolhive)
+app.add_command(sudo)
 
 
 @app.command()
