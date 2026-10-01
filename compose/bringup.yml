@@ -398,16 +398,36 @@
         - cove-pages-locations.conf
         - cove-tunnel-shares.conf
       register: nginx_mount_targets
-    - name: Fail if a Docker-created directory wedges an nginx mount
-      ansible.builtin.fail:
-        msg: >-
-          {{ item.item }} exists as a DIRECTORY (Docker auto-created it during
-          a prior failed boot before the file was rendered). Remove it and
-          re-run: rm -rf {{ item.item }} && cove up
+    - name: List contents of wedged nginx mount directories
+      ansible.builtin.find:
+        paths: "{{ item.stat.path }}"
+        file_type: any
       loop: "{{ nginx_mount_targets.results }}"
       when: item.stat.isdir | default(false)
+      register: nginx_wedged_scan
       loop_control:
-        label: "{{ item.item }}"
+        label: "{{ item.stat.path }}"
+    - name: Remove empty Docker-created directories on nginx mount targets
+      # Auto-repair: Docker created the dir, nothing was ever written into it,
+      # so deleting it is safe. The template tasks below re-render the file.
+      ansible.builtin.file:
+        path: "{{ item.item.stat.path }}"
+        state: absent
+      loop: "{{ nginx_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) == 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
+    - name: Fail if a non-empty directory wedges an nginx mount
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.item.stat.path }} exists as a NON-EMPTY DIRECTORY where a
+          file must be bind-mounted (Docker auto-created it and contents were
+          written inside). Remove it and re-run: rm -rf {{ item.item.stat.path
+          }} && cove up
+      loop: "{{ nginx_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) > 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
 
     - name: Render nginx config from template
       ansible.builtin.template:
@@ -436,23 +456,55 @@
         - "{{ cove_data_root }}/litellm/config.yaml"
         - "{{ cove_data_root }}/toolhive/registry.json"
       register: data_mount_targets
-    - name: Fail if a Docker-created directory wedges a data-root mount
-      ansible.builtin.fail:
-        msg: >-
-          {{ item.item }} exists as a DIRECTORY (Docker auto-created it during
-          a prior failed boot before the file was rendered). Remove it and
-          re-run: rm -rf {{ item.item }} && cove up
+    - name: List contents of wedged data-root mount directories
+      ansible.builtin.find:
+        paths: "{{ item.stat.path }}"
+        file_type: any
       loop: "{{ data_mount_targets.results }}"
       when: item.stat.isdir | default(false)
+      register: data_wedged_scan
       loop_control:
-        label: "{{ item.item }}"
+        label: "{{ item.stat.path }}"
+    - name: Remove empty Docker-created directories on data-root mount targets
+      # Auto-repair: Docker created the dir, nothing was ever written into it,
+      # so deleting it is safe. The first-boot seeds and templates below
+      # re-render the file (see the "repaired" force/when overrides).
+      ansible.builtin.file:
+        path: "{{ item.item.stat.path }}"
+        state: absent
+      loop: "{{ data_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) == 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
+    - name: Fail if a non-empty directory wedges a data-root mount
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.item.stat.path }} exists as a NON-EMPTY DIRECTORY where a
+          file must be bind-mounted (Docker auto-created it and contents were
+          written inside). Remove it and re-run: rm -rf {{ item.item.stat.path
+          }} && cove up
+      loop: "{{ data_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) > 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
+    - name: Track repaired data-root mount targets
+      ansible.builtin.set_fact:
+        repaired_data_mounts: >-
+          {% set repaired = [] %}
+          {% for scan in data_wedged_scan.results if scan.files is defined and (scan.files | length) == 0 %}
+          {% set _ = repaired.append(scan.item.stat.path) %}
+          {% endfor %}
+          {{ repaired }}
 
     - name: Render litellm config from template (first boot only)
       ansible.builtin.template:
         src: "{{ playbook_dir }}/litellm/config.yaml.j2"
         dest: "{{ cove_data_root }}/litellm/config.yaml"
         mode: "0644"
-      when: not (cove_data_root ~ "/litellm/config.yaml") is exists
+      when: >-
+        (not (cove_data_root ~ "/litellm/config.yaml") is exists)
+        or ((cove_data_root ~ "/litellm/config.yaml")
+            in (repaired_data_mounts | default([])))
 
     # TOOLHIVE -----------------------------------------------------------------
     # IaC: the curated registry, the default permission profile, and the
@@ -465,7 +517,10 @@
         src: "{{ playbook_dir }}/toolhive/registry.json"
         dest: "{{ cove_data_root }}/toolhive/registry.json"
         mode: "0644"
-        force: false
+        # Re-copy when the path was just auto-repaired (wedge removal),
+        # otherwise first-boot only.
+        force: "{{ (cove_data_root ~ '/toolhive/registry.json')
+                   in (repaired_data_mounts | default([])) }}"
 
     - name: Seed ToolHive default permission profile (first boot only)
       ansible.builtin.copy:
