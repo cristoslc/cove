@@ -44,6 +44,9 @@ def _fake_ansible_popen(monkeypatch):
         holder["calls"].append(args[0])
         return _Proc(returncode=holder["returncode"], out=holder["out"])
     monkeypatch.setattr("cove.cli.subprocess.Popen", _popen_factory)
+    # Default: passwordless sudo NOT installed, so up-flow tests exercise the
+    # getpass prompt path unless a test overrides this below.
+    monkeypatch.setattr("cove.cli.passwordless_sudo_ok", lambda: False)
     return holder
 
 import cove.cli
@@ -706,6 +709,27 @@ class TestCoveUpCommand:
         assert "Ansible play failed: bringup.yml" in err
         assert "Last output:" in err and "something exploded" in err
         assert "Full log:" in err
+
+
+    def test_up_skips_become_prompt_when_passwordless(self, tmp_path, monkeypatch, _fake_ansible_popen):
+        """After `cove sudo setup`, cove up must not prompt for the BECOME
+        password (getpass is called zero times)."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+        monkeypatch.setattr("cove.cli.passwordless_sudo_ok", lambda: True)
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass"
+        ) as mock_getpass, patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all", return_value=[]), patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+
+        mock_getpass.assert_not_called()
 
 
 class TestCoveStatusCommand:
