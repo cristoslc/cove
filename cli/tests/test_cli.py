@@ -38,10 +38,11 @@ def _fake_ansible_popen(monkeypatch):
 
         def wait(self):
             return self.returncode
-    holder: dict[str, list] = {"returncode": 0, "out": (), "calls": []}
+    holder: dict[str, list] = {"returncode": 0, "out": (), "calls": [], "envs": []}
 
     def _popen_factory(*args, **kwargs):
         holder["calls"].append(args[0])
+        holder["envs"].append(kwargs.get("env"))
         return _Proc(returncode=holder["returncode"], out=holder["out"])
     monkeypatch.setattr("cove.cli.subprocess.Popen", _popen_factory)
     # Default: passwordless sudo NOT installed, so up-flow tests exercise the
@@ -730,6 +731,63 @@ class TestCoveUpCommand:
             _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
         mock_getpass.assert_not_called()
+
+    def test_up_passes_typed_become_password_via_ansible_become_pass_env(
+        self, tmp_path, monkeypatch, _fake_ansible_popen
+    ):
+        """A typed BECOME password must reach sudo through ANSIBLE_BECOME_PASS,
+        the env var the ansible-core sudo become plugin actually reads
+        (sudo.py DOCUMENTATION). ANSIBLE_BECOME_PASSWORD matches no ansible
+        setting, so the typed password was silently dropped and every become
+        task failed with 'sudo: a password is required'."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+        # Fixture default: passwordless_sudo_ok() is False → prompt path.
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass", return_value="secret"
+        ), patch("cove.cli.ensure_host_vars", return_value=tmp_path / "hv.yml"), patch(
+            "cove.status.check_all", return_value=[]
+        ), patch("cove.cli._detect_running_optional_profiles", return_value=[]):
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+
+        assert _fake_ansible_popen["envs"], "Popen must receive an env"
+        for env in _fake_ansible_popen["envs"]:
+            if not env:
+                continue
+            assert env.get("ANSIBLE_BECOME_PASS") == "secret"
+            assert "ANSIBLE_BECOME_PASSWORD" not in env
+
+    def test_up_sets_empty_ansible_become_pass_when_passwordless(
+        self, tmp_path, monkeypatch, _fake_ansible_popen
+    ):
+        """With the passwordless drop-in in place, ANSIBLE_BECOME_PASS is set
+        empty (falsy to the sudo plugin, so no password is ever handed to
+        sudo)."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+        monkeypatch.setattr("cove.cli.passwordless_sudo_ok", lambda: True)
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass"
+        ) as mock_getpass, patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "hv.yml"
+        ), patch("cove.status.check_all", return_value=[]), patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+
+        mock_getpass.assert_not_called()
+        assert _fake_ansible_popen["envs"], "Popen must receive an env"
+        for env in _fake_ansible_popen["envs"]:
+            if not env:
+                continue
+            assert env.get("ANSIBLE_BECOME_PASS") == ""
+            assert "ANSIBLE_BECOME_PASSWORD" not in env
 
 
 class TestCoveStatusCommand:
