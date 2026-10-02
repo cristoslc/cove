@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.11.0 (2026-10-02)
+
+### Added
+- **`cove sudo disable`** — removes `/etc/sudoers.d/cove` so `cove up` prompts for the BECOME password again. Prompt-free when passwordless sudo is already in place (or running as root); one sudo password prompt otherwise. After removal the functional check runs again, so the reported state is the truth even if some other `NOPASSWD: ALL` grant exists outside the cove drop-in (it says so and points at `sudo -l` rather than claiming success). Fails loud if the removal itself fails. Complements the retire-the-grant direction in `docs/musings/cove-up-sudo-friction.md`.
+
 ## 0.10.1 (2026-10-02)
 
 ### Fixed
