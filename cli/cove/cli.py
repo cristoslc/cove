@@ -240,7 +240,7 @@ def up(no_provision, no_upgrade, all_, log):
     base_cmd.extend(["-e", f"ansible_hostname={host_vars_file.stem}"])
 
     # Prompt for the BECOME password only when the operator has not installed
-    # the passwordless sudoers drop-in (`cove sudo setup`).
+    # the passwordless sudoers drop-in (`cove sudo enable`).
     if passwordless_sudo_ok():
         ansible_env["ANSIBLE_BECOME_PASS"] = ""
     else:

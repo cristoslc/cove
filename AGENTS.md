@@ -4,7 +4,7 @@ Read **[PURPOSE.md](PURPOSE.md)** for this project's identity, worldview, and fo
 
 ## Cove-specific notes
 
-- **`cove up` requires sudo** for `/etc/resolver/cove` and system trust store install. Passwordless sudo is available via `cove sudo setup` (one-time sudo prompt installs a validated `/etc/sudoers.d/cove` drop-in; `cove sudo status` checks it; `cove sudo disable` removes it). With the drop-in installed, `cove up` runs with no BECOME prompt. Until it is installed on a machine, do not run `cove up` autonomously — ask the operator to run it.
+- **`cove up` requires sudo** for `/etc/resolver/cove` and system trust store install. Passwordless sudo is toggled with `cove sudo enable` (installs a validated `/etc/sudoers.d/cove` drop-in after one sudo prompt; `setup` remains as a hidden alias), `cove sudo status` checks it, and `cove sudo disable` removes it. With the drop-in installed, `cove up` runs with no BECOME prompt. Until it is installed on a machine, do not run `cove up` autonomously — ask the operator to run it.
 - **`cove up --no-sudo`** skips sudo tasks but DNS resolution for `*.cove` won't work without the resolver file. Use `curl -H "Host: ..." https://127.0.0.1/...` for health checks when testing without sudo.
 - **Colima** is the Docker runtime on macOS. `cove up` auto-starts it if not running and switches the Docker context to `colima`.
 - **`uv run --directory cli cove up`** runs the project-local CLI without reinstalling the system tool. Use this for testing changes.

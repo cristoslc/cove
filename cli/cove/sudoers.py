@@ -33,7 +33,7 @@ SUDOERS_PATH = Path("/etc/sudoers.d/cove")
 def _operator_username() -> str:
     """The user the NOPASSWD grant should target.
 
-    `sudo cove sudo setup` runs as root, and getpass.getuser() then reports
+    `sudo cove sudo enable` runs as root, and getpass.getuser() then reports
     root — installing a grant for root would silently drop the operator's
     passwordless sudo (which is why `cove up` re-prompted after a root-run
     setup). SUDO_USER names the real operator in that case.
@@ -76,7 +76,7 @@ def setup_sudoers() -> None:
                 f"Rendered sudoers failed validation, not installed:\n{pre.stdout}{pre.stderr}"
             )
         if os.geteuid() == 0:
-            # Already root (e.g. `sudo cove sudo setup`): sudo -S needs no
+            # Already root (e.g. `sudo cove sudo enable`): sudo -S needs no
             # password, so don't prompt for one.
             sudo_password = ""
         else:
@@ -109,20 +109,27 @@ def setup_sudoers() -> None:
 
 @click.group(name="sudo", help="Manage passwordless sudo for cove become tasks.")
 def sudo() -> None:
-    """Passwordless sudo is installed via /etc/sudoers.d/cove; see `cove sudo setup`."""
+    """Passwordless sudo is installed via /etc/sudoers.d/cove; see `cove sudo enable`."""
 
 
-@sudo.command("setup")
-def sudo_setup() -> None:
-    """Install /etc/sudoers.d/cove for passwordless `cove up` (one sudo prompt).
+@sudo.command("enable")
+def sudo_enable() -> None:
+    """Enable passwordless sudo for `cove up` (installs /etc/sudoers.d/cove).
 
-    Validates the drop-in with visudo before and after the install, and stages
-    it as a .tmp file that is only moved into place once it validates.
+    One sudo prompt (none when already root). Validates the drop-in with
+    visudo before and after the install, and stages it as a .tmp file that is
+    only moved into place once it validates. Pairs with `cove sudo disable`.
 
     Examples:
 
-        cove sudo setup
+        cove sudo enable
     """
+    setup_sudoers()
+
+
+@sudo.command("setup", hidden=True)
+def sudo_setup() -> None:
+    """Deprecated alias for `cove sudo enable` (renamed in 0.11.0)."""
     setup_sudoers()
 
 
@@ -138,7 +145,7 @@ def sudo_status() -> None:
         click.echo("Passwordless sudo is in place (cove up will not prompt).")
     else:
         click.echo("Passwordless sudo is NOT in place; cove up prompts for a BECOME password.")
-        click.echo("Run `cove sudo setup` to install it.")
+        click.echo("Run `cove sudo enable` to install it.")
 
 
 @sudo.command("disable")
@@ -184,4 +191,4 @@ def sudo_disable() -> None:
         click.echo("Inspect it with `sudo -l` (your own password).")
     else:
         click.echo(f"Removed {SUDOERS_PATH}; `cove up` prompts for the BECOME password again.")
-        click.echo("Reinstall any time with `cove sudo setup`.")
+        click.echo("Re-enable any time with `cove sudo enable`.")

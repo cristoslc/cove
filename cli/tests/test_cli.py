@@ -713,7 +713,7 @@ class TestCoveUpCommand:
 
 
     def test_up_skips_become_prompt_when_passwordless(self, tmp_path, monkeypatch, _fake_ansible_popen):
-        """After `cove sudo setup`, cove up must not prompt for the BECOME
+        """After `cove sudo enable`, cove up must not prompt for the BECOME
         password (getpass is called zero times)."""
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
