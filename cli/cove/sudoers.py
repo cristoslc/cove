@@ -8,11 +8,18 @@ for the operator's user only, mirroring compose/files/cove-sudoers.
 Safety: the rendered file is validated with `visudo -c -sf` BEFORE install;
 the installer stages it as *.tmp and only moves it into place after the
 staged copy also validates.
+
+Checks are functional, not file-based: /etc/sudoers.d/cove is root-owned
+0440, so an unprivileged `visudo -c -f` on it always fails with EACCES.
+`passwordless_sudo_ok` therefore asks sudo itself (`sudo -n -l`) whether the
+operator holds a NOPASSWD: ALL grant — exactly the condition that decides
+whether Ansible become prompts.
 """
 
 from __future__ import annotations
 
 import getpass
+import os
 import subprocess
 import tempfile
 from importlib.resources import files
@@ -23,19 +30,36 @@ import click
 SUDOERS_PATH = Path("/etc/sudoers.d/cove")
 
 
+def _operator_username() -> str:
+    """The user the NOPASSWD grant should target.
+
+    `sudo cove sudo setup` runs as root, and getpass.getuser() then reports
+    root — installing a grant for root would silently drop the operator's
+    passwordless sudo (which is why `cove up` re-prompted after a root-run
+    setup). SUDO_USER names the real operator in that case.
+    """
+    if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+        return os.environ["SUDO_USER"]
+    return getpass.getuser()
+
+
 def _rendered_sudoers() -> str:
     raw = files("cove.resources.compose.files").joinpath("cove-sudoers").read_text()
-    return raw.replace("YOUR_USERNAME", getpass.getuser())
+    return raw.replace("YOUR_USERNAME", _operator_username())
 
 
 def passwordless_sudo_ok() -> bool:
-    """True when the cove sudoers drop-in is installed and validates."""
-    if not SUDOERS_PATH.exists():
+    """True when the operator can run sudo without a password.
+
+    Asked functionally via `sudo -n -l` (never prompts, mutates nothing).
+    The exit code alone is not enough: a recently cached sudo timestamp also
+    lets `sudo -n` succeed for password-based grants, so the listing itself
+    must name a NOPASSWD: ALL grant — the drop-in's exact shape.
+    """
+    result = subprocess.run(["sudo", "-n", "-l"], capture_output=True, text=True)
+    if result.returncode != 0:
         return False
-    return subprocess.run(
-        ["visudo", "-c", "-f", str(SUDOERS_PATH)],
-        capture_output=True,
-    ).returncode == 0
+    return "NOPASSWD: ALL" in result.stdout
 
 
 def setup_sudoers() -> None:
@@ -51,7 +75,12 @@ def setup_sudoers() -> None:
             raise click.ClickException(
                 f"Rendered sudoers failed validation, not installed:\n{pre.stdout}{pre.stderr}"
             )
-        sudo_password = getpass.getpass(f"sudo password for {getpass.getuser()}: ")
+        if os.geteuid() == 0:
+            # Already root (e.g. `sudo cove sudo setup`): sudo -S needs no
+            # password, so don't prompt for one.
+            sudo_password = ""
+        else:
+            sudo_password = getpass.getpass(f"sudo password for {getpass.getuser()}: ")
         install = subprocess.run(
             [
                 "sudo", "-S", "-p", "", "sh", "-c",
@@ -72,6 +101,8 @@ def setup_sudoers() -> None:
             )
     finally:
         tmp_path.unlink(missing_ok=True)
+    if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+        click.echo(f"Granted passwordless sudo to {os.environ['SUDO_USER']} (invoked under sudo).")
     click.echo(f"Passwordless sudo installed at {SUDOERS_PATH} (validated with visudo).")
     click.echo("`cove up` no longer prompts for the BECOME password.")
 
