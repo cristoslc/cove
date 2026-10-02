@@ -139,3 +139,49 @@ def sudo_status() -> None:
     else:
         click.echo("Passwordless sudo is NOT in place; cove up prompts for a BECOME password.")
         click.echo("Run `cove sudo setup` to install it.")
+
+
+@sudo.command("disable")
+def sudo_disable() -> None:
+    """Remove /etc/sudoers.d/cove; `cove up` prompts for the BECOME password again.
+
+    No prompt when passwordless sudo is already in place (or when running as
+    root); otherwise one sudo password prompt. After removal the functional
+    check runs again, so the reported state is the truth even if some other
+    NOPASSWD: ALL grant exists outside the cove drop-in.
+
+    Examples:
+
+        cove sudo disable
+    """
+    if not SUDOERS_PATH.exists():
+        click.echo("Passwordless sudo was not installed; nothing to do.")
+        return
+    result = subprocess.run(
+        ["sudo", "-n", "rm", "-f", str(SUDOERS_PATH)], capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        if os.geteuid() == 0:
+            # Already root (e.g. `sudo cove sudo disable`): sudo -S needs no
+            # password, so don't prompt for one.
+            sudo_password = ""
+        else:
+            sudo_password = getpass.getpass(f"sudo password for {getpass.getuser()}: ")
+        result = subprocess.run(
+            ["sudo", "-S", "-p", "", "rm", "-f", str(SUDOERS_PATH)],
+            input=sudo_password + "\n",
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            raise click.ClickException(
+                "sudoers removal failed:\n"
+                f"{result.stdout}{result.stderr}".replace(sudo_password, "")
+            )
+    if passwordless_sudo_ok():
+        click.echo(f"Removed {SUDOERS_PATH}, but passwordless sudo is still in place:")
+        click.echo("another NOPASSWD: ALL grant exists outside the cove drop-in.")
+        click.echo("Inspect it with `sudo -l` (your own password).")
+    else:
+        click.echo(f"Removed {SUDOERS_PATH}; `cove up` prompts for the BECOME password again.")
+        click.echo("Reinstall any time with `cove sudo setup`.")
