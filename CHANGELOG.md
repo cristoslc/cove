@@ -4,6 +4,13 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.10.1 (2026-10-02)
+
+### Fixed
+- **`cove sudo status` could never report the drop-in installed** — the check ran `visudo -c -f /etc/sudoers.d/cove` unprivileged, but the drop-in is root:wheel 0440, so visudo always failed with EACCES and `cove up` prompted for the BECOME password even after a successful `cove sudo setup`. The check is now functional: `sudo -n -l` (never prompts, mutates nothing) must list a `NOPASSWD: ALL` grant; the listing is parsed, not just the exit code, so a recently cached sudo timestamp cannot fake a pass.
+- **`sudo cove sudo setup` installed the grant for root** — under sudo, `getpass.getuser()` returns root, so the rendered drop-in granted root `NOPASSWD: ALL` and silently dropped the operator's grant (the reason `cove up` re-prompted after a root-run setup). Setup now targets `SUDO_USER`, skips the password prompt when already root, and echoes the grant target.
+- **A typed BECOME password never reached sudo** — `cove up` set `ANSIBLE_BECOME_PASSWORD`, which matches no ansible-core setting; the sudo become plugin reads `ANSIBLE_BECOME_PASS` (ansible/plugins/become/sudo.py), so sudo ran with empty stdin and every become task died with `sudo: a password is required` even with the correct password typed. The env var is renamed on both the prompt and passwordless paths (an empty value stays falsy to the plugin, so no password is handed to sudo under the drop-in).
+
 ## 0.10.0 (2026-09-28)
 
 ### Added
