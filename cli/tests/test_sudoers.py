@@ -64,6 +64,107 @@ def _patch_sudo_list(monkeypatch, returncode, stdout="", stderr=""):
     return calls
 
 
+def _patch_run_script(monkeypatch, results):
+    """Stub subprocess.run returning pre-scripted results in call order."""
+    calls = []
+    it = iter(results)
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return next(it)
+
+    monkeypatch.setattr(sudoers.subprocess, "run", fake_run)
+    return calls
+
+
+class TestSudoDisableCommand:
+    """`cove sudo disable` removes the drop-in and reports the honest
+    resulting sudo state (functional check, like status)."""
+
+    def test_removes_dropin_without_prompt_when_passwordless(self, tmp_path, monkeypatch):
+        path = tmp_path / "cove"
+        path.write_text("alice ALL=(ALL) NOPASSWD: ALL\n")
+        monkeypatch.setattr(sudoers, "SUDOERS_PATH", path)
+        calls = _patch_run_script(
+            monkeypatch,
+            [_Proc(0), _Proc(1, stderr="sudo: a password is required\n")],
+        )
+
+        result = CliRunner().invoke(sudoers.sudo, ["disable"])
+
+        assert result.exit_code == 0, result.output
+        assert calls == [
+            ["sudo", "-n", "rm", "-f", str(path)],
+            ["sudo", "-n", "-l"],
+        ]
+        assert "Removed" in result.output
+        assert "prompts for the BECOME password again" in result.output
+
+    def test_prompts_when_no_passwordless_grant(self, tmp_path, monkeypatch):
+        path = tmp_path / "cove"
+        path.write_text("alice ALL=(ALL) NOPASSWD: ALL\n")
+        monkeypatch.setattr(sudoers, "SUDOERS_PATH", path)
+        calls = _patch_run_script(
+            monkeypatch,
+            [
+                _Proc(1, stderr="sudo: a password is required\n"),
+                _Proc(0),
+                _Proc(1, stderr="sudo: a password is required\n"),
+            ],
+        )
+        with patch("cove.sudoers.getpass.getpass", return_value="secret") as mock_getpass:
+            result = CliRunner().invoke(sudoers.sudo, ["disable"])
+
+        assert result.exit_code == 0, result.output
+        assert len(calls) == 3
+        assert calls[0] == ["sudo", "-n", "rm", "-f", str(path)]
+        assert calls[1][0] == "sudo" and "-S" in calls[1] and "rm" in calls[1]
+        assert calls[2] == ["sudo", "-n", "-l"]
+        mock_getpass.assert_called_once()
+
+    def test_nothing_to_do_when_dropin_absent(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sudoers, "SUDOERS_PATH", tmp_path / "nope")
+        calls = _patch_run_script(monkeypatch, [])
+
+        result = CliRunner().invoke(sudoers.sudo, ["disable"])
+
+        assert result.exit_code == 0, result.output
+        assert calls == []
+        assert "nothing to do" in result.output
+
+    def test_fails_loud_when_removal_fails(self, tmp_path, monkeypatch):
+        path = tmp_path / "cove"
+        path.write_text("alice ALL=(ALL) NOPASSWD: ALL\n")
+        monkeypatch.setattr(sudoers, "SUDOERS_PATH", path)
+        _patch_run_script(
+            monkeypatch,
+            [
+                _Proc(1, stderr="sudo: a password is required\n"),
+                _Proc(1, stderr="rm: Operation not permitted\n"),
+            ],
+        )
+        with patch("cove.sudoers.getpass.getpass", return_value="secret"):
+            result = CliRunner().invoke(sudoers.sudo, ["disable"])
+
+        assert result.exit_code != 0, "failed removal must abort"
+        assert "removal failed" in result.output
+
+    def test_warns_when_a_residual_nopasswd_grant_remains(self, tmp_path, monkeypatch):
+        path = tmp_path / "cove"
+        path.write_text("alice ALL=(ALL) NOPASSWD: ALL\n")
+        monkeypatch.setattr(sudoers, "SUDOERS_PATH", path)
+        _patch_run_script(
+            monkeypatch,
+            [_Proc(0), _Proc(0, stdout="User alice may run the following commands on devbox:\n    (ALL) NOPASSWD: ALL\n")],
+        )
+
+        result = CliRunner().invoke(sudoers.sudo, ["disable"])
+
+        assert result.exit_code == 0, result.output
+        assert "still in place" in result.output
+        assert "another NOPASSWD: ALL grant" in result.output
+
+
 class TestPasswordlessSudoOk:
     """The check is functional: `sudo -n -l` output must name NOPASSWD: ALL.
 
