@@ -222,7 +222,7 @@ class TestSudoStatusCommand:
         result = runner.invoke(sudoers.sudo, ["status"])
         assert result.exit_code == 0
         assert "NOT in place" in result.output
-        assert "`cove sudo setup`" in result.output
+        assert "`cove sudo enable`" in result.output
 
     def test_status_reports_installed(self, monkeypatch):
         monkeypatch.setattr(sudoers, "passwordless_sudo_ok", lambda: True)
@@ -258,15 +258,15 @@ class _RunFail:
         self.calls.append(cmd)
         return self
 
-class TestSudoSetupCommand:
-    def test_setup_validates_before_install_and_stages_move(self, tmp_path, monkeypatch):
-        """setup must run visudo -c -sf on the rendered file, then install via
+class TestSudoEnableCommand:
+    def test_enable_validates_before_install_and_stages_move(self, tmp_path, monkeypatch):
+        """enable must run visudo -c -sf on the rendered file, then install via
         a staging step (cp to *.tmp, chmod 440, visudo -c -f *.tmp, mv)."""
         runner_run = _RunOk()
         with patch("cove.sudoers.getpass.getpass", return_value="secret"), patch(
             "cove.sudoers.subprocess.run", runner_run
         ):
-            result = CliRunner().invoke(sudoers.sudo, ["setup"])
+            result = CliRunner().invoke(sudoers.sudo, ["enable"])
         assert result.exit_code == 0, result.output
         assert len(runner_run.calls) == 2, (
             f"expected visudo precheck + sudo install, got: {runner_run.calls}"
@@ -279,20 +279,38 @@ class TestSudoSetupCommand:
         assert "chmod 440" in str(sh_cmd)
         assert f"visudo -c -f {sudoers.SUDOERS_PATH}.tmp" in str(sh_cmd)
 
-    def test_setup_aborts_without_installing_on_failed_validation(self, tmp_path, monkeypatch):
+    def test_setup_alias_runs_the_same_flow(self, tmp_path, monkeypatch):
+        """`setup` remains as a hidden alias for `enable` (existing references
+        and muscle memory); it must invoke the identical flow."""
+        runner_run = _RunOk()
+        with patch("cove.sudoers.getpass.getpass", return_value="secret"), patch(
+            "cove.sudoers.subprocess.run", runner_run
+        ):
+            result = CliRunner().invoke(sudoers.sudo, ["setup"])
+        assert result.exit_code == 0, result.output
+        assert len(runner_run.calls) == 2
+
+    def test_setup_alias_is_hidden_from_help(self):
+        result = CliRunner().invoke(sudoers.sudo, ["--help"])
+        assert result.exit_code == 0
+        assert "enable" in result.output
+        assert "disable" in result.output
+        assert "setup" not in result.output
+
+    def test_enable_aborts_without_installing_on_failed_validation(self, tmp_path, monkeypatch):
         runner_run = _RunFail()
         with patch("cove.sudoers.getpass.getpass", return_value="secret"), patch(
             "cove.sudoers._rendered_sudoers", return_value="bogus !invalid"
         ), patch("cove.sudoers.subprocess.run", runner_run):
-            result = CliRunner().invoke(sudoers.sudo, ["setup"])
+            result = CliRunner().invoke(sudoers.sudo, ["enable"])
         assert result.exit_code != 0, "invalid sudoers must abort setup"
         assert "failed validation" in result.output
         assert not any(c[0] == "sudo" for c in runner_run.calls), (
             "setup must not invoke sudo when the rendered file fails visudo"
         )
 
-    def test_setup_under_sudo_grants_operator_without_password_prompt(self, monkeypatch):
-        """`sudo cove sudo setup` runs as root: no password prompt, and the
+    def test_enable_under_sudo_grants_operator_without_password_prompt(self, monkeypatch):
+        """`sudo cove sudo enable` runs as root: no password prompt, and the
         grant targets SUDO_USER, not root (the bug that silently dropped the
         operator's passwordless sudo)."""
         monkeypatch.setattr(sudoers.os, "geteuid", lambda: 0)

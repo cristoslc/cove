@@ -9,6 +9,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Added
 - **`cove sudo disable`** — removes `/etc/sudoers.d/cove` so `cove up` prompts for the BECOME password again. Prompt-free when passwordless sudo is already in place (or running as root); one sudo password prompt otherwise. After removal the functional check runs again, so the reported state is the truth even if some other `NOPASSWD: ALL` grant exists outside the cove drop-in (it says so and points at `sudo -l` rather than claiming success). Fails loud if the removal itself fails. Complements the retire-the-grant direction in `docs/musings/cove-up-sudo-friction.md`.
 
+### Changed
+- **`cove sudo enable` replaces `cove sudo setup`** — the sudo group is now a true toggle triad (`enable` / `disable` / `status`), matching the repeatable on/off reality instead of one-time-provisioning framing. `setup` remains as a hidden alias with identical behavior for existing references and muscle memory; status remediation messages, help texts, and the repo AGENTS.md now point at `enable`. Folded into 0.11.0 before its first tag, so no released version changes shape.
+
 ## 0.10.1 (2026-10-02)
 
 ### Fixed

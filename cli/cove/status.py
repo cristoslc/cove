@@ -123,7 +123,7 @@ def _check_nginx_ingress() -> CheckResult:
         hints=[
             "Is port 8443 free? Run `lsof -i :8443`",
             "Check nginx: `docker logs cove-nginx`",
-            "Run `cove sudo setup` then `cove up` to configure pf 443→8443",
+            "Run `cove sudo enable` then `cove up` to configure pf 443→8443",
         ],
     )
 
@@ -192,7 +192,7 @@ def _check_dns() -> CheckResult:
         hints=[
             "Check /etc/hosts: `grep cove /etc/hosts`",
             "Check /etc/resolver/cove",
-            "Run `cove sudo setup` then `cove up` to configure DNS",
+            "Run `cove sudo enable` then `cove up` to configure DNS",
         ],
     )
 
