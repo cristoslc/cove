@@ -242,10 +242,10 @@ def up(no_provision, no_upgrade, all_, log):
     # Prompt for the BECOME password only when the operator has not installed
     # the passwordless sudoers drop-in (`cove sudo setup`).
     if passwordless_sudo_ok():
-        ansible_env["ANSIBLE_BECOME_PASSWORD"] = ""
+        ansible_env["ANSIBLE_BECOME_PASS"] = ""
     else:
         become_pass = getpass.getpass("BECOME password: ")
-        ansible_env["ANSIBLE_BECOME_PASSWORD"] = become_pass
+        ansible_env["ANSIBLE_BECOME_PASS"] = become_pass
 
     # `cove up --all` starts every optional service. LiteLLM and Speedtest
     # need credentials prepared by the CLI (1Password/Vault seeds injected
