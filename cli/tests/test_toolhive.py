@@ -290,14 +290,26 @@ class TestComposeServiceDefinitions:
         )
 
     def test_toolhive_mounts_registry_read_only(self):
-        """The seeded registry must be mounted :ro — the control plane must not
-        be able to rewrite the curated catalog."""
+        """The curated registry must be mounted :ro — the control plane must not
+        be able to rewrite the catalog. Mounted as a directory bind
+        (${COVE_DATA_ROOT}/toolhive:/registry): the distroless v0.51.4
+        rootfs has no /registry path, so a file-to-file mount fails with
+        ENOTDIR (verified in the v0.51.4 layer tarball, 2026-10-06). The
+        directory bind makes registry.json appear at
+        /registry/registry.json, where the seeded config points the
+        control plane."""
         data = _load_compose()
         volumes = [str(v) for v in data["services"]["toolhive"].get("volumes", [])]
-        registry_mounts = [v for v in volumes if "registry.json" in v]
-        assert registry_mounts, "toolhive must mount the seeded registry.json"
+        registry_mounts = [v for v in volumes if v.endswith(":/registry:ro")]
+        assert registry_mounts, (
+            f"toolhive must mount the seeded registry directory, got: {volumes}"
+        )
         for v in registry_mounts:
             assert ":ro" in v, f"registry mount must be :ro, got: {v}"
+        # No other volume may shadow /registry with a narrower file bind.
+        assert not [v for v in volumes if "/registry/registry.json" in v], (
+            "file bind to /registry/registry.json must not return (distroless rootfs has no /registry)"
+        )
 
     def test_toolhive_mounts_permission_profiles_read_only(self):
         data = _load_compose()
