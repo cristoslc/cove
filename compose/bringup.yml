@@ -529,12 +529,22 @@
         mode: "0644"
         force: false
 
-    - name: Render ToolHive config from template (first boot only)
+    - name: Render ToolHive config from template (first boot, or re-seed when overwritten)
       ansible.builtin.template:
         src: "{{ playbook_dir }}/toolhive/config.yaml.j2"
         dest: "{{ cove_data_root }}/toolhive/config/toolhive/config.yaml"
         mode: "0644"
-      when: not (cove_data_root ~ "/toolhive/config/toolhive/config.yaml") is exists
+      vars:
+        toolhive_config_path: "{{ cove_data_root ~ '/toolhive/config/toolhive/config.yaml' }}"
+      # First boot only, plus a repair path: thv's own config persistence has
+      # been observed to rewrite the seeded file (schema migration) and blank
+      # local_registry_path, leaving the control plane without the curated
+      # registry. Re-render only when the value is missing/blank so operator
+      # edits stay preserved (litellm config pattern).
+      when: >-
+        (not (toolhive_config_path) is exists)
+        or ((lookup('file', toolhive_config_path) | default('', true))
+            | regex_search('local_registry_path:\\s*["\']?\\s*$', multiline=True) is not none)
 
     - name: Render dnsmasq config from template
       ansible.builtin.template:
