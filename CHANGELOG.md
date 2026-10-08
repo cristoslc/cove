@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.1 (2026-10-08)
+
+### Security
+- **urllib3 bumped 2.7.0 → 2.8.0 in `cli/uv.lock`** — closes all three open Dependabot alerts on the GitHub default branch (2 high, 1 moderate): GHSA-vxq7-64xx-v4gw (unbounded chunk-size line buffering in `HTTPResponse.stream()`/`read_chunked()`), GHSA-8988-9cw3-xx77 (HTTPS proxy TLS configuration may be ignored or overridden), GHSA-gh4c-6fx4-qh6g (chunked deflate streaming infinite loop). All three are patched in 2.8.0. Note: `uv tool install` resolves fresh at install time and already had 2.8.0 on machines installed from in the last day; the lock is the canonical pin and the thing Dependabot scans.
+
 ## 0.12.0 (2026-10-08)
 
 ### Changed
