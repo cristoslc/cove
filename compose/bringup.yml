@@ -75,44 +75,55 @@
       register: compose_plugin_cfg
       changed_when: "'added' in compose_plugin_cfg.stdout and 'already' not in compose_plugin_cfg.stdout"
 
-    - name: Ensure Colima is running (macOS)
+    - name: Ensure a Docker engine is reachable (macOS, Colima as fallback)
       when: ansible_system == "Darwin"
       block:
-        - name: Start Colima (idempotent — no-op if already running)
-          ansible.builtin.command: colima start
-          changed_when: false
-
-        - name: Switch Docker context to Colima
-          ansible.builtin.command: docker context use colima
-          changed_when: true
-
-        - name: Wait for Docker daemon to be ready
+        - name: Probe active Docker daemon (respects the current docker context)
           ansible.builtin.command: docker info
-          register: docker_info
-          retries: 15
+          register: docker_probe
+          retries: 3
           delay: 2
-          until: docker_info.rc == 0
+          until: docker_probe.rc == 0
           changed_when: false
-          ignore_errors: true
+          failed_when: false
 
-        - name: Restart Colima if daemon is unresponsive
-          when: docker_info is failed
+        - name: Fall back to Colima when no daemon responds
+          when: docker_probe is failed
           block:
-            - name: Stop Colima
-              ansible.builtin.command: colima stop
-              changed_when: true
-
-            - name: Start Colima
+            - name: Start Colima (idempotent — no-op if already running)
+              when: docker_probe is failed
               ansible.builtin.command: colima start
-              changed_when: true
+              changed_when: false
 
-            - name: Wait for Docker daemon to be ready (after restart)
+            - name: Wait for Docker daemon to be ready (Colima fallback)
+              when: docker_probe is failed
               ansible.builtin.command: docker info
-              register: docker_info_retry
+              register: docker_info
               retries: 15
               delay: 2
-              until: docker_info_retry.rc == 0
+              until: docker_info.rc == 0
               changed_when: false
+              ignore_errors: true
+
+            - name: Restart Colima if daemon is unresponsive
+              when: docker_info is failed
+              block:
+                - name: Stop Colima
+                  ansible.builtin.command: colima stop
+                  changed_when: true
+
+                - name: Start Colima
+                  when: docker_probe is failed
+                  ansible.builtin.command: colima start
+                  changed_when: true
+
+                - name: Wait for Docker daemon to be ready (after restart)
+                  ansible.builtin.command: docker info
+                  register: docker_info_retry
+                  retries: 15
+                  delay: 2
+                  until: docker_info_retry.rc == 0
+                  changed_when: false
 
     - name: Check if tailscale is up
       ansible.builtin.command: tailscale status --json
@@ -529,12 +540,22 @@
         mode: "0644"
         force: false
 
-    - name: Render ToolHive config from template (first boot only)
+    - name: Render ToolHive config from template (first boot, or re-seed when overwritten)
       ansible.builtin.template:
         src: "{{ playbook_dir }}/toolhive/config.yaml.j2"
         dest: "{{ cove_data_root }}/toolhive/config/toolhive/config.yaml"
         mode: "0644"
-      when: not (cove_data_root ~ "/toolhive/config/toolhive/config.yaml") is exists
+      vars:
+        toolhive_config_path: "{{ cove_data_root ~ '/toolhive/config/toolhive/config.yaml' }}"
+      # First boot only, plus a repair path: thv's own config persistence has
+      # been observed to rewrite the seeded file (schema migration) and blank
+      # local_registry_path, leaving the control plane without the curated
+      # registry. Re-render only when the value is missing/blank so operator
+      # edits stay preserved (litellm config pattern).
+      when: >-
+        (not (toolhive_config_path) is exists)
+        or ((lookup('file', toolhive_config_path) | default('', true))
+            | regex_search('local_registry_path:\\s*["\']?\\s*$', multiline=True) is not none)
 
     - name: Render dnsmasq config from template
       ansible.builtin.template:
@@ -625,6 +646,31 @@
       loop:
         - { key: "ADE_PORT", value: "{{ ade_port }}" }
         - { key: "ADE_CONTAINER_NAME", value: "{{ ade_container_name }}" }
+
+    # Socket-mounting services (forgejo-runner, toolhive) must join the
+    # docker daemon's group inside the engine VM, which differs per engine
+    # (Colima: 991, OrbStack/Docker Desktop: 0). Detect the gid through the
+    # daemon itself — mount the socket read-only in a scratch container and
+    # stat it — and re-sync the .env on every `cove up`, so switching
+    # engines never leaves a stale gid behind (2026-10-06 OrbStack cutover).
+    - name: Detect the Docker daemon socket gid for the active engine
+      ansible.builtin.shell: |
+        out=$(docker run --rm -v /var/run/docker.sock:/s:ro alpine:3 stat -c %g /s 2>/dev/null) || true
+        [ -n "$out" ] && printf '%s' "$out"
+      register: docker_socket_gid
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure socket-gid .env entries match the detected daemon group
+      when: docker_socket_gid.stdout | trim | length > 0
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^{{ item }}="
+        line: "{{ item }}={{ docker_socket_gid.stdout | trim }}"
+        mode: "0600"
+      loop:
+        - FORGEJO_RUNNER_DOCKER_GID
+        - TOOLHIVE_DOCKER_GID
 
     - name: Render tunnel env (tunnel profile only)
       when: "'tunnel' in (cove_profiles | default(''))"
