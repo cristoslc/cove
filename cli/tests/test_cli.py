@@ -264,6 +264,74 @@ class TestDeploymentManifests:
             "before 'Bring up pod via docker compose'"
         )
 
+    def test_nginx_binds_443_directly(self):
+        """nginx must own 443 directly in compose — the pf rdr shim is gone,
+        so nothing translates 443 → 8443 anymore."""
+        dc = COMPOSE_DIR / "docker-compose.yml"
+        assert dc.exists(), f"docker-compose.yml not found at {dc}"
+        text = dc.read_text()
+        assert '"0.0.0.0:443:443"' in text, (
+            "nginx must publish 0.0.0.0:443:443 (no pf shim)"
+        )
+        assert "NGINX_HTTPS_PORT:-8443" not in text, (
+            "compose must not default the HTTPS publish to 8443"
+        )
+
+    def test_bringup_has_no_pf_or_tailscale_serve(self):
+        """bringup.yml must not resurrect the pf rdr shim or tailscale serve:
+        cove up can never re-install what the plan deleted."""
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+        text = bp.read_text()
+        assert "rdr-anchor" not in text and "pfctl" not in text, (
+            "bringup.yml must not configure pf rdr (443→8443 shim dropped)"
+        )
+        assert "tailscale serve" not in text, (
+            "bringup.yml must not configure tailscale serve (removed with pf shim)"
+        )
+
+    def test_bringup_env_render_has_no_dead_https_port_export(self):
+        """The .env render must not export NGINX_HTTPS_PORT: the nginx publish
+        is hardcoded 0.0.0.0:443:443 in compose, so a stale env value can
+        silently diverge from the actual binding."""
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+        text = bp.read_text()
+        assert "NGINX_HTTPS_PORT=" not in text, (
+            "bringup.yml env render must not export NGINX_HTTPS_PORT "
+            "(compose binds 443 directly; a stale value is a divergence trap)"
+        )
+
+    def test_staging_scripts_target_443(self):
+        """The staging harness must probe/point at 127.0.0.1:443 — nginx owns
+        443 directly and no longer publishes 8443."""
+        staging = PROJECT_ROOT / "scripts" / "staging"
+        for name in ("setup.sh", "deploy.sh", "e2e.sh"):
+            text = (staging / name).read_text()
+            assert "8443" not in text, (
+                f"scripts/staging/{name} must not reference 8443 "
+                "(nginx no longer publishes it)"
+            )
+            assert "127.0.0.1:443" in text, (
+                f"scripts/staging/{name} must target 127.0.0.1:443"
+            )
+
+    def test_e2e_staging_tests_target_443(self):
+        """Staging/e2e-marked tests must hit 127.0.0.1:443, not the dropped
+        8443 publish. This guard's own file (test_cli.py) carries the literal
+        '8443' only inside its assertion messages, so it is excluded."""
+        tests_dir = PROJECT_ROOT / "cli" / "tests"
+        offenders = []
+        for path in sorted(tests_dir.glob("test_*.py")):
+            if path.name == "test_cli.py":
+                continue
+            if "8443" in path.read_text():
+                offenders.append(path.name)
+        assert not offenders, (
+            f"test files still reference 8443: {offenders} "
+            "(nginx owns 443 directly)"
+        )
+
     def test_tailscale_tasks_safe_when_daemon_dead(self):
         """All tailscale tasks must survive `tailscale status --json` returning {}."""
         bp = COMPOSE_DIR / "bringup.yml"

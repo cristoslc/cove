@@ -93,5 +93,5 @@ Master coverage matrix: `docs/test-coverage-matrix.yaml`
 
 ## Staging E2E
 
-Staging runs the branch as an **isolated** Docker Compose project (`-p cove-staging`, nginx on `https://127.0.0.1:9443`) — the live stack is never re-rendered or restarted. Scripts: `scripts/staging/deploy-isolated.sh` (deploy), `e2e.sh` (tier 2 tests), `teardown.sh` (compose down -v + staging data removal). The legacy in-live mode (`deploy.sh`, port 8443) still exists but re-renders live nginx and restarts live containers; use it only deliberately.
+Staging runs the branch as an **isolated** Docker Compose project (`-p cove-staging`, nginx on `https://127.0.0.1:9443`) — the live stack is never re-rendered or restarted. Scripts: `scripts/staging/deploy-isolated.sh` (deploy), `e2e.sh` (tier 2 tests), `teardown.sh` (compose down -v + staging data removal). The legacy in-live mode (`deploy.sh`, port 443 since the pf shim was dropped) still exists but re-renders live nginx and restarts live containers; use it only deliberately.
 Full reference: `.agents/agents-md-detail/staging-e2e.md`.
