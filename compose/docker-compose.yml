@@ -301,8 +301,10 @@ services:
       # ToolHive state, logs, workload status, server discovery file
       - ${COVE_DATA_ROOT}/toolhive/state:/state/toolhive-data
       # Curated registry + permission profiles: read-only — the control plane
-      # must not rewrite the IaC-declared catalog.
-      - ${COVE_DATA_ROOT}/toolhive/registry.json:/registry/registry.json:ro
+      # must not rewrite the IaC-declared catalog. Directory bind (file
+      # binds can't create the missing /registry path in the distroless
+      # v0.51.4 rootfs; file-to-file mount fails with ENOTDIR).
+      - ${COVE_DATA_ROOT}/toolhive:/registry:ro
       - ${COVE_DATA_ROOT}/toolhive/profiles:/profiles:ro
       # Control-plane-only socket mount: sibling MCP-server containers are
       # constrained by ToolHive permission profiles and explicit per-server
