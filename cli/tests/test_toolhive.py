@@ -608,11 +608,14 @@ class TestCLI:
             "cove toolhive status must check through nginx with Host: mcp.cove"
         )
 
-    def test_toolhive_status_checks_8443_not_direct_port(self):
-        """The status health probe must go through nginx (8443), never the
-        direct loopback port — keeps the ingress the single front door."""
+    def test_toolhive_status_checks_via_nginx_https_port_not_direct_port(self):
+        """The status health probe must go through nginx's HTTPS port
+        (cove.constants NGINX_HTTPS_PORT), never a hardcoded direct port —
+        keeps the ingress the single front door and honors nginx owning 443."""
         source = (PROJECT_ROOT / "cli" / "cove" / "toolhive.py").read_text()
-        assert "8443" in source, "status must check through nginx (8443), not a direct port"
+        assert "NGINX_HTTPS_PORT" in source, (
+            "status must probe through NGINX_HTTPS_PORT, not a hardcoded port"
+        )
 
 
 class TestStatusOptionalServices:
