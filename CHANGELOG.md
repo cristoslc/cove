@@ -4,6 +4,13 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.11.1 (2026-10-08)
+
+### Fixed
+- **ToolHive never started: the curated registry was mounted as a file into a directory that does not exist** — 0.11.0's compose bind-mounted `registry.json` straight to `/registry/registry.json`, but the distroless `thv` rootfs (v0.51.4) ships no `/registry` directory and Docker cannot create one for file→file binds, so the container exited 127 with a "not a directory" mount error. The mount is now a directory bind (`${COVE_DATA_ROOT}/toolhive:/registry:ro`; Docker creates the destination and the seed file appears at `/registry/registry.json`), and bringup's render task re-runs when the seed file is missing or when `thv`'s persisted config has blanked `local_registry_path` (a second way the curated registry went dark). Contract tests updated to the directory-bind shape.
+- **bringup forced Colima on macOS, resurrecting the VM behind the operator's back** — every `cove up` ran `colima start` + `docker context use colima` unconditionally, re-pinning the engine to Colima and rewriting the Docker context in `~/.docker/config.json`. Bringup now probes `docker info` first: an answerable daemon wins as-is, Colima is only started as a fallback when no engine responds.
+- **forgejo-runner and toolhive restart-looped on non-Colima engines** — the compose env hardcoded Colima's docker.sock group id (991), while OrbStack's socket is `root:root` (gid 0), so gid-filtered access failed. Bringup now detects the live daemon's in-VM socket gid (scratch `stat` container) and syncs `FORGEJO_RUNNER_DOCKER_GID` / `TOOLHIVE_DOCKER_GID` into `.env` on every `cove up`. Two bringup contract tests pin the manifest.
+
 ## 0.11.0 (2026-10-02)
 
 ### Added
