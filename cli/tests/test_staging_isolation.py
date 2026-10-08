@@ -63,10 +63,11 @@ LIVE_CONTAINER_NAMES = {
     "cove-tunnel",
 }
 
-# Live host ports observed on this machine (docker ps, 2026-09-25):
-# nginx 8443/tcp + 8080/tcp + 80/tcp, dnsmasq 5353/udp, forgejo ssh 2222,
+# Live host ports observed on this machine (docker ps, 2026-09-25; nginx
+# owns 443 directly since the pf shim drop):
+# nginx 443/tcp + 8080/tcp + 80/tcp, dnsmasq 5353/udp, forgejo ssh 2222,
 # litellm 4000, headroom 4001, speedtest 8982.
-LIVE_HOST_PORTS = {"80", "8080", "8443", "5353", "2222", "4000", "4001", "8982"}
+LIVE_HOST_PORTS = {"443", "80", "8080", "5353", "2222", "4000", "4001", "8982"}
 
 # The live stack's data root (never mounted, never written by staging).
 LIVE_DATA_ROOT = Path("~/Documents/cove-data").expanduser()

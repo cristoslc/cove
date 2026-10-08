@@ -4,6 +4,7 @@ import subprocess
 
 import click
 
+from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import resolve_compose_dir
 
 
@@ -71,7 +72,7 @@ def status():
     click.echo("Checking mcp.cove through nginx...")
     for host in ("mcp.cove.local", "mcp.cove"):
         health = subprocess.run(
-            ["curl", "-sf", "-H", f"Host: {host}", "https://127.0.0.1:8443/health"],
+            ["curl", "-sf", "-H", f"Host: {host}", f"https://127.0.0.1:{NGINX_HTTPS_PORT}/health"],
             capture_output=True, text=True, timeout=10,
         )
         if health.returncode == 0:
