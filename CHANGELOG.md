@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.12.0 (2026-10-08)
+
+### Changed
+- **nginx owns port 443 directly — the pf 443→8443 shim is gone** — compose now publishes `0.0.0.0:443:443` (nginx was already listening on 443 inside the container; only the host facing port was wrong). Bringup no longer installs a macOS pf redirect for `localhost:443 → 8443` on every `cove up`, and no longer wires a `tailscale serve` listener on 443. `NGINX_HTTPS_PORT` is removed from `.env`/Ansible; the single source of truth is `cove.constants.NGINX_HTTPS_PORT = 443`, re-exported by `cove.status`. All CLI probes (`cove status`, `cove litellm status`, `cove speedtest status`, `cove toolhive status`) go through nginx via that constant — nothing in the CLI hardcodes 8443 anymore. Contract tests pin the compose publish, the port coupling points, and that `scripts/staging/*` no longer reference 8443; the legacy in-live staging default moves to `https://127.0.0.1:443`. Rationale: pf rules do not survive reboot and silently failed (`failed_when: false`), so `https://git.cove/` and friends were unreachable from the browser even while `cove status` (probing 8443 directly) reported green. This lands the reviewed sashay `drop-pf-shim-nginx-owns-443` (Forgejo chronicle 2026-09-19; three review rounds converged, approved).
+
 ## 0.11.1 (2026-10-08)
 
 ### Fixed
