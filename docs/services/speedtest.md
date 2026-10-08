@@ -15,7 +15,7 @@ cove speedtest up
 cove speedtest status
 ```
 
-The tracker is accessible at `https://speedtest.cove.local/` through Cove's nginx ingress (port 8443 → 443 via pf). The container itself binds to `127.0.0.1:8982` only — no published `0.0.0.0` host port.
+The tracker is accessible at `https://speedtest.cove.local/` through Cove's nginx ingress (nginx binds port 443 directly). The container itself binds to `127.0.0.1:8982` only — no published `0.0.0.0` host port.
 
 ## Admin identity (unified Cove admin)
 
@@ -40,7 +40,7 @@ On subsequent runs, the shared item / cached value is reused — no regeneration
 
 ## Auth Posture (security)
 
-`speedtest.cove` is LAN/Tailscale-reachable (nginx publishes `0.0.0.0:8443`), so auth is required, not cosmetic.
+`speedtest.cove` is LAN/Tailscale-reachable (nginx publishes `0.0.0.0:443`), so auth is required, not cosmetic.
 
 The pinned image (`lscr.io/linuxserver/speedtest-tracker:v1.14.5-ls162`, upstream Speedtest Tracker v1.14.5) **enforces app login on first run**. The UI redirects unauthenticated visitors to a login screen; the default credentials are `admin@example.com` / `password` and **must be changed on first login** via the Users page. The admin identity is the unified Cove admin (`admin@cove.local` + word-based passphrase, see [ADR-017](adr/adr-017-unified-cove-admin-identity.md)). This is a real login gate — it is NOT an unauthenticated-by-default dashboard.
 
@@ -79,5 +79,5 @@ Data lives at `~/Documents/cove-data/speedtest/`. The `.env` is written by `cove
 
 - `cove speedtest up` — start (uses `--profile speedtest`, does not touch core services).
 - `cove speedtest down` — stop (uses `stop`, preserves data).
-- `cove speedtest status` — check through nginx on `speedtest.cove` via 8443.
+- `cove speedtest status` — check through nginx on `speedtest.cove` via 443.
 - `cove speedtest logs` — tail logs.
