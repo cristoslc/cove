@@ -157,23 +157,6 @@
       ansible.builtin.set_fact:
         ts_ip: "{{ ansible_default_ipv4.address }}"
 
-    - name: Configure tailscale serve for HTTPS on port 443
-      when:
-        - ts_status.rc == 0
-        - (ts_status.stdout | default('{}') | from_json).Self is not none
-        - (ts_status.stdout | default('{}') | from_json).Self.Online
-      ansible.builtin.shell: |
-        set -eo pipefail
-        JSON=$(tailscale serve status --json 2>/dev/null || echo '{}')
-        if echo "$JSON" | python3 -c "import json,sys; s=json.load(sys.stdin); exit(0 if s.get('Web',{}).get('443') else 1)"; then
-          echo "already configured"
-        else
-          tailscale serve --bg --https "443" https://127.0.0.1:{{ nginx_https_port }}
-          echo "configured"
-        fi
-      register: ts_serve_https
-      changed_when: "'configured' in ts_serve_https.stdout and 'already' not in ts_serve_https.stdout"
-
     - name: Ensure root CA exists
       ansible.builtin.command: >
         cove certs ensure-ca
@@ -336,22 +319,6 @@
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
         line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local mcp.cove mcp.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
         state: present
-      failed_when: false
-
-    - name: Forward localhost:443 → localhost:{{ nginx_https_port }} via pf
-      become: true
-      when: ansible_system == "Darwin"
-      ansible.builtin.shell: |
-        set -eo pipefail
-        if pfctl -s nat 2>/dev/null | grep -q '{{ nginx_https_port }}'; then
-          echo "already configured"
-        else
-          RDR='rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port {{ nginx_https_port }}'
-          printf 'rdr-anchor "cove-https"\n%s\npass all\n' "$RDR" | pfctl -ef - >/dev/null 2>&1
-          echo "configured"
-        fi
-      register: pf_443
-      changed_when: "'configured' in pf_443.stdout and 'already' not in pf_443.stdout"
       failed_when: false
 
     # DATA DIRECTORIES -------------------------------------------------------
@@ -608,7 +575,6 @@
           DNSMASQ_CONTAINER_NAME={{ dnsmasq_container_name }}
           DNSPROXY_CONTAINER_NAME={{ dnsproxy_container_name }}
           DNSMASQ_PORT={{ dnsmasq_port }}
-          NGINX_HTTPS_PORT={{ nginx_https_port }}
           NGINX_HTTP_PORT={{ nginx_http_port }}
           LITELLM_IMAGE={{ litellm_image | default('cove-litellm:1.84.0') }}
           LITELLM_CONTAINER_NAME={{ litellm_container_name | default('cove-litellm') }}

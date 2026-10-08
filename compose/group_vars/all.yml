@@ -54,7 +54,11 @@ nginx_image: "nginx:1.27-alpine"
 nginx_container_name: cove-nginx
 nginx_conf_dir: "{{ playbook_dir }}/nginx"
 nginx_http_port: 8080
-nginx_https_port: 8443
+# Host HTTPS port used ONLY in Ansible-rendered URLs (health checks,
+# forgejo_api_url, vault_addr). The compose publish for nginx is hardcoded
+# 0.0.0.0:443:443 and does NOT follow this var, so changing it here will not
+# move the published port.
+nginx_https_port: 443
 
 # --- ADE (bb server, optional) ---
 # Single source of truth for the ADE port: the nginx template and the
