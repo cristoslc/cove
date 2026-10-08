@@ -107,6 +107,96 @@ class TestDeploymentManifests:
             "docker_compose_v2 wait should be false to avoid sealed-Vault failures"
         )
 
+    @staticmethod
+    def _iter_tasks(tasks):
+        """Yield every task dict in a bringup task list, flattening nested
+        ``block``/``rescue``/``always`` entries."""
+        for t in tasks:
+            if not isinstance(t, dict):
+                continue
+            yield t
+            for sub in ("block", "rescue", "always"):
+                for inner in t.get(sub) or []:
+                    yield from TestDeploymentManifests._iter_tasks([inner])
+
+    def test_bringup_does_not_pin_docker_context_to_colima(self):
+        """bringup must respect the operator's active Docker context on macOS
+        and treat Colima only as a fallback when no daemon responds.
+
+        Regression (2026-10-06): bringup unconditionally ran `colima start`
+        and `docker context use colima` on Darwin, so every `cove up`
+        pinned the engine to Colima and silently discarded an OrbStack
+        (or Docker Desktop) cutover — containers landed on Colima and the
+        context flip reverted ~/.docker/config.json behind the operator.
+        """
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+
+        with open(bp) as f:
+            data = yaml.safe_load(f)
+        tasks = data[0]["tasks"] if isinstance(data, list) else data.get("tasks", [])
+        all_tasks = list(self._iter_tasks(tasks))
+
+        cmd = lambda t: t.get("ansible.builtin.command") or t.get("command") or ""
+        for t in all_tasks:
+            assert "docker context use colima" not in cmd(t), (
+                "bringup.yml must never force `docker context use colima`; "
+                "the daemon check + fallback governs engine selection"
+            )
+
+        probe = [
+            t for t in all_tasks
+            if "docker info" in cmd(t) and t.get("when", "") in ("", None, True)
+        ]
+        assert probe, (
+            "bringup.yml must probe `docker info` BEFORE starting Colima so the "
+            "active (non-Colima) engine is detected untouched"
+        )
+
+        fallbacks = [
+            t for t in all_tasks
+            if "colima start" in cmd(t)
+        ]
+        assert fallbacks, (
+            "bringup.yml must keep a Colima fallback for machines with no "
+            "running Docker engine"
+        )
+        for t in fallbacks:
+            when = t.get("when", "")
+            whens = [when] if isinstance(when, str) else list(when)
+            assert any("docker_probe is failed" in w for w in whens), (
+                "every `colima start` must be gated on the daemon probe "
+                "failing so a healthy non-Colima engine is never displaced"
+            )
+
+    def test_bringup_detects_docker_socket_gid(self):
+        """Socket-mounting services must learn the daemon's in-VM socket gid
+        from the engine itself, per `cove up`, instead of trusting the
+        Colima-only 991 default baked into compose.
+
+        Regression (2026-10-06): after the Colima→OrbStack cut over, the
+        Forgejo runner and ToolHive stayed in a restart loop: their
+        `group_add: [991]` grants matched only Colima's socket gid, while
+        OrbStack's in-VM socket is root:root (gid 0) — permission denied on
+        /var/run/docker.sock.
+        """
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+
+        content = bp.read_text()
+        assert "Detect the Docker daemon socket gid" in content, (
+            "bringup.yml must detect the docker socket gid from the live daemon"
+        )
+        assert "FORGEJO_RUNNER_DOCKER_GID" in content, (
+            "bringup.yml must sync FORGEJO_RUNNER_DOCKER_GID into the .env"
+        )
+        assert "TOOLHIVE_DOCKER_GID" in content, (
+            "bringup.yml must sync TOOLHIVE_DOCKER_GID into the .env"
+        )
+        assert "stat -c %g" in content, (
+            "the detection must read the socket's owning group, not guess"
+        )
+
     def test_bringup_nginx_handler_restarts_not_exec_reload(self):
         """The 'Reload nginx' handler must restart the container, not
         `docker exec … nginx -s reload`.
