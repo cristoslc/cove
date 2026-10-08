@@ -5,7 +5,7 @@
 #
 # Default target is the ISOLATED staging stack (deploy-isolated.sh): the
 # parallel cove-staging compose project on 127.0.0.1:9443. The legacy
-# in-live target (https://127.0.0.1:8443) can still be selected by passing
+# in-live target (https://127.0.0.1:443) can still be selected by passing
 # it as $1 or BB_STAGING_URL.
 # This script runs the project's tier 2 test command (pytest -m staging) against
 # the deployed staging stack.
@@ -20,7 +20,7 @@ CLI_DIR="$REPO_ROOT/cli"
 # Scope: the ISOLATED staging stack (deploy-isolated.sh, port 9443) serves the
 # ADE staging surface plus the toolhive staging surface (when the branch
 # declares the mcp profile), so only the modules written for it run. The
-# legacy in-live staging (deploy.sh, port 8443) serves the FULL staging tier
+# legacy in-live staging (deploy.sh, port 443) serves the FULL staging tier
 # sweep (including the dual-marked live-stack tests in test_e2e_dns.py).
 TARGET=""
 case "$STAGING_URL" in
