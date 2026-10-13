@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- **`cove update` brings up only what it changes — and only what is running** — convergence runs bring-up only when the release's bundled compose differs from what is deployed (real pin change; `.env` overrides and gitignored runtime artifacts like the rendered nginx config, dnsmasq config, and credential seeds never count), and only when cove containers are already running. A downed stack is never resurrected by an update (`cove up` remains the explicit way to start it), and a converged stack skips the multi-minute bring-up entirely. `cove update --check` now reports the running stack and whether convergence is pending. The new wheel's bundled pins are compared from the wheel itself (post-install), since the running process still holds the old code.
+
 ## 0.13.0 (2026-10-13)
 
 ### Added
