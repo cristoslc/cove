@@ -4,7 +4,7 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.13.0 (unreleased)
+## 0.13.0 (2026-10-13)
 
 ### Added
 - **`cove ade update`** — keep bb current in cove without leaving the IaC rails. Resolves the target (npm latest or explicit `--version`), writes the pin + image tag into the compose `.env` (a persistent override — bringup never rewrites those keys), rebuilds the image, recreates the container (data volume untouched), waits for `/health` through nginx, and **rolls back automatically** on failed health (previous image tag stays local, so rollback is `cove ade update --version <old>`). `--check` reports running vs pinned vs latest without changing anything. The server is the bb version anchor: it serves its own tarball to enrolled machines and daemons self-update to its protocol, so updating the server updates the harness.
@@ -16,6 +16,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - `cove up` gained `--non-interactive` (skips the BECOME prompt; for scheduled use) and honors `COVE_PULL_POLICY` so updates can force image re-pulls.
+
+### Fixed
+- **`cove ade` health probes used the dead 8443 port** — the ade-update branch predates the pf shim drop: `cove ade status` reported UNREACHABLE on healthy machines and `cove ade update`'s health-wait would always fail (spurious rollback). `ade.py` now uses `constants.NGINX_HTTPS_PORT` (nginx owns 443), like litellm/speedtest/toolhive. Regression test added (red-first).
+
 ## 0.12.1 (2026-10-08)
 
 ### Security
