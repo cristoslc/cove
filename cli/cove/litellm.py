@@ -6,6 +6,7 @@ import tempfile
 
 import click
 
+from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import resolve_compose_dir
 
 
@@ -237,7 +238,7 @@ def status():
     for host in ("litellm.cove.local", "litellm.cove"):
         try:
             health = subprocess.run(
-                ["curl", "-sf", "-H", f"Host: {host}", "https://127.0.0.1:8443/health/readiness"],
+                ["curl", "-sf", "-H", f"Host: {host}", f"https://127.0.0.1:{NGINX_HTTPS_PORT}/health/readiness"],
                 capture_output=True, text=True, timeout=10,
             )
         except subprocess.TimeoutExpired:

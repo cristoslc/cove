@@ -10,7 +10,8 @@ cove runner up
 
 This starts the runner container with the `runner` compose profile. **The runner
 is NOT registered yet.** Run `cove up` (with the runner profile active) to
-register it with your Forgejo instance. The runner may restart-loop between
+register it with your Forgejo instance — `cove up --all` does both in one
+command. The runner may restart-loop between
 `cove runner up` and registration.
 
 ## What It Does

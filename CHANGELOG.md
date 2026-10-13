@@ -4,7 +4,7 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.10.0 (2026-09-26)
+## 0.13.0 (unreleased)
 
 ### Added
 - **`cove ade update`** — keep bb current in cove without leaving the IaC rails. Resolves the target (npm latest or explicit `--version`), writes the pin + image tag into the compose `.env` (a persistent override — bringup never rewrites those keys), rebuilds the image, recreates the container (data volume untouched), waits for `/health` through nginx, and **rolls back automatically** on failed health (previous image tag stays local, so rollback is `cove ade update --version <old>`). `--check` reports running vs pinned vs latest without changing anything. The server is the bb version anchor: it serves its own tarball to enrolled machines and daemons self-update to its protocol, so updating the server updates the harness.
@@ -16,6 +16,55 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - `cove up` gained `--non-interactive` (skips the BECOME prompt; for scheduled use) and honors `COVE_PULL_POLICY` so updates can force image re-pulls.
+## 0.12.1 (2026-10-08)
+
+### Security
+- **urllib3 bumped 2.7.0 → 2.8.0 in `cli/uv.lock`** — closes all three open Dependabot alerts on the GitHub default branch (2 high, 1 moderate): GHSA-vxq7-64xx-v4gw (unbounded chunk-size line buffering in `HTTPResponse.stream()`/`read_chunked()`), GHSA-8988-9cw3-xx77 (HTTPS proxy TLS configuration may be ignored or overridden), GHSA-gh4c-6fx4-qh6g (chunked deflate streaming infinite loop). All three are patched in 2.8.0. Note: `uv tool install` resolves fresh at install time and already had 2.8.0 on machines installed from in the last day; the lock is the canonical pin and the thing Dependabot scans.
+
+## 0.12.0 (2026-10-08)
+
+### Changed
+- **nginx owns port 443 directly — the pf 443→8443 shim is gone** — compose now publishes `0.0.0.0:443:443` (nginx was already listening on 443 inside the container; only the host facing port was wrong). Bringup no longer installs a macOS pf redirect for `localhost:443 → 8443` on every `cove up`, and no longer wires a `tailscale serve` listener on 443. `NGINX_HTTPS_PORT` is removed from `.env`/Ansible; the single source of truth is `cove.constants.NGINX_HTTPS_PORT = 443`, re-exported by `cove.status`. All CLI probes (`cove status`, `cove litellm status`, `cove speedtest status`, `cove toolhive status`) go through nginx via that constant — nothing in the CLI hardcodes 8443 anymore. Contract tests pin the compose publish, the port coupling points, and that `scripts/staging/*` no longer reference 8443; the legacy in-live staging default moves to `https://127.0.0.1:443`. Rationale: pf rules do not survive reboot and silently failed (`failed_when: false`), so `https://git.cove/` and friends were unreachable from the browser even while `cove status` (probing 8443 directly) reported green. This lands the reviewed sashay `drop-pf-shim-nginx-owns-443` (Forgejo chronicle 2026-09-19; three review rounds converged, approved).
+
+## 0.11.1 (2026-10-08)
+
+### Fixed
+- **ToolHive never started: the curated registry was mounted as a file into a directory that does not exist** — 0.11.0's compose bind-mounted `registry.json` straight to `/registry/registry.json`, but the distroless `thv` rootfs (v0.51.4) ships no `/registry` directory and Docker cannot create one for file→file binds, so the container exited 127 with a "not a directory" mount error. The mount is now a directory bind (`${COVE_DATA_ROOT}/toolhive:/registry:ro`; Docker creates the destination and the seed file appears at `/registry/registry.json`), and bringup's render task re-runs when the seed file is missing or when `thv`'s persisted config has blanked `local_registry_path` (a second way the curated registry went dark). Contract tests updated to the directory-bind shape.
+- **bringup forced Colima on macOS, resurrecting the VM behind the operator's back** — every `cove up` ran `colima start` + `docker context use colima` unconditionally, re-pinning the engine to Colima and rewriting the Docker context in `~/.docker/config.json`. Bringup now probes `docker info` first: an answerable daemon wins as-is, Colima is only started as a fallback when no engine responds.
+- **forgejo-runner and toolhive restart-looped on non-Colima engines** — the compose env hardcoded Colima's docker.sock group id (991), while OrbStack's socket is `root:root` (gid 0), so gid-filtered access failed. Bringup now detects the live daemon's in-VM socket gid (scratch `stat` container) and syncs `FORGEJO_RUNNER_DOCKER_GID` / `TOOLHIVE_DOCKER_GID` into `.env` on every `cove up`. Two bringup contract tests pin the manifest.
+
+## 0.11.0 (2026-10-02)
+
+### Added
+- **`cove sudo disable`** — removes `/etc/sudoers.d/cove` so `cove up` prompts for the BECOME password again. Prompt-free when passwordless sudo is already in place (or running as root); one sudo password prompt otherwise. After removal the functional check runs again, so the reported state is the truth even if some other `NOPASSWD: ALL` grant exists outside the cove drop-in (it says so and points at `sudo -l` rather than claiming success). Fails loud if the removal itself fails. Complements the retire-the-grant direction in `docs/musings/cove-up-sudo-friction.md`.
+
+### Changed
+- **`cove sudo enable` replaces `cove sudo setup`** — the sudo group is now a true toggle triad (`enable` / `disable` / `status`), matching the repeatable on/off reality instead of one-time-provisioning framing. `setup` remains as a hidden alias with identical behavior for existing references and muscle memory; status remediation messages, help texts, and the repo AGENTS.md now point at `enable`. Folded into 0.11.0 before its first tag, so no released version changes shape.
+
+## 0.10.1 (2026-10-02)
+
+### Fixed
+- **`cove sudo status` could never report the drop-in installed** — the check ran `visudo -c -f /etc/sudoers.d/cove` unprivileged, but the drop-in is root:wheel 0440, so visudo always failed with EACCES and `cove up` prompted for the BECOME password even after a successful `cove sudo setup`. The check is now functional: `sudo -n -l` (never prompts, mutates nothing) must list a `NOPASSWD: ALL` grant; the listing is parsed, not just the exit code, so a recently cached sudo timestamp cannot fake a pass.
+- **`sudo cove sudo setup` installed the grant for root** — under sudo, `getpass.getuser()` returns root, so the rendered drop-in granted root `NOPASSWD: ALL` and silently dropped the operator's grant (the reason `cove up` re-prompted after a root-run setup). Setup now targets `SUDO_USER`, skips the password prompt when already root, and echoes the grant target.
+- **A typed BECOME password never reached sudo** — `cove up` set `ANSIBLE_BECOME_PASSWORD`, which matches no ansible-core setting; the sudo become plugin reads `ANSIBLE_BECOME_PASS` (ansible/plugins/become/sudo.py), so sudo ran with empty stdin and every become task died with `sudo: a password is required` even with the correct password typed. The env var is renamed on both the prompt and passwordless paths (an empty value stays falsy to the plugin, so no password is handed to sudo under the drop-in).
+
+## 0.10.0 (2026-09-28)
+
+### Added
+- **ToolHive MCP gateway (`cove toolhive`)** — optional `mcp` profile service at `https://mcp.cove/`; Cove's only MCP surface (LiteLLM's MCP endpoints stay disabled for CVE-2026-42271). One pinned `thv` control-plane container (read-only docker.sock, loopback-bound UI/API) manages sibling MCP-server containers constrained by permission profiles and explicit mounts; curated IaC registry (`compose/toolhive/registry.json`: filesystem/fetch/time seed servers, tag-pinned, remote fetch off for offline-first); nginx vhost returns 403 for everything except exact-match `/health` (private-range ACL) — the UI/API route opens in Phase 2 behind an auth layer. `cove toolhive up|down|status|logs`, `cove up --all` includes it; staging E2E (`deploy-isolated.sh` profile wiring, tier-2 auth-posture tests, teardown profile guard). Docs: `docs/services/toolhive.md`; plan: `docs/plans/toolhive-mcp-gateway.md` (Forgejo PR #59).
+
+## 0.9.1 (2026-09-28)
+
+### Fixed
+- **`cove up` failed at the nginx reload handler after a template re-render** — `open() "/etc/nginx/conf.d/default.conf" failed (2: No such file or directory)`. On macOS/Colima, file bind-mounts pin the host inode at container creation, and bringup's `template`/`copy` renders are atomic (rename → new inode), so the running cove-nginx mount served a stale inode (link-count 0) and `nginx -s reload` — which re-opens every config file — died with ENOENT, killing `cove up` at the handler flush. The handler now restarts the container (re-resolves the bind by path, ~1s blip) instead of exec-reloading; a bringup structure test pins the contract. Live-stack remediation: `docker restart cove-nginx`.
+
+### Added
+- **Tech-debt note on dual-host release drift** — `docs/tech-debt/dual-host-release-drift.md`: releases must exist on both GitHub and Forgejo (tags/releases/wheels currently diverge between the hosts; the stale goreleaser workflow can only fail); fix shape for automated dual-host publishing. v0.9.1 is the first release cut manually on both hosts as the stopgap.
+
+## 0.9.0 (2026-09-26)
+
+### Added
+- **`cove up --all`** — launches every optional service along with the default ones. The bringup pod starts Runner with the core services (ADE is core since 0.8.0); the LiteLLM and Speedtest flows run right after the provisioning chain, so their 1Password/Vault credentials are prepared before their containers start (Vault must be up for `vault-get`/`vault-put`). The tunnel stays out — shares are created interactively with `cove tunnel up`. A credential failure on one optional service is reported without aborting the bringup (optional stays optional, same contract as `cove status`).
 
 ## 0.8.0 (2026-09-25)
 

@@ -4,6 +4,7 @@ import getpass
 import sys
 import os
 import platform
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
@@ -19,6 +20,8 @@ from cove.litellm import litellm
 from cove.speedtest import speedtest
 from cove.runner import runner
 from cove.tunnel import tunnel
+from cove.toolhive import toolhive
+from cove.sudoers import sudo, passwordless_sudo_ok
 from cove.project import (
     _inject, _strip, _container_env, _render_context, _render_guidance,
     _render_agents_block, _write_detail_cove, _write_fj_detail, _write_gh_detail,
@@ -49,6 +52,30 @@ def _detect_running_optional_profiles() -> list[str]:
         if container_name in running and profile not in profiles:
             profiles.append(profile)
     return profiles
+
+
+def _start_optional_services() -> None:
+    """Start the optional services whose containers need credentials prepared
+    by the CLI first (LiteLLM proxy + Headroom, Speedtest Tracker: 1Password/
+    Vault seeds injected into the compose .env before `docker compose up`).
+    Runner has no credential step: the bringup playbook starts it via its
+    COMPOSE_PROFILES env (ADE is core since 0.8.0; ToolHive likewise has no
+    credential step in phase 1 and joins the bringup profiles).
+
+    A failure on one service is reported but does not abort `cove up` —
+    optional services stay optional (same contract as `cove status`)."""
+    for group, label in ((litellm, "litellm"), (speedtest, "speedtest")):
+        cmd = group.commands.get("up")
+        if cmd is None or cmd.callback is None:
+            continue
+        try:
+            cmd.callback()
+        except click.ClickException as exc:
+            click.echo(f"{label} not started: {exc.format_message()}", err=True)
+            click.echo(f"Retry with: `cove {label} up`", err=True)
+        except subprocess.CalledProcessError:
+            click.echo(f"{label} not started (docker compose failed).", err=True)
+            click.echo(f"Retry with: `cove {label} up`", err=True)
 
 
 @click.group()
@@ -100,14 +127,55 @@ def init(force, purge):
     click.echo(f"cove {__version__} ready. Run `cove up` to bring up services.")
 
 
+def _report_ansible_failure(playbook: Path, lines: list[str], logfile: Path) -> None:
+    """Print a readable failure report for a failed ansible-playbook run.
+
+    Extracts the failing task's origin (playbook:line) and its error message
+    from the captured output, then points at the full log file. Fall back to
+    the last lines of output when the expected Ansible markers are missing.
+    """
+    origin = ""
+    msg = ""
+    for line in lines:
+        if line.startswith("Origin: "):
+            origin = line[len("Origin: "):].strip()
+        m = re.search(r'"msg": "(.+?)", "', line)
+        if m:
+            msg = m.group(1).replace('\\"', '"').replace("\\n", "\n")
+    task_name = ""
+    for line in lines:
+        m = re.match(r"failed: \[[^\]]+\] \(item=(.*)\)", line.strip())
+        if m:
+            task_name = m.group(1)
+            break
+    click.echo(click.style("\n✗ Ansible play failed: ", fg="red", bold=True) + playbook.name, err=True)
+    if task_name:
+        click.echo(f"  Item:    {task_name}", err=True)
+    if origin:
+        click.echo(f"  Origin:  {origin}", err=True)
+    if msg:
+        click.echo("  Problem:", err=True)
+        for out_line in msg.splitlines():
+            click.echo(f"    {out_line}", err=True)
+        if "rm -rf" in msg:
+            click.echo("  Fix: re-run the suggested command, then `cove up`.", err=True)
+    if not (task_name or origin or msg):
+        # Unrecognized failure shape: show the tail of the raw output.
+        click.echo("  Last output:", err=True)
+        for out_line in lines[-15:]:
+            click.echo(f"    {out_line.rstrip()}", err=True)
+    click.echo(f"  Full log: {logfile}", err=True)
+
+
 @app.command()
 @click.option("--no-provision", is_flag=True, help="Skip Forgejo provisioning")
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
+@click.option("--all", "all_", is_flag=True, help="Also start all optional services (LiteLLM + Headroom, Runner, Speedtest). The tunnel is excluded: shares are created interactively with `cove tunnel up`.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
 @click.option("--non-interactive", is_flag=True,
               help="No prompts (scheduled runs): skip the BECOME prompt; elevation "
                    "tasks are idempotent no-ops on established machines.")
-def up(no_provision, no_upgrade, log, non_interactive=False):
+def up(no_provision, no_upgrade, all_, log, non_interactive=False):
     """Bring up cove containers and provision Forgejo.
 
     Compose dir is resolved in order: COVE_COMPOSE_DIR env, ./compose,
@@ -118,6 +186,8 @@ def up(no_provision, no_upgrade, log, non_interactive=False):
         cove up
 
         cove up --no-provision
+
+        cove up --all
 
         cove up --log
     """
@@ -143,21 +213,26 @@ def up(no_provision, no_upgrade, log, non_interactive=False):
     def _run_ansible(playbook, label):
         click.echo(label)
         cmd = base_cmd + [str(playbook)]
+        # Always capture the stream so a failure can produce a readable
+        # report instead of Ansible's raw fatal dump at the bottom of the
+        # terminal (and so failure logs always exist for debugging).
+        ansible_env["ANSIBLE_NOCOLOR"] = "1"
+        ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        logfile = (log_dir or Path.home() / ".local" / "share" / "cove" / "logs") / f"{ts}-{playbook.name}.log"
         if log:
-            assert log_dir is not None
-            ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-            logfile = log_dir / f"{ts}-{playbook.name}.log"
-            with open(logfile, "w") as f:
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ansible_env)
-                for line in proc.stdout or []:
-                    click.echo(line, nl=False)
-                    f.write(line)
-                proc.wait()
-                result = proc
             click.echo(f"  log: {logfile}")
-        else:
-            result = subprocess.run(cmd, env=ansible_env)
+        logfile.parent.mkdir(parents=True, exist_ok=True)
+        lines: list[str] = []
+        with open(logfile, "w") as f:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=ansible_env)
+            for line in proc.stdout or []:
+                click.echo(line, nl=False)
+                lines.append(line)
+                f.write(line)
+            proc.wait()
+        result = proc
         if result.returncode != 0:
+            _report_ansible_failure(playbook, lines, logfile)
             raise SystemExit(result.returncode)
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
@@ -168,19 +243,35 @@ def up(no_provision, no_upgrade, log, non_interactive=False):
     # stable LocalHostName, so override the fact to keep Ansible consistent.
     base_cmd.extend(["-e", f"ansible_hostname={host_vars_file.stem}"])
 
-    # Scheduled runs (`cove update --quiet` → `cove up --non-interactive`)
-    # have no TTY and no password. The become-requiring bringup tasks
-    # (/etc/hosts, pf) are idempotent no-ops on established machines and
+    # Prompt for the BECOME password only when the operator has not installed
+    # the passwordless sudoers drop-in (`cove sudo enable`). Scheduled runs
+    # (`cove update --quiet` → `cove up --non-interactive`) have no TTY and no
+    # password: they skip the prompt, and the become-requiring bringup tasks
+    # (e.g. /etc/hosts) are idempotent no-ops on established machines and
     # tolerate failure.
-    if non_interactive:
-        become_pass = ""
+    if non_interactive or passwordless_sudo_ok():
+        ansible_env["ANSIBLE_BECOME_PASS"] = ""
     else:
         become_pass = getpass.getpass("BECOME password: ")
-    ansible_env["ANSIBLE_BECOME_PASSWORD"] = become_pass
+        ansible_env["ANSIBLE_BECOME_PASS"] = become_pass
 
-    running_profiles = _detect_running_optional_profiles()
-    if running_profiles:
-        base_cmd.extend(["-e", f"cove_profiles={','.join(running_profiles)}"])
+    # `cove up --all` starts every optional service. LiteLLM and Speedtest
+    # need credentials prepared by the CLI (1Password/Vault seeds injected
+    # into the compose .env) BEFORE their containers start, so their profiles
+    # stay out of the bringup compose up and their `up` flows run after the
+    # provisioning chain (Vault must be up for the vault-get/vault-put calls).
+    # Runner has no such step: the bringup starts it via its COMPOSE_PROFILES
+    # env (ADE is core since 0.8.0 — the bringup starts it unconditionally).
+    # ToolHive is the same: no credential step in phase 1 (per-server secrets
+    # are Phase 2), so its profile joins the bringup like the runner's.
+    # Running optionals are still reconciled by the bringup (their .env
+    # credentials already exist).
+    bringup_profiles = ["runner", "mcp"] if all_ else []
+    for profile in _detect_running_optional_profiles():
+        if profile not in bringup_profiles:
+            bringup_profiles.append(profile)
+    if bringup_profiles:
+        base_cmd.extend(["-e", f"cove_profiles={','.join(bringup_profiles)}"])
     # Scheduled updates force re-pull so floating tags (forgejo:15, nginx)
     # actually receive new upstream patches instead of freezing at first pull.
     pull_policy = os.environ.pop("COVE_PULL_POLICY", None)
@@ -197,6 +288,12 @@ def up(no_provision, no_upgrade, log, non_interactive=False):
         _run_ansible(compose_dir / "bootstrap_vault.yml", "Bootstrapping Vault...")
         _run_ansible(compose_dir / "provision_vault_user.yml", "Provisioning Vault user...")
         _run_ansible(provision, "Provisioning Forgejo...")
+
+    if all_:
+        _start_optional_services()
+        click.echo(
+            "Tunnel not included: shares are created interactively with `cove tunnel up`."
+        )
 
     from cove.status import check_all, print_status
     results = check_all()
@@ -271,6 +368,8 @@ app.add_command(litellm)
 app.add_command(speedtest)
 app.add_command(runner)
 app.add_command(tunnel)
+app.add_command(toolhive)
+app.add_command(sudo)
 from cove.update import update
 
 app.add_command(update)

@@ -26,6 +26,30 @@ def _project_root() -> Path:
 PROJECT_ROOT = _project_root()
 COMPOSE_DIR = PROJECT_ROOT / "compose"
 
+
+@pytest.fixture(autouse=True)
+def _fake_ansible_popen(monkeypatch):
+    """_run_ansible always tees ansible output through subprocess.Popen.
+    Fake it so CLI up-flow tests never invoke the real ansible-playbook."""
+    class _Proc:
+        def __init__(self, returncode=0, out=()):
+            self.stdout = iter(out)
+            self.returncode = returncode
+
+        def wait(self):
+            return self.returncode
+    holder: dict[str, list] = {"returncode": 0, "out": (), "calls": [], "envs": []}
+
+    def _popen_factory(*args, **kwargs):
+        holder["calls"].append(args[0])
+        holder["envs"].append(kwargs.get("env"))
+        return _Proc(returncode=holder["returncode"], out=holder["out"])
+    monkeypatch.setattr("cove.cli.subprocess.Popen", _popen_factory)
+    # Default: passwordless sudo NOT installed, so up-flow tests exercise the
+    # getpass prompt path unless a test overrides this below.
+    monkeypatch.setattr("cove.cli.passwordless_sudo_ok", lambda: False)
+    return holder
+
 import cove.cli
 from cove.stateless import resolve_compose_dir
 
@@ -83,6 +107,133 @@ class TestDeploymentManifests:
             "docker_compose_v2 wait should be false to avoid sealed-Vault failures"
         )
 
+    @staticmethod
+    def _iter_tasks(tasks):
+        """Yield every task dict in a bringup task list, flattening nested
+        ``block``/``rescue``/``always`` entries."""
+        for t in tasks:
+            if not isinstance(t, dict):
+                continue
+            yield t
+            for sub in ("block", "rescue", "always"):
+                for inner in t.get(sub) or []:
+                    yield from TestDeploymentManifests._iter_tasks([inner])
+
+    def test_bringup_does_not_pin_docker_context_to_colima(self):
+        """bringup must respect the operator's active Docker context on macOS
+        and treat Colima only as a fallback when no daemon responds.
+
+        Regression (2026-10-06): bringup unconditionally ran `colima start`
+        and `docker context use colima` on Darwin, so every `cove up`
+        pinned the engine to Colima and silently discarded an OrbStack
+        (or Docker Desktop) cutover — containers landed on Colima and the
+        context flip reverted ~/.docker/config.json behind the operator.
+        """
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+
+        with open(bp) as f:
+            data = yaml.safe_load(f)
+        tasks = data[0]["tasks"] if isinstance(data, list) else data.get("tasks", [])
+        all_tasks = list(self._iter_tasks(tasks))
+
+        cmd = lambda t: t.get("ansible.builtin.command") or t.get("command") or ""
+        for t in all_tasks:
+            assert "docker context use colima" not in cmd(t), (
+                "bringup.yml must never force `docker context use colima`; "
+                "the daemon check + fallback governs engine selection"
+            )
+
+        probe = [
+            t for t in all_tasks
+            if "docker info" in cmd(t) and t.get("when", "") in ("", None, True)
+        ]
+        assert probe, (
+            "bringup.yml must probe `docker info` BEFORE starting Colima so the "
+            "active (non-Colima) engine is detected untouched"
+        )
+
+        fallbacks = [
+            t for t in all_tasks
+            if "colima start" in cmd(t)
+        ]
+        assert fallbacks, (
+            "bringup.yml must keep a Colima fallback for machines with no "
+            "running Docker engine"
+        )
+        for t in fallbacks:
+            when = t.get("when", "")
+            whens = [when] if isinstance(when, str) else list(when)
+            assert any("docker_probe is failed" in w for w in whens), (
+                "every `colima start` must be gated on the daemon probe "
+                "failing so a healthy non-Colima engine is never displaced"
+            )
+
+    def test_bringup_detects_docker_socket_gid(self):
+        """Socket-mounting services must learn the daemon's in-VM socket gid
+        from the engine itself, per `cove up`, instead of trusting the
+        Colima-only 991 default baked into compose.
+
+        Regression (2026-10-06): after the Colima→OrbStack cut over, the
+        Forgejo runner and ToolHive stayed in a restart loop: their
+        `group_add: [991]` grants matched only Colima's socket gid, while
+        OrbStack's in-VM socket is root:root (gid 0) — permission denied on
+        /var/run/docker.sock.
+        """
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+
+        content = bp.read_text()
+        assert "Detect the Docker daemon socket gid" in content, (
+            "bringup.yml must detect the docker socket gid from the live daemon"
+        )
+        assert "FORGEJO_RUNNER_DOCKER_GID" in content, (
+            "bringup.yml must sync FORGEJO_RUNNER_DOCKER_GID into the .env"
+        )
+        assert "TOOLHIVE_DOCKER_GID" in content, (
+            "bringup.yml must sync TOOLHIVE_DOCKER_GID into the .env"
+        )
+        assert "stat -c %g" in content, (
+            "the detection must read the socket's owning group, not guess"
+        )
+
+    def test_bringup_nginx_handler_restarts_not_exec_reload(self):
+        """The 'Reload nginx' handler must restart the container, not
+        `docker exec … nginx -s reload`.
+
+        Regression (2026-09-28): bringup re-renders nginx/default.conf via
+        the ansible template module (atomic rename → new inode). On
+        macOS/Colima, file bind-mounts pin the inode at container creation,
+        so the running container's mount goes stale (link-count 0,
+        open() → ENOENT) and exec'd `nginx -s reload` — which re-opens
+        every config file — fails with "No such file or directory",
+        killing `cove up` at the handler flush. A container restart
+        re-resolves the bind by path and boots nginx on the fresh files.
+        """
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+
+        with open(bp) as f:
+            data = yaml.safe_load(f)
+
+        handlers = data[0]["handlers"] if isinstance(data, list) else data.get("handlers", [])
+        reload_handlers = [
+            h for h in handlers
+            if isinstance(h, dict) and h.get("name") == "Reload nginx"
+        ]
+        assert reload_handlers, "Missing 'Reload nginx' handler"
+        handler = reload_handlers[0]
+
+        cmd = handler.get("ansible.builtin.command", "")
+        assert "nginx -s reload" not in cmd, (
+            "'Reload nginx' must not exec `nginx -s reload`: file bind-mounts "
+            "pin the inode on macOS/Colima and go stale after atomic template "
+            "renders (open() → ENOENT). Restart the container instead."
+        )
+        assert "restart" in cmd and "nginx_container_name" in cmd, (
+            f"'Reload nginx' must restart the nginx container, got: {cmd!r}"
+        )
+
     def test_bringup_bootstraps_compose_plugin(self):
         """The docker CLI alone lacks `docker compose`; bringup must bootstrap it.
 
@@ -111,6 +262,74 @@ class TestDeploymentManifests:
         assert any("compose" in (n or "").lower() and "plugin" in (n or "").lower() for n in bootstrap_names), (
             "bringup.yml must include a task that bootstraps the docker compose plugin "
             "before 'Bring up pod via docker compose'"
+        )
+
+    def test_nginx_binds_443_directly(self):
+        """nginx must own 443 directly in compose — the pf rdr shim is gone,
+        so nothing translates 443 → 8443 anymore."""
+        dc = COMPOSE_DIR / "docker-compose.yml"
+        assert dc.exists(), f"docker-compose.yml not found at {dc}"
+        text = dc.read_text()
+        assert '"0.0.0.0:443:443"' in text, (
+            "nginx must publish 0.0.0.0:443:443 (no pf shim)"
+        )
+        assert "NGINX_HTTPS_PORT:-8443" not in text, (
+            "compose must not default the HTTPS publish to 8443"
+        )
+
+    def test_bringup_has_no_pf_or_tailscale_serve(self):
+        """bringup.yml must not resurrect the pf rdr shim or tailscale serve:
+        cove up can never re-install what the plan deleted."""
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+        text = bp.read_text()
+        assert "rdr-anchor" not in text and "pfctl" not in text, (
+            "bringup.yml must not configure pf rdr (443→8443 shim dropped)"
+        )
+        assert "tailscale serve" not in text, (
+            "bringup.yml must not configure tailscale serve (removed with pf shim)"
+        )
+
+    def test_bringup_env_render_has_no_dead_https_port_export(self):
+        """The .env render must not export NGINX_HTTPS_PORT: the nginx publish
+        is hardcoded 0.0.0.0:443:443 in compose, so a stale env value can
+        silently diverge from the actual binding."""
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+        text = bp.read_text()
+        assert "NGINX_HTTPS_PORT=" not in text, (
+            "bringup.yml env render must not export NGINX_HTTPS_PORT "
+            "(compose binds 443 directly; a stale value is a divergence trap)"
+        )
+
+    def test_staging_scripts_target_443(self):
+        """The staging harness must probe/point at 127.0.0.1:443 — nginx owns
+        443 directly and no longer publishes 8443."""
+        staging = PROJECT_ROOT / "scripts" / "staging"
+        for name in ("setup.sh", "deploy.sh", "e2e.sh"):
+            text = (staging / name).read_text()
+            assert "8443" not in text, (
+                f"scripts/staging/{name} must not reference 8443 "
+                "(nginx no longer publishes it)"
+            )
+            assert "127.0.0.1:443" in text, (
+                f"scripts/staging/{name} must target 127.0.0.1:443"
+            )
+
+    def test_e2e_staging_tests_target_443(self):
+        """Staging/e2e-marked tests must hit 127.0.0.1:443, not the dropped
+        8443 publish. This guard's own file (test_cli.py) carries the literal
+        '8443' only inside its assertion messages, so it is excluded."""
+        tests_dir = PROJECT_ROOT / "cli" / "tests"
+        offenders = []
+        for path in sorted(tests_dir.glob("test_*.py")):
+            if path.name == "test_cli.py":
+                continue
+            if "8443" in path.read_text():
+                offenders.append(path.name)
+        assert not offenders, (
+            f"test files still reference 8443: {offenders} "
+            "(nginx owns 443 directly)"
         )
 
     def test_tailscale_tasks_safe_when_daemon_dead(self):
@@ -254,7 +473,7 @@ class TestFindComposeDir:
 
 
 class TestCoveUpCommand:
-    def test_up_passes_stable_ansible_hostname_override(self, tmp_path, monkeypatch):
+    def test_up_passes_stable_ansible_hostname_override(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up must pass `-e ansible_hostname=<stable>` so Ansible's
         gathered fact (kernel hostname) cannot diverge from the stable hostname
         used for cert SANs, host_vars, and 1Password op_refs. Without this
@@ -278,9 +497,9 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
-            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_call = _fake_ansible_popen["calls"][0]
             bringup_args = [str(a) for a in bringup_call]
             assert any(
                 a == "-e" or a.startswith("ansible_hostname=") for a in bringup_args
@@ -293,7 +512,7 @@ class TestCoveUpCommand:
                 f"got: {hostname_override}"
             )
 
-    def test_up_no_become_prompt_per_playbook(self, tmp_path, monkeypatch):
+    def test_up_no_become_prompt_per_playbook(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up must NOT pass -K to ansible-playbook — it caches the BECOME
         password once via getpass and passes it via ANSIBLE_BECOME_PASSWORD env."""
         compose_sub = tmp_path / "compose"
@@ -311,9 +530,9 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
-            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_call = _fake_ansible_popen["calls"][0]
             args_list = [str(a) for a in bringup_call]
             assert "-K" not in args_list, (
                 "cove up must not pass -K (uses ANSIBLE_BECOME_PASSWORD env var instead)"
@@ -340,13 +559,13 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=False, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=False, no_upgrade=True, all_=False, log=False)
 
             assert mock_getpass.call_count == 1, (
                 f"BECOME password must be prompted once, got {mock_getpass.call_count}"
             )
 
-    def test_no_provision_skips_forgejo(self, tmp_path, monkeypatch):
+    def test_no_provision_skips_forgejo(self, tmp_path, monkeypatch, _fake_ansible_popen):
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -362,10 +581,15 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
-            assert mock_run.call_count == 1
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+            assert len(_fake_ansible_popen["calls"]) == 1, (
+                "no-provision up must run exactly one playbook (bringup)"
+            )
+            assert any(
+                "bringup.yml" in str(p) for p in _fake_ansible_popen["calls"][0]
+            )
 
-    def test_full_up_calls_all_in_correct_order(self, tmp_path, monkeypatch):
+    def test_full_up_calls_all_in_correct_order(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """Batch-pull must come first, then bringup, then vault bootstrap, then provision."""
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
@@ -385,37 +609,39 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=False, no_upgrade=True, log=False)
-            assert mock_run.call_count == 5
+            _invoke_callback("up", no_provision=False, no_upgrade=True, all_=False, log=False)
+            playbooks = [
+                next(str(p) for p in reversed(cmd) if str(p).endswith(".yml"))
+                for cmd in _fake_ansible_popen["calls"]
+            ]
+            run_cmds = [str(c[0][0]) for c in mock_run.call_args_list]
 
-            all_args = [mock_run.call_args_list[i][0][0] for i in range(5)]
-
-            call_0_args = [str(a) for a in all_args[0]]
-            assert any("batch-pull" in a for a in call_0_args), (
-                "first call must be batch-pull"
+            assert len(playbooks) == 4, (
+                f"full up must run 4 playbooks, got: {playbooks}"
+            )
+            assert len(run_cmds) == 1 and "batch-pull" in run_cmds[0], (
+                "batch-pull (subprocess.run) must come first"
             )
 
-            call_1_args = [str(a) for a in all_args[1]]
-            assert any("bringup.yml" in p for p in call_1_args), (
-                "second call must be bringup.yml"
-            )
+            def _occurred(cmd_name: str) -> bool:
+                return any(cmd_name in p for p in playbooks)
 
-            call_2_args = [str(a) for a in all_args[2]]
-            assert any("bootstrap_vault.yml" in p for p in call_2_args), (
-                "third call must be bootstrap_vault.yml"
+            order = [
+                playbooks.index(next(p for p in playbooks if "bringup.yml" in p)),
+                playbooks.index(next(p for p in playbooks if "bootstrap_vault.yml" in p)),
+                playbooks.index(next(p for p in playbooks if "provision_vault_user.yml" in p)),
+                playbooks.index(next(p for p in playbooks if "provision_forgejo.yml" in p)),
+            ]
+            assert order == sorted(order), (
+                f"playbook order must be bringup, bootstrap_vault, "
+                f"provision_vault_user, provision_forgejo; got: {playbooks}"
             )
+            assert _occurred("bringup.yml")
+            assert _occurred("bootstrap_vault.yml")
+            assert _occurred("provision_vault_user.yml")
+            assert _occurred("provision_forgejo.yml")
 
-            call_3_args = [str(a) for a in all_args[3]]
-            assert any("provision_vault_user.yml" in p for p in call_3_args), (
-                "fourth call must be provision_vault_user.yml"
-            )
-
-            call_4_args = [str(a) for a in all_args[4]]
-            assert any("provision_forgejo.yml" in p for p in call_4_args), (
-                 "fifth call must be provision_forgejo.yml"
-            )
-
-    def test_up_passes_running_optional_profiles_to_bringup(self, tmp_path, monkeypatch):
+    def test_up_passes_running_optional_profiles_to_bringup(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up must detect running optional services and pass their compose
         profiles to bringup.yml so they get reconciled (recreated with current
         config). Stopped optionals must NOT be started."""
@@ -434,10 +660,10 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
             mock_detect.assert_called_once()
-            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_call = _fake_ansible_popen["calls"][0]
             bringup_args = [str(a) for a in bringup_call]
             assert any("bringup.yml" in a for a in bringup_args), (
                 "first call must be bringup.yml"
@@ -446,7 +672,7 @@ class TestCoveUpCommand:
                 f"bringup must receive cove_profiles=speedtest, got: {bringup_args}"
             )
 
-    def test_up_no_profiles_when_no_optionals_running(self, tmp_path, monkeypatch):
+    def test_up_no_profiles_when_no_optionals_running(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """When no optional services are running, cove up must not pass any
         profiles (so it doesn't start stopped optionals)."""
         compose_sub = tmp_path / "compose"
@@ -464,13 +690,262 @@ class TestCoveUpCommand:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
 
-            _invoke_callback("up", no_provision=True, no_upgrade=True, log=False)
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
 
-            bringup_call = mock_run.call_args_list[0][0][0]
+            bringup_call = _fake_ansible_popen["calls"][0]
             bringup_args = [str(a) for a in bringup_call]
             assert not any("speedtest" in a for a in bringup_args), (
                 f"no profiles when nothing running, got: {bringup_args}"
             )
+
+    def test_up_all_passes_runner_to_bringup(self, tmp_path, monkeypatch, _fake_ansible_popen):
+        """cove up --all must include the runner profile in the bringup
+        COMPOSE_PROFILES (no credential dance for the runner). Litellm and
+        speedtest must NOT be in it: their containers need CLI-prepared
+        credentials first, so they start through their own flows right after
+        the provisioning chain. ADE is core since 0.8.0 — no profile."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            _invoke_callback(
+                "up", no_provision=True, no_upgrade=True, all_=True, log=False
+            )
+
+            bringup_call = _fake_ansible_popen["calls"][0]
+            bringup_args = [str(a) for a in bringup_call]
+            assert any("cove_profiles=runner" in a for a in bringup_args), (
+                f"bringup must receive cove_profiles=runner, got: {bringup_args}"
+            )
+            assert not any("ade" in a for a in bringup_args), (
+                f"ADE is core (no profile) — must not appear in profiles, got: {bringup_args}"
+            )
+
+    def test_up_all_starts_litellm_and_speedtest_after_bringup(
+        self, tmp_path, monkeypatch
+    ):
+        """cove up --all must run the litellm and speedtest up flows after the
+        bringup (they prepare credentials, then start their containers)."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        calls = []
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch.object(
+            cove.litellm.litellm.commands["up"],
+            "callback",
+            side_effect=lambda: calls.append("litellm"),
+        ), patch.object(
+            cove.speedtest.speedtest.commands["up"],
+            "callback",
+            side_effect=lambda: calls.append("speedtest"),
+        ):
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            _invoke_callback(
+                "up", no_provision=True, no_upgrade=True, all_=True, log=False
+            )
+
+            assert calls == ["litellm", "speedtest"], (
+                f"litellm and speedtest up flows must run after bringup, got: {calls}"
+            )
+
+    def test_up_all_tolerates_optional_service_failure(self, tmp_path, monkeypatch):
+        """A credential failure on one optional service must not abort
+        `cove up --all` — optional services stay optional (same contract as
+        `cove status`). The remaining service flow and the status check must
+        still run."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch("cove.cli.getpass.getpass", return_value="secret"), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch.object(
+            cove.litellm.litellm.commands["up"],
+            "callback",
+            side_effect=click.ClickException("Cove Admin item missing"),
+        ), patch.object(
+            cove.speedtest.speedtest.commands["up"], "callback"
+        ) as mock_speedtest:
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            _invoke_callback(
+                "up", no_provision=True, no_upgrade=True, all_=True, log=False
+            )
+
+            mock_speedtest.assert_called_once()
+            mock_check.assert_called_once()
+
+    def test_bringup_failure_reports_readable_error(self, tmp_path, monkeypatch, capsys, _fake_ansible_popen):
+        """An ansible playbook failure must print a friendly report (origin,
+        problem, log path) instead of Ansible's raw fatal dump, write a log
+        file even without --log, and exit with Ansible's return code."""
+        out = [
+            "PLAY [all] ********",
+            "TASK [Fail if a non-empty directory wedges a data-root mount] ***",
+            'fatal: [localhost] (item=/Users/x/cove-data/toolhive/registry.json): '
+            '{"msg": "registry.json exists as a NON-EMPTY DIRECTORY. '
+            'Remove it and re-run: rm -rf /Users/x/cove-data/toolhive/registry.json && cove up", "changed": false}',
+            "Origin: /Users/cove/compose/bringup.yml:439:7",
+            "NO MORE HOSTS LEFT",
+            "PLAY RECAP",
+        ]
+        _fake_ansible_popen["returncode"] = 2
+        _fake_ansible_popen["out"] = out
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass", return_value="secret"
+        ), patch("cove.cli.ensure_host_vars", return_value=tmp_path / "hv.yml"), patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch("cove.cli.Path.home", return_value=tmp_path):
+            with pytest.raises(SystemExit) as exc:
+                _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+        assert exc.value.code == 2
+
+        err = capsys.readouterr().err
+        assert "Ansible play failed: bringup.yml" in err, f"missing failure header, got: {err}"
+        assert "Origin:" in err, "report must include the failing task's origin"
+        assert "NON-EMPTY DIRECTORY" in err, "report must include the error message"
+        assert "rm -rf" in err and "cove up" in err, "report must surface the suggested fix"
+        assert "Full log:" in err, "report must point at the log file"
+
+        import re as _re
+        log_path = _re.search(r"Full log: (.+)", err).group(1).strip()
+        assert Path(log_path).exists(), "failure log must be written even without --log"
+        assert "NON-EMPTY DIRECTORY" in Path(log_path).read_text()
+
+    def test_ansible_failure_unknown_shape_prints_output_tail(self, tmp_path, monkeypatch, capsys, _fake_ansible_popen):
+        """When the failure output has no parseable Origin/msg markers, the
+        report must fall back to showing the tail of the raw output and the
+        log path, never a bare exit with no explanation."""
+        _fake_ansible_popen["returncode"] = 4
+        _fake_ansible_popen["out"] = ["ERROR! something exploded", "more context"]
+
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass", return_value="secret"
+        ), patch("cove.cli.ensure_host_vars", return_value=tmp_path / "hv.yml"), patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            with pytest.raises(SystemExit):
+                _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+
+        err = capsys.readouterr().err
+        assert "Ansible play failed: bringup.yml" in err
+        assert "Last output:" in err and "something exploded" in err
+        assert "Full log:" in err
+
+
+    def test_up_skips_become_prompt_when_passwordless(self, tmp_path, monkeypatch, _fake_ansible_popen):
+        """After `cove sudo enable`, cove up must not prompt for the BECOME
+        password (getpass is called zero times)."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+        monkeypatch.setattr("cove.cli.passwordless_sudo_ok", lambda: True)
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass"
+        ) as mock_getpass, patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.status.check_all", return_value=[]), patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+
+        mock_getpass.assert_not_called()
+
+    def test_up_passes_typed_become_password_via_ansible_become_pass_env(
+        self, tmp_path, monkeypatch, _fake_ansible_popen
+    ):
+        """A typed BECOME password must reach sudo through ANSIBLE_BECOME_PASS,
+        the env var the ansible-core sudo become plugin actually reads
+        (sudo.py DOCUMENTATION). ANSIBLE_BECOME_PASSWORD matches no ansible
+        setting, so the typed password was silently dropped and every become
+        task failed with 'sudo: a password is required'."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+        # Fixture default: passwordless_sudo_ok() is False → prompt path.
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass", return_value="secret"
+        ), patch("cove.cli.ensure_host_vars", return_value=tmp_path / "hv.yml"), patch(
+            "cove.status.check_all", return_value=[]
+        ), patch("cove.cli._detect_running_optional_profiles", return_value=[]):
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+
+        assert _fake_ansible_popen["envs"], "Popen must receive an env"
+        for env in _fake_ansible_popen["envs"]:
+            if not env:
+                continue
+            assert env.get("ANSIBLE_BECOME_PASS") == "secret"
+            assert "ANSIBLE_BECOME_PASSWORD" not in env
+
+    def test_up_sets_empty_ansible_become_pass_when_passwordless(
+        self, tmp_path, monkeypatch, _fake_ansible_popen
+    ):
+        """With the passwordless drop-in in place, ANSIBLE_BECOME_PASS is set
+        empty (falsy to the sudo plugin, so no password is ever handed to
+        sudo)."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+        monkeypatch.setattr("cove.cli.passwordless_sudo_ok", lambda: True)
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "cove.cli.getpass.getpass"
+        ) as mock_getpass, patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "hv.yml"
+        ), patch("cove.status.check_all", return_value=[]), patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ):
+            _invoke_callback("up", no_provision=True, no_upgrade=True, all_=False, log=False)
+
+        mock_getpass.assert_not_called()
+        assert _fake_ansible_popen["envs"], "Popen must receive an env"
+        for env in _fake_ansible_popen["envs"]:
+            if not env:
+                continue
+            assert env.get("ANSIBLE_BECOME_PASS") == ""
+            assert "ANSIBLE_BECOME_PASSWORD" not in env
 
 
 class TestCoveStatusCommand:
@@ -1024,7 +1499,7 @@ class TestNoUpgradeFlag:
         ), patch("cove.cli.getpass.getpass", return_value="secret"):
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
-            _invoke_callback("up", 
+            _invoke_callback("up", all_=False,
                 no_provision=True, no_upgrade=True, log=False
             )
             mock_reextract.assert_not_called()

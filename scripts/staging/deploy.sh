@@ -107,4 +107,4 @@ if docker compose --project-directory "$REPO_ROOT/compose" config --profiles 2>/
 fi
 
 # Print the staging URL to stdout (consumed by e2e.sh)
-echo "https://127.0.0.1:8443"
+echo "https://127.0.0.1:443"

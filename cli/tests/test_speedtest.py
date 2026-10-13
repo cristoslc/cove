@@ -370,13 +370,16 @@ class TestCLI:
 
     def test_speedtest_status_checks_through_nginx(self):
         """cove speedtest status must check through nginx (Host: speedtest.cove)
-        on 8443, not a direct port."""
+        on 443, not a direct port."""
         source = (PROJECT_ROOT / "cli" / "cove" / "speedtest.py").read_text()
         assert "speedtest.cove" in source, (
             "cove speedtest status must reference speedtest.cove Host header"
         )
-        assert "8443" in source, (
-            "cove speedtest status must check through nginx on 8443"
+        assert "from cove.constants import NGINX_HTTPS_PORT" in source, (
+            "cove speedtest status must source the port from cove.status"
+        )
+        assert "f\"https://127.0.0.1:{NGINX_HTTPS_PORT}/\"" in source, (
+            "cove speedtest status must check through nginx on 443"
         )
 
     def test_speedtest_up_does_not_fail_loud_without_app_key(self, monkeypatch, tmp_path):
@@ -1072,9 +1075,11 @@ class TestAuthPosture:
         assert "proxy_pass" not in default_block
 
     def test_no_direct_port_access_in_cli(self):
-        """The CLI status check must go through nginx on 8443, not a direct port."""
+        """The CLI status check must go through nginx on 443, not a direct port.
+        The URL-substring assertion lives in
+        test_speedtest_status_checks_through_nginx; this test adds only the
+        Host-header check."""
         source = (PROJECT_ROOT / "cli" / "cove" / "speedtest.py").read_text()
-        assert "8443" in source, "status must check through nginx (8443), not direct port"
         assert "speedtest.cove" in source, (
             "status must reference speedtest.cove Host header"
         )
@@ -1122,7 +1127,7 @@ class TestE2ESpeedtestStack:
         reaches the app; login is enforced by the app itself)."""
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/",
+            "https://127.0.0.1:443/",
             headers={"Host": "speedtest.cove"},
             verify=False,
             timeout=10,
@@ -1137,7 +1142,7 @@ class TestE2ESpeedtestStack:
         bare 200 serving dashboard content."""
         import requests
         resp = requests.get(
-            "https://127.0.0.1:8443/",
+            "https://127.0.0.1:443/",
             headers={"Host": "speedtest.cove"},
             verify=False,
             timeout=10,

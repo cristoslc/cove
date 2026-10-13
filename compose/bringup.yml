@@ -75,44 +75,55 @@
       register: compose_plugin_cfg
       changed_when: "'added' in compose_plugin_cfg.stdout and 'already' not in compose_plugin_cfg.stdout"
 
-    - name: Ensure Colima is running (macOS)
+    - name: Ensure a Docker engine is reachable (macOS, Colima as fallback)
       when: ansible_system == "Darwin"
       block:
-        - name: Start Colima (idempotent — no-op if already running)
-          ansible.builtin.command: colima start
-          changed_when: false
-
-        - name: Switch Docker context to Colima
-          ansible.builtin.command: docker context use colima
-          changed_when: true
-
-        - name: Wait for Docker daemon to be ready
+        - name: Probe active Docker daemon (respects the current docker context)
           ansible.builtin.command: docker info
-          register: docker_info
-          retries: 15
+          register: docker_probe
+          retries: 3
           delay: 2
-          until: docker_info.rc == 0
+          until: docker_probe.rc == 0
           changed_when: false
-          ignore_errors: true
+          failed_when: false
 
-        - name: Restart Colima if daemon is unresponsive
-          when: docker_info is failed
+        - name: Fall back to Colima when no daemon responds
+          when: docker_probe is failed
           block:
-            - name: Stop Colima
-              ansible.builtin.command: colima stop
-              changed_when: true
-
-            - name: Start Colima
+            - name: Start Colima (idempotent — no-op if already running)
+              when: docker_probe is failed
               ansible.builtin.command: colima start
-              changed_when: true
+              changed_when: false
 
-            - name: Wait for Docker daemon to be ready (after restart)
+            - name: Wait for Docker daemon to be ready (Colima fallback)
+              when: docker_probe is failed
               ansible.builtin.command: docker info
-              register: docker_info_retry
+              register: docker_info
               retries: 15
               delay: 2
-              until: docker_info_retry.rc == 0
+              until: docker_info.rc == 0
               changed_when: false
+              ignore_errors: true
+
+            - name: Restart Colima if daemon is unresponsive
+              when: docker_info is failed
+              block:
+                - name: Stop Colima
+                  ansible.builtin.command: colima stop
+                  changed_when: true
+
+                - name: Start Colima
+                  when: docker_probe is failed
+                  ansible.builtin.command: colima start
+                  changed_when: true
+
+                - name: Wait for Docker daemon to be ready (after restart)
+                  ansible.builtin.command: docker info
+                  register: docker_info_retry
+                  retries: 15
+                  delay: 2
+                  until: docker_info_retry.rc == 0
+                  changed_when: false
 
     - name: Check if tailscale is up
       ansible.builtin.command: tailscale status --json
@@ -145,23 +156,6 @@
         or (ts_status.stdout | default('{}') | from_json).Self.TailscaleIPs | length == 0
       ansible.builtin.set_fact:
         ts_ip: "{{ ansible_default_ipv4.address }}"
-
-    - name: Configure tailscale serve for HTTPS on port 443
-      when:
-        - ts_status.rc == 0
-        - (ts_status.stdout | default('{}') | from_json).Self is not none
-        - (ts_status.stdout | default('{}') | from_json).Self.Online
-      ansible.builtin.shell: |
-        set -eo pipefail
-        JSON=$(tailscale serve status --json 2>/dev/null || echo '{}')
-        if echo "$JSON" | python3 -c "import json,sys; s=json.load(sys.stdin); exit(0 if s.get('Web',{}).get('443') else 1)"; then
-          echo "already configured"
-        else
-          tailscale serve --bg --https "443" https://127.0.0.1:{{ nginx_https_port }}
-          echo "configured"
-        fi
-      register: ts_serve_https
-      changed_when: "'configured' in ts_serve_https.stdout and 'already' not in ts_serve_https.stdout"
 
     - name: Ensure root CA exists
       ansible.builtin.command: >
@@ -264,6 +258,10 @@
           - --sans
           - speedtest.cove.local
           - --sans
+          - mcp.cove
+          - --sans
+          - mcp.cove.local
+          - --sans
           - hc.cove
           - --sans
           - hc.cove.local
@@ -299,6 +297,7 @@
           "ade.cove" "ade.cove.local" \
           "litellm.cove" "litellm.cove.local" \
           "speedtest.cove" "speedtest.cove.local" \
+          "mcp.cove" "mcp.cove.local" \
           "hc.cove" "hc.cove.local" \
           "ca.cove" "ca.cove.local" \
           "*.cove" "*.cove.local" \
@@ -318,24 +317,8 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
+        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local mcp.cove mcp.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
         state: present
-      failed_when: false
-
-    - name: Forward localhost:443 → localhost:{{ nginx_https_port }} via pf
-      become: true
-      when: ansible_system == "Darwin"
-      ansible.builtin.shell: |
-        set -eo pipefail
-        if pfctl -s nat 2>/dev/null | grep -q '{{ nginx_https_port }}'; then
-          echo "already configured"
-        else
-          RDR='rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port {{ nginx_https_port }}'
-          printf 'rdr-anchor "cove-https"\n%s\npass all\n' "$RDR" | pfctl -ef - >/dev/null 2>&1
-          echo "configured"
-        fi
-      register: pf_443
-      changed_when: "'configured' in pf_443.stdout and 'already' not in pf_443.stdout"
       failed_when: false
 
     # DATA DIRECTORIES -------------------------------------------------------
@@ -359,6 +342,9 @@
         - "{{ cove_data_root }}/litellm"
         - "{{ cove_data_root }}/speedtest"
         - "{{ cove_data_root }}/ade"
+        - "{{ cove_data_root }}/toolhive/config"
+        - "{{ cove_data_root }}/toolhive/state"
+        - "{{ cove_data_root }}/toolhive/profiles"
 
     - name: Create forgejo-runner data directory (restricted)
       ansible.builtin.file:
@@ -390,16 +376,36 @@
         - cove-pages-locations.conf
         - cove-tunnel-shares.conf
       register: nginx_mount_targets
-    - name: Fail if a Docker-created directory wedges an nginx mount
-      ansible.builtin.fail:
-        msg: >-
-          {{ item.item }} exists as a DIRECTORY (Docker auto-created it during
-          a prior failed boot before the file was rendered). Remove it and
-          re-run: rm -rf {{ item.item }} && cove up
+    - name: List contents of wedged nginx mount directories
+      ansible.builtin.find:
+        paths: "{{ item.stat.path }}"
+        file_type: any
       loop: "{{ nginx_mount_targets.results }}"
       when: item.stat.isdir | default(false)
+      register: nginx_wedged_scan
       loop_control:
-        label: "{{ item.item }}"
+        label: "{{ item.stat.path }}"
+    - name: Remove empty Docker-created directories on nginx mount targets
+      # Auto-repair: Docker created the dir, nothing was ever written into it,
+      # so deleting it is safe. The template tasks below re-render the file.
+      ansible.builtin.file:
+        path: "{{ item.item.stat.path }}"
+        state: absent
+      loop: "{{ nginx_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) == 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
+    - name: Fail if a non-empty directory wedges an nginx mount
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.item.stat.path }} exists as a NON-EMPTY DIRECTORY where a
+          file must be bind-mounted (Docker auto-created it and contents were
+          written inside). Remove it and re-run: rm -rf {{ item.item.stat.path
+          }} && cove up
+      loop: "{{ nginx_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) > 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
 
     - name: Render nginx config from template
       ansible.builtin.template:
@@ -426,24 +432,97 @@
         - "{{ cove_data_root }}/dnsmasq/cove.conf"
         - "{{ cove_data_root }}/nginx/config.html"
         - "{{ cove_data_root }}/litellm/config.yaml"
+        - "{{ cove_data_root }}/toolhive/registry.json"
       register: data_mount_targets
-    - name: Fail if a Docker-created directory wedges a data-root mount
-      ansible.builtin.fail:
-        msg: >-
-          {{ item.item }} exists as a DIRECTORY (Docker auto-created it during
-          a prior failed boot before the file was rendered). Remove it and
-          re-run: rm -rf {{ item.item }} && cove up
+    - name: List contents of wedged data-root mount directories
+      ansible.builtin.find:
+        paths: "{{ item.stat.path }}"
+        file_type: any
       loop: "{{ data_mount_targets.results }}"
       when: item.stat.isdir | default(false)
+      register: data_wedged_scan
       loop_control:
-        label: "{{ item.item }}"
+        label: "{{ item.stat.path }}"
+    - name: Remove empty Docker-created directories on data-root mount targets
+      # Auto-repair: Docker created the dir, nothing was ever written into it,
+      # so deleting it is safe. The first-boot seeds and templates below
+      # re-render the file (see the "repaired" force/when overrides).
+      ansible.builtin.file:
+        path: "{{ item.item.stat.path }}"
+        state: absent
+      loop: "{{ data_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) == 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
+    - name: Fail if a non-empty directory wedges a data-root mount
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.item.stat.path }} exists as a NON-EMPTY DIRECTORY where a
+          file must be bind-mounted (Docker auto-created it and contents were
+          written inside). Remove it and re-run: rm -rf {{ item.item.stat.path
+          }} && cove up
+      loop: "{{ data_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) > 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
+    - name: Track repaired data-root mount targets
+      ansible.builtin.set_fact:
+        repaired_data_mounts: >-
+          {% set repaired = [] %}
+          {% for scan in data_wedged_scan.results if scan.files is defined and (scan.files | length) == 0 %}
+          {% set _ = repaired.append(scan.item.stat.path) %}
+          {% endfor %}
+          {{ repaired }}
 
     - name: Render litellm config from template (first boot only)
       ansible.builtin.template:
         src: "{{ playbook_dir }}/litellm/config.yaml.j2"
         dest: "{{ cove_data_root }}/litellm/config.yaml"
         mode: "0644"
-      when: not (cove_data_root ~ "/litellm/config.yaml") is exists
+      when: >-
+        (not (cove_data_root ~ "/litellm/config.yaml") is exists)
+        or ((cove_data_root ~ "/litellm/config.yaml")
+            in (repaired_data_mounts | default([])))
+
+    # TOOLHIVE -----------------------------------------------------------------
+    # IaC: the curated registry, the default permission profile, and the
+    # ToolHive config (pointing the control plane at the local registry) are
+    # seeded into ${COVE_DATA_ROOT}/toolhive/. First boot only — operator
+    # edits to the deployed copies are preserved (litellm config pattern).
+    # The control-plane container mounts registry.json and /profiles :ro.
+    - name: Seed ToolHive curated registry (first boot only)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/toolhive/registry.json"
+        dest: "{{ cove_data_root }}/toolhive/registry.json"
+        mode: "0644"
+        # Re-copy when the path was just auto-repaired (wedge removal),
+        # otherwise first-boot only.
+        force: "{{ (cove_data_root ~ '/toolhive/registry.json')
+                   in (repaired_data_mounts | default([])) }}"
+
+    - name: Seed ToolHive default permission profile (first boot only)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/toolhive/cove-default.json"
+        dest: "{{ cove_data_root }}/toolhive/profiles/cove-default.json"
+        mode: "0644"
+        force: false
+
+    - name: Render ToolHive config from template (first boot, or re-seed when overwritten)
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/toolhive/config.yaml.j2"
+        dest: "{{ cove_data_root }}/toolhive/config/toolhive/config.yaml"
+        mode: "0644"
+      vars:
+        toolhive_config_path: "{{ cove_data_root ~ '/toolhive/config/toolhive/config.yaml' }}"
+      # First boot only, plus a repair path: thv's own config persistence has
+      # been observed to rewrite the seeded file (schema migration) and blank
+      # local_registry_path, leaving the control plane without the curated
+      # registry. Re-render only when the value is missing/blank so operator
+      # edits stay preserved (litellm config pattern).
+      when: >-
+        (not (toolhive_config_path) is exists)
+        or ((lookup('file', toolhive_config_path) | default('', true))
+            | regex_search('local_registry_path:\\s*["\']?\\s*$', multiline=True) is not none)
 
     - name: Render dnsmasq config from template
       ansible.builtin.template:
@@ -496,7 +575,6 @@
           DNSMASQ_CONTAINER_NAME={{ dnsmasq_container_name }}
           DNSPROXY_CONTAINER_NAME={{ dnsproxy_container_name }}
           DNSMASQ_PORT={{ dnsmasq_port }}
-          NGINX_HTTPS_PORT={{ nginx_https_port }}
           NGINX_HTTP_PORT={{ nginx_http_port }}
           LITELLM_IMAGE={{ litellm_image | default('cove-litellm:1.84.0') }}
           LITELLM_CONTAINER_NAME={{ litellm_container_name | default('cove-litellm') }}
@@ -508,6 +586,10 @@
           SPEEDTEST_CONTAINER_NAME={{ speedtest_container_name | default('cove-speedtest-tracker') }}
           SPEEDTEST_PORT={{ speedtest_port | default('8982') }}
           SPEEDTEST_APP_KEY={{ speedtest_app_key | default('') }}
+          TOOLHIVE_IMAGE={{ toolhive_image | default('ghcr.io/stacklok/toolhive:v0.51.4@sha256:5e1e253610db23188e3cab766949612f8b0c138627ec55fb754562a9610d4f9a') }}
+          TOOLHIVE_CONTAINER_NAME={{ toolhive_container_name | default('cove-toolhive') }}
+          TOOLHIVE_PORT={{ toolhive_port | default('8090') }}
+          TOOLHIVE_MEM_LIMIT={{ toolhive_mem_limit | default('512M') }}
           FORGEJO_RUNNER_IMAGE={{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}
           FORGEJO_RUNNER_CONTAINER_NAME={{ forgejo_runner_container_name | default('cove-forgejo-runner') }}
           FORGEJO_RUNNER_MEM_LIMIT={{ forgejo_runner_mem_limit | default('512M') }}
@@ -530,6 +612,31 @@
       loop:
         - { key: "ADE_PORT", value: "{{ ade_port }}" }
         - { key: "ADE_CONTAINER_NAME", value: "{{ ade_container_name }}" }
+
+    # Socket-mounting services (forgejo-runner, toolhive) must join the
+    # docker daemon's group inside the engine VM, which differs per engine
+    # (Colima: 991, OrbStack/Docker Desktop: 0). Detect the gid through the
+    # daemon itself — mount the socket read-only in a scratch container and
+    # stat it — and re-sync the .env on every `cove up`, so switching
+    # engines never leaves a stale gid behind (2026-10-06 OrbStack cutover).
+    - name: Detect the Docker daemon socket gid for the active engine
+      ansible.builtin.shell: |
+        out=$(docker run --rm -v /var/run/docker.sock:/s:ro alpine:3 stat -c %g /s 2>/dev/null) || true
+        [ -n "$out" ] && printf '%s' "$out"
+      register: docker_socket_gid
+      changed_when: false
+      failed_when: false
+
+    - name: Ensure socket-gid .env entries match the detected daemon group
+      when: docker_socket_gid.stdout | trim | length > 0
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^{{ item }}="
+        line: "{{ item }}={{ docker_socket_gid.stdout | trim }}"
+        mode: "0600"
+      loop:
+        - FORGEJO_RUNNER_DOCKER_GID
+        - TOOLHIVE_DOCKER_GID
 
     - name: Render tunnel env (tunnel profile only)
       when: "'tunnel' in (cove_profiles | default(''))"
@@ -637,7 +744,14 @@
 
   handlers:
     - name: Reload nginx
-      ansible.builtin.command: docker exec {{ nginx_container_name }} nginx -s reload
+      # macOS/Colima: file bind-mounts pin the host inode at container
+      # creation, and the template/copy renders above are atomic (rename →
+      # new inode). The running container's mount then serves a stale inode
+      # (link-count 0, open() → ENOENT) and `nginx -s reload` — which must
+      # re-open every config file — dies with "No such file or directory"
+      # (2026-09-28 incident). A restart re-resolves the bind by path and
+      # boots nginx on the fresh files; correct on Linux too (~1s blip).
+      ansible.builtin.command: docker restart {{ nginx_container_name }}
       environment:
         DOCKER_HOST: "{{ docker_host_detect.stdout }}"
-      changed_when: false
+      changed_when: true
