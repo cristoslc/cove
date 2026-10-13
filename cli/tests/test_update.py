@@ -7,6 +7,9 @@ daily non-interactive job. See docs/musings/2026-09-26-cove-update-command.md.
 """
 
 import plistlib
+from importlib.resources import files
+import tempfile
+import shutil
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -177,9 +180,10 @@ class TestUpdateApplies:
         assert result.exit_code == 0, result.output
         assert installed == ["0.9.0"], "update must install the tagged wheel"
 
-    def test_quiet_skips_provision_and_forces_repull(self, monkeypatch, tmp_path):
+    def test_quiet_skips_provision_and_forces_repull(self, deployed_compose, monkeypatch, tmp_path):
         import cove.update as upd
 
+        (deployed_compose / "docker-compose.yml").write_text("services: {changed: 1}\n")
         calls = []
 
         def fake_run(cmd, **kw):
@@ -189,6 +193,10 @@ class TestUpdateApplies:
                 return SimpleNamespace(returncode=0, stdout=_ls_remote(["v0.9.0"]), stderr="")
             if "get-url" in cmd:
                 return SimpleNamespace(returncode=0, stdout="ssh://git.cove.example/cove.git", stderr="")
+            if "ps" in cmd:
+                return SimpleNamespace(
+                    returncode=0, stdout="\n".join(_COVE_STACK) + "\n", stderr=""
+                )
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(upd.subprocess, "run", fake_run)
@@ -200,22 +208,15 @@ class TestUpdateApplies:
         assert ups and "--no-provision" in ups[0], calls
         assert kw_env_forces_repull(calls), "quiet updates must re-pull floating tags"
 
-    def test_up_to_date_still_converges(self, monkeypatch):
+    def test_up_to_date_no_reinstall(self, deployed_compose, monkeypatch):
         import cove.update as upd
 
         calls = []
-
-        def fake_run(cmd, **kw):
-            cmd = [str(c) for c in cmd]
-            calls.append(cmd)
-            if "ls-remote" in cmd:
-                return SimpleNamespace(returncode=0, stdout=_ls_remote(["v0.8.0"]), stderr="")
-            if "get-url" in cmd:
-                return SimpleNamespace(returncode=0, stdout="ssh://git.cove.example/cove.git", stderr="")
-            return SimpleNamespace(returncode=0, stdout="", stderr="")
-
+        fake_run = _fake_run_with_stack(stack_running=True, ls_remote_stdout=_ls_remote(["v0.8.0"]))
         monkeypatch.setattr(upd.subprocess, "run", fake_run)
-        monkeypatch.setattr(upd, "__version__", "0.8.0")
+        installed = []
+        monkeypatch.setattr(upd, "__version__", "0.9.0")
+        monkeypatch.setattr(upd, "_install_wheel", lambda tag: installed.append(tag))
         result = CliRunner().invoke(upd.update, [])
         assert result.exit_code == 0, result.output
         assert any("up to date" in " ".join(c) or "up to date" in str(result.output) for c in [result.output])
@@ -294,3 +295,166 @@ class TestUpdateAuto:
         result = CliRunner().invoke(upd.update, ["auto", "--off"])
         assert result.exit_code == 0, result.output
         assert not plist.exists()
+# ---------------------------------------------------------------------------
+# Converge gating: bring up only when something was running AND the update
+# would actually change the stack (operator decision 2026-10-13).
+# ---------------------------------------------------------------------------
+
+_COVE_STACK = ["cove-nginx", "cove-ade-server", "cove-vault"]
+
+
+def _fake_run_with_stack(stack_running: bool, ls_remote_stdout: str | None = None):
+    """fake_run that also answers `docker ps` (running cove stack or not)."""
+    def fake_run(cmd, *a, **kw):
+        cmd = [str(c) for c in cmd]
+        if "ls-remote" in cmd:
+            out = ls_remote_stdout if ls_remote_stdout is not None else _ls_remote(["v0.9.0"])
+            return SimpleNamespace(returncode=0, stdout=out, stderr="")
+        if "get-url" in cmd:
+            return SimpleNamespace(returncode=0, stdout="ssh://git.cove.example/cove.git", stderr="")
+        if "ps" in cmd:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="\n".join(_COVE_STACK if stack_running else ["httpd", "redis"]),
+                stderr="",
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    return fake_run
+
+
+@pytest.fixture()
+def deployed_compose(tmp_path, monkeypatch):
+    """A deployed compose dir seeded from the current wheel's bundled tree
+    (identical → no-op); callers mutate `bump=...` to force a diff."""
+    with tempfile.TemporaryDirectory() as td:
+        root = tmp_path / "deployed-compose"
+        src = Path(str(files("cove.resources") / "compose"))
+        shutil.copytree(src, root, dirs_exist_ok=True)
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(root))
+        yield root
+
+
+class TestConvergeGating:
+    def test_up_to_date_and_converged_is_a_no_op(self, deployed_compose, monkeypatch):
+        import cove.update as upd
+
+        calls = []
+        fake_run = _fake_run_with_stack(stack_running=True)
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        monkeypatch.setattr(upd, "__version__", "0.9.0")
+
+        def recording(cmd, **kw):
+            cmd = [str(c) for c in cmd]
+            calls.append(cmd)
+            return fake_run(cmd, **kw)
+
+        monkeypatch.setattr(upd.subprocess, "run", recording)
+        result = CliRunner().invoke(upd.update, ["--quiet"])
+        assert result.exit_code == 0, result.output
+        assert installed_or_up_calls(calls) == [], "converged stack: no bring-up"
+
+    def test_compose_diff_bring_up_running_stack(self, deployed_compose, monkeypatch):
+        import cove.update as upd
+
+        (deployed_compose / "nginx" / "default.conf.j2").write_text("changed\n")
+        calls = []
+        fake_run = _fake_run_with_stack(stack_running=True)
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        monkeypatch.setattr(upd, "__version__", "0.8.0")
+        monkeypatch.setattr(upd, "_install_wheel", lambda tag: None)
+
+        def recording(cmd, **kw):
+            cmd = [str(c) for c in cmd]
+            calls.append(cmd)
+            return fake_run(cmd, **kw)
+
+        monkeypatch.setattr(upd.subprocess, "run", recording)
+        result = CliRunner().invoke(upd.update, ["--quiet"])
+        assert result.exit_code == 0, result.output
+        assert installed_or_up_calls(calls) != [], "changed pins + running stack: converge"
+
+    def test_env_overrides_alone_never_bring_up(self, deployed_compose, monkeypatch):
+        import cove.update as upd
+
+        (deployed_compose / ".env").write_text("ADE_BB_APP_VERSION=0.46.0\n")
+        calls = []
+        fake_run = _fake_run_with_stack(stack_running=True)
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        monkeypatch.setattr(upd, "__version__", "0.9.0")
+
+        def recording(cmd, **kw):
+            cmd = [str(c) for c in cmd]
+            calls.append(cmd)
+            return fake_run(cmd, **kw)
+
+        monkeypatch.setattr(upd.subprocess, "run", recording)
+        result = CliRunner().invoke(upd.update, ["--quiet"])
+        assert result.exit_code == 0, result.output
+        assert installed_or_up_calls(calls) == [], ".env is override surface, not a diff"
+
+    def test_down_stack_never_brought_up_even_with_diffs(self, deployed_compose, monkeypatch):
+        import cove.update as upd
+
+        (deployed_compose / "docker-compose.yml").write_text("services: {changed: 1}\n")
+        calls = []
+        fake_run = _fake_run_with_stack(stack_running=False)
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        monkeypatch.setattr(upd, "__version__", "0.8.0")
+        monkeypatch.setattr(upd, "_install_wheel", lambda tag: None)
+
+        def recording(cmd, **kw):
+            cmd = [str(c) for c in cmd]
+            calls.append(cmd)
+            return fake_run(cmd, **kw)
+
+        monkeypatch.setattr(upd.subprocess, "run", recording)
+        result = CliRunner().invoke(upd.update, ["--quiet"])
+        assert result.exit_code == 0, result.output
+        assert installed_or_up_calls(calls) == [], "stopped services stay stopped"
+        assert "not running" in result.output.lower()
+
+    def test_check_reports_stack_and_convergence(self, deployed_compose, monkeypatch):
+        import cove.update as upd
+
+        fake_run = _fake_run_with_stack(stack_running=True)
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        result = CliRunner().invoke(upd.update, ["--check"])
+        assert result.exit_code == 0, result.output
+        assert "running" in result.output
+        assert "converge" in result.output
+
+
+    def test_generated_runtime_files_do_not_trip_pending(self, deployed_compose, monkeypatch):
+        """Rendered artifacts the wheel never ships (nginx/default.conf,
+        dnsmasq/cove.conf, seeds/*.yaml credential seeds) live in a deployed
+        dev checkout and must not read as a pending pin change."""
+        import cove.update as upd
+
+        (deployed_compose / "nginx" / "default.conf").write_text("rendered\n")
+        (deployed_compose / "dnsmasq" / "cove.conf").write_text("host=mbpbk\n")
+        (deployed_compose / "seeds" / "minio-creds.yaml").write_text("creds: x\n")
+        calls = []
+        fake_run = _fake_run_with_stack(stack_running=True)
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        monkeypatch.setattr(upd, "__version__", "0.9.0")
+
+        def recording(cmd, **kw):
+            cmd = [str(c) for c in cmd]
+            calls.append(cmd)
+            return fake_run(cmd, **kw)
+
+        monkeypatch.setattr(upd.subprocess, "run", recording)
+        result = CliRunner().invoke(upd.update, ["--quiet"])
+        assert result.exit_code == 0, result.output
+        assert installed_or_up_calls(calls) == [], (
+            "generated runtime files are not pin changes"
+        )
+
+
+def installed_or_up_calls(calls):
+    """Calls that either install (uv tool install) or bring up (`cove up`)."""
+    return [
+        c for c in calls
+        if ("tool" in c and "install" in c) or (c and c[0].endswith("cove") and "up" in c)
+    ]
+
