@@ -73,6 +73,28 @@ def _running_image() -> str | None:
     return image or None
 
 
+def _image_version(image: str) -> str | None:
+    """The bb-app version pin implied by an image tag, e.g.
+    'cove-ade:0.44.0' -> '0.44.0'. None when the tag doesn't match."""
+    m = re.search(r":(\d+\.\d+\.\d+)$", image)
+    return m.group(1) if m else None
+
+
+def _previous_image(old_image: str | None, running_image: str | None,
+                    prefix: str, target: str) -> str:
+    """The image to roll back to. Truth first: a recorded `ADE_IMAGE` in .env
+    wins, then the image the container was actually running before the update
+    (the pin can live in bringup defaults alone — .env may never have recorded
+    it, which is how the 2026-10-13 live rollback claimed 0.44.0 while
+    cove-ade:0.46.0 kept running). Last resort: the target (container was
+    absent before the update, so recreating the target is correct)."""
+    if old_image:
+        return old_image
+    if running_image:
+        return running_image
+    return f"{prefix}:{target}"
+
+
 def _running_version() -> str | None:
     """The bb-app version of the running container, parsed from its image tag."""
     image = _running_image()
@@ -210,6 +232,12 @@ def update(version_: str | None, check: bool):
 
     old_image = _read_env_key("ADE_IMAGE")
     old_pin = pinned
+    # Capture the container's ACTUAL pre-update image now, before anything is
+    # recreated — this is the only truthful record when .env never carried
+    # ADE_IMAGE (pin from bringup defaults only).
+    running_image = _running_image()
+    prev_image = _previous_image(old_image, running_image, _image_prefix(), target)
+    prev_version = _image_version(prev_image) or old_pin or running
     prefix = _image_prefix()
     click.echo(f"Updating ADE bb server: {running or '(absent)'} -> {target}...")
     _upsert_env("ADE_BB_APP_VERSION", target)
@@ -228,16 +256,15 @@ def update(version_: str | None, check: bool):
     # Health never converged — roll back to the previous pin (the old image
     # tag still exists locally; version-tagged images make rollback cheap).
     click.echo("Update did not become healthy — rolling back.", err=True)
-    if old_image:
-        _upsert_env("ADE_IMAGE", old_image)
-    else:
-        _upsert_env("ADE_IMAGE", f"{prefix}:{target}")  # keep; container absent before
-    if old_pin:
-        _upsert_env("ADE_BB_APP_VERSION", old_pin)
-    _run_checked(_compose_cmd("up", "-d", ADE_SERVICE), "up")
+    _upsert_env("ADE_IMAGE", prev_image)
+    _upsert_env("ADE_BB_APP_VERSION", prev_version)
+    # Force-recreate: after the failed update .env and image spec changed
+    # twice; relying on compose's drift detection left the failed version
+    # running (2026-10-13 live bug). Explicit beats implicit.
+    _run_checked(_compose_cmd("up", "-d", "--force-recreate", ADE_SERVICE), "up")
     raise click.ClickException(
         f"Update to bb-app {target} failed the health check; rolled back to "
-        f"{old_pin or running or 'previous state'}. Check `cove ade logs` and "
+        f"bb-app {prev_version} ({prev_image}). Check `cove ade logs` and "
         "the bb-app release notes for breaking changes."
     )
 
