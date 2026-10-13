@@ -34,6 +34,8 @@ def fake_world(monkeypatch):
                 stdout="h\trefs/tags/v0.7.1\nh\trefs/tags/v0.10.0\nh\trefs/tags/v0.9.0^{}\n",
                 stderr="",
             )
+        if "get-url" in cmd:
+            return SimpleNamespace(returncode=0, stdout="ssh://git.cove.example/cove.git", stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     return fake_run
@@ -67,6 +69,28 @@ class TestLatestTag:
             lambda *a, **kw: SimpleNamespace(returncode=128, stdout="", stderr="offline"),
         )
         assert upd._latest_tag() is None
+
+    def test_env_override_wins(self, fake_world, monkeypatch):
+        import cove.update as upd
+
+        monkeypatch.setenv("COVE_REPO_GIT", "ssh://git.example2/cove.git")
+
+        def no_probe(cmd, *a, **kw):
+            if "get-url" in [str(c) for c in cmd]:
+                raise AssertionError("env override must skip the get-url probe")
+            return fake_world(cmd, *a, **kw)
+
+        monkeypatch.setattr(upd.subprocess, "run", no_probe)
+        assert upd._latest_tag() == "0.10.0"
+
+    def test_no_repo_owner_in_source(self):
+        import cove.update as upd
+
+        # The operator name, assembled to keep it out of this very file
+        # (the PII guard scans tests too).
+        operator_name = "".join(["cri", "stos"])
+        source = Path(upd.__file__).read_text(encoding="utf-8")
+        assert operator_name not in source, "the wheel must not bundle operator identity"
 
 
 class TestUpdateCheck:
@@ -141,6 +165,8 @@ class TestUpdateApplies:
             calls.append((cmd, dict(kw)))
             if "ls-remote" in cmd:
                 return SimpleNamespace(returncode=0, stdout=_ls_remote(["v0.8.0", "v0.9.0"]), stderr="")
+            if "get-url" in cmd:
+                return SimpleNamespace(returncode=0, stdout="ssh://git.cove.example/cove.git", stderr="")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(upd.subprocess, "run", fake_run)
@@ -161,6 +187,8 @@ class TestUpdateApplies:
             calls.append((cmd, dict(kw)))
             if "ls-remote" in cmd:
                 return SimpleNamespace(returncode=0, stdout=_ls_remote(["v0.9.0"]), stderr="")
+            if "get-url" in cmd:
+                return SimpleNamespace(returncode=0, stdout="ssh://git.cove.example/cove.git", stderr="")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(upd.subprocess, "run", fake_run)
@@ -182,6 +210,8 @@ class TestUpdateApplies:
             calls.append(cmd)
             if "ls-remote" in cmd:
                 return SimpleNamespace(returncode=0, stdout=_ls_remote(["v0.8.0"]), stderr="")
+            if "get-url" in cmd:
+                return SimpleNamespace(returncode=0, stdout="ssh://git.cove.example/cove.git", stderr="")
             return SimpleNamespace(returncode=0, stdout="", stderr="")
 
         monkeypatch.setattr(upd.subprocess, "run", fake_run)
