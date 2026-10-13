@@ -24,16 +24,41 @@ import click
 
 from cove import __version__
 
-REPO_URL = os.environ.get("COVE_REPO_GIT", "git@git.cove:cristos/cove.git")
+REPO_URL_ENV = "COVE_REPO_GIT"
 LAUNCHD_LABEL = "app.cove.update"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHD_LABEL}.plist"
 LOG_PATH = Path.home() / "Library" / "Logs" / "cove-update.log"
 
 
+def _repo_url() -> str:
+    """The cove repo remote URL. env override wins; otherwise the dev
+    checkout's origin remote is the canonical source (the operator machine
+    is where scheduled updates run). No hardcoded repo owner: the repo URL
+    is machine truth, not wheel-bundled truth."""
+    url = os.environ.get(REPO_URL_ENV)
+    if url:
+        return url
+    checkout = Path.home() / "Documents" / "code" / "cove"
+    result = subprocess.run(
+        ["git", "-C", str(checkout), "remote", "get-url", "origin"],
+        capture_output=True, text=True, timeout=10,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    raise click.ClickException(
+        f"Cannot determine the cove repo remote URL (no origin remote at "
+        f"{checkout}). Set {REPO_URL_ENV}=<url> and retry."
+    )
+
+
 def _latest_tag() -> str | None:
     """Highest vX.Y.Z tag on the repo remote, or None if unreachable."""
+    try:
+        repo_url = _repo_url()
+    except click.ClickException:
+        return None
     result = subprocess.run(
-        ["git", "ls-remote", "--tags", REPO_URL, "refs/tags/v*"],
+        ["git", "ls-remote", "--tags", repo_url, "refs/tags/v*"],
         capture_output=True, text=True, timeout=30,
     )
     if result.returncode != 0:
@@ -115,8 +140,9 @@ def _do_update(check: bool, quiet: bool) -> None:
 
     if latest is None:
         raise click.ClickException(
-            "Could not determine the latest cove release (git ls-remote "
-            "failed). Update from a machine with repo access."
+            "Could not determine the latest cove release (the repo remote "
+            f"is unreachable or unknown). Set {REPO_URL_ENV}=<url> or run "
+            "from a machine with repo access."
         )
 
     newer = _version_tuple(latest) > _version_tuple(installed)
