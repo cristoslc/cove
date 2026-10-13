@@ -761,3 +761,56 @@ class TestAdeStatusVersion:
         assert "0.44.0" in result.output and "converge" in result.output, (
             f"drift between running 0.43.4 and .env pin 0.44.0 must warn, got: {result.output}"
         )
+
+
+class TestAdeUpdateRollback:
+    """The update rollback must restore the REAL previous container image —
+    including the case where the previous pin lived only in bringup defaults
+    (no .env ADE_IMAGE), which 2026-10-13's live update mishandled: the CLI
+    claimed rollback to 0.44.0 but left cove-ade:0.46.0 running (compose saw a
+    matching image spec and skipped recreation)."""
+
+    def test_previous_image_prefers_env_record(self):
+        from cove.ade import _previous_image
+
+        assert (
+            _previous_image(old_image="cove-ade:0.43.4", running_image="cove-ade:0.44.0",
+                            prefix="cove-ade", target="0.46.0")
+            == "cove-ade:0.43.4"
+        )
+
+    def test_previous_image_falls_back_to_running(self):
+        """Previous pin lived only in bringup defaults (.env had no ADE_IMAGE):
+        the truthful previous image is the RUNNING one."""
+        from cove.ade import _previous_image
+
+        assert (
+            _previous_image(old_image=None, running_image="cove-ade:0.44.0",
+                            prefix="cove-ade", target="0.46.0")
+            == "cove-ade:0.44.0"
+        )
+
+    def test_previous_image_last_resort_is_target(self):
+        from cove.ade import _previous_image
+
+        assert (
+            _previous_image(old_image=None, running_image=None,
+                            prefix="cove-ade", target="0.46.0")
+            == "cove-ade:0.46.0"
+        )
+
+
+class TestAdeAppUrl:
+    """bb-app >= 0.46 rejects requests whose Host is not localhost/an IP/the
+    configured BB_APP_URL (found live: `forbidden_host` on Host: ade.cove).
+    The compose service must declare it so /health and the web UI accept the
+    nginx vhost host."""
+
+    def test_ade_service_sets_bb_app_url(self):
+        text = COMPOSE_DIR.joinpath("docker-compose.yml").read_text()
+        assert "BB_APP_URL" in text, (
+            "the ade service must declare BB_APP_URL (bb-app 0.46+ host allowlist)"
+        )
+        assert "${ADE_APP_URL:-https://ade.cove}" in text, (
+            "BB_APP_URL must default to the nginx vhost host ade.cove"
+        )
