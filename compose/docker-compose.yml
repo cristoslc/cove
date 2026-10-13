@@ -345,6 +345,11 @@ services:
       BB_DATA_DIR: /data
       BB_SERVER_BIND_HOST: "0.0.0.0"
       BB_SERVER_PORT: "${ADE_PORT:-38886}"
+      # bb-app >= 0.46 allowlists request Hosts: must be localhost, an IP,
+      # or this URL's hostname. The nginx vhost speaks `ade.cove` on both the
+      # live stack and staging (which inherits this env), so /health and the
+      # web UI accept the ingress. Override via ADE_APP_URL if the vhost moves.
+      BB_APP_URL: "${ADE_APP_URL:-https://ade.cove}"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:${ADE_PORT:-38886}/health"]
       interval: 15s
