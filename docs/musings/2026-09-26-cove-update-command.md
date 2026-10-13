@@ -135,3 +135,17 @@ consumes.
 - Post-Phase-2 fleets: the cove ADE server can push version intent to enrolled
   machines (bb already does exactly this for its own daemons) — revisit when
   machine #2 exists.
+
+## Addendum (2026-10-13): convergence is gated, not unconditional
+
+The first implementation always ran bring-up after the CLI phase — the
+operator correction: `cove update` brings up only when (a) the release's
+bundled compose actually differs from what is deployed (a real pin change),
+and (b) there is a running stack to converge at all. `.env` overrides and the
+gitignored runtime artifacts bringup generates locally (rendered nginx
+config, dnsmasq config, credential seeds) never count as pending. A downed
+stack stays down — updates converge running services, `cove up` remains the
+explicit way to start the stack. The new wheel's bundled pins are read from
+the wheel itself, because the process doing the comparison still runs the
+old code until restart. Fail-soft default: if the bundled tree cannot be
+read, convergence is assumed pending (converge rather than silently skip).
