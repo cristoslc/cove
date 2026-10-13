@@ -1,6 +1,7 @@
 """Click entrypoint and group registration."""
 
 import getpass
+import sys
 import os
 import platform
 import re
@@ -171,7 +172,10 @@ def _report_ansible_failure(playbook: Path, lines: list[str], logfile: Path) -> 
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
 @click.option("--all", "all_", is_flag=True, help="Also start all optional services (LiteLLM + Headroom, Runner, Speedtest). The tunnel is excluded: shares are created interactively with `cove tunnel up`.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
-def up(no_provision, no_upgrade, all_, log):
+@click.option("--non-interactive", is_flag=True,
+              help="No prompts (scheduled runs): skip the BECOME prompt; elevation "
+                   "tasks are idempotent no-ops on established machines.")
+def up(no_provision, no_upgrade, all_, log, non_interactive=False):
     """Bring up cove containers and provision Forgejo.
 
     Compose dir is resolved in order: COVE_COMPOSE_DIR env, ./compose,
@@ -240,8 +244,12 @@ def up(no_provision, no_upgrade, all_, log):
     base_cmd.extend(["-e", f"ansible_hostname={host_vars_file.stem}"])
 
     # Prompt for the BECOME password only when the operator has not installed
-    # the passwordless sudoers drop-in (`cove sudo enable`).
-    if passwordless_sudo_ok():
+    # the passwordless sudoers drop-in (`cove sudo enable`). Scheduled runs
+    # (`cove update --quiet` → `cove up --non-interactive`) have no TTY and no
+    # password: they skip the prompt, and the become-requiring bringup tasks
+    # (e.g. /etc/hosts) are idempotent no-ops on established machines and
+    # tolerate failure.
+    if non_interactive or passwordless_sudo_ok():
         ansible_env["ANSIBLE_BECOME_PASS"] = ""
     else:
         become_pass = getpass.getpass("BECOME password: ")
@@ -264,6 +272,11 @@ def up(no_provision, no_upgrade, all_, log):
             bringup_profiles.append(profile)
     if bringup_profiles:
         base_cmd.extend(["-e", f"cove_profiles={','.join(bringup_profiles)}"])
+    # Scheduled updates force re-pull so floating tags (forgejo:15, nginx)
+    # actually receive new upstream patches instead of freezing at first pull.
+    pull_policy = os.environ.pop("COVE_PULL_POLICY", None)
+    if pull_policy:
+        base_cmd.extend(["-e", f"pod_pull_policy={pull_policy}"])
 
     if not no_provision:
         click.echo("Pulling credentials from 1Password...")
@@ -357,6 +370,9 @@ app.add_command(runner)
 app.add_command(tunnel)
 app.add_command(toolhive)
 app.add_command(sudo)
+from cove.update import update
+
+app.add_command(update)
 
 
 @app.command()

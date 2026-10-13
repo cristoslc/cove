@@ -426,6 +426,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "cove ade update (pin resolution, .env override persistence, rebuild+recreate, auto-rollback on failed health, --check)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
   - path: "nginx config rendering for ade.cove"
     blast_radius: high
     coverage:
