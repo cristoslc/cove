@@ -17,6 +17,7 @@ import os
 import re
 import subprocess
 import tempfile
+import zipfile
 from pathlib import Path
 from shutil import which
 
@@ -84,10 +85,12 @@ def _version_tuple(v: str):
         raise ValueError(f"not a semver: {v!r}") from exc
 
 
-def _install_wheel(tag: str) -> None:
+def _install_wheel(tag: str) -> str:
     """Build the wheel at `tag` in a throwaway worktree (mirrors the promote
-    flow: sync compose resources -> build -> uv tool install --force) and
-    fail loud if the build does not produce one."""
+    flow: sync compose resources -> build -> uv tool install --force), fail
+    loud if the build does not produce one, and return the wheel path so the
+    convergence gate can inspect the NEW wheel's bundled pins (the running
+    process still holds the old code until restart)."""
     with tempfile.TemporaryDirectory(prefix="cove-update-") as tmp:
         worktree = Path(tmp) / "repo"
         subprocess.run(
@@ -114,6 +117,116 @@ def _install_wheel(tag: str) -> None:
                 ["git", "worktree", "remove", "--force", str(worktree)],
                 capture_output=True, text=True, check=False,
             )
+        return str(wheels[-1])
+
+
+def _stack_running() -> bool:
+    """True when at least one cove container is running. Update converges
+    running services only — a downed stack (intentional `cove down`, or a
+    mid-runbook `cove ade down`) must not be resurrected by an update."""
+    result = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}}"],
+        capture_output=True, text=True, timeout=30,
+    )
+    if result.returncode != 0:
+        raise click.ClickException(
+            f"docker ps failed ({result.stderr.strip() or 'no stderr'}) — "
+            "cannot determine the running stack."
+        )
+    return any(name.startswith("cove-") for name in result.stdout.splitlines())
+
+
+def _is_generated_compose_file(rel: str) -> bool:
+    """Files bringup renders/generates locally and the wheel never ships:
+    the rendered nginx config, the rendered dnsmasq config, and credential
+    seed YAMLs (the bundle ships non-secret `*.example` seeds). Their
+    presence in the deployed dir is runtime state, not a pin change."""
+    return (
+        rel == "nginx/default.conf"
+        or rel == "dnsmasq/cove.conf"
+        or (rel.startswith("seeds/") and rel.endswith(".yaml"))
+    )
+
+
+def _compose_files(root: Path) -> dict[str, str]:
+    """relpath -> content for every file under a compose dir, excluding `.env`
+    (the supported operator-override surface — its divergence is deliberate,
+    never a reason to bring up) and the locally generated runtime files."""
+    out: dict[str, str] = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            rel = path.relative_to(root).as_posix()
+            if rel == ".env" or _is_generated_compose_file(rel):
+                continue
+            out[rel] = path.read_text(encoding="utf-8", errors="replace")
+    return out
+
+
+def _bundled_compose_files(wheel_path: str | None) -> dict[str, str] | None:
+    """The compose tree the (possibly new, post-install) wheel bundles.
+    `wheel_path` is what `_install_wheel` just installed; before any install,
+    the current process's bundled resources are already the installed ones."""
+    if wheel_path is None:
+        from cove.stateless import _bundled_compose_root
+
+        root = Path(str(_bundled_compose_root()))
+        if not root.is_dir():
+            return None
+        return _compose_files(root)
+    prefix = "cove/resources/compose/"
+    with zipfile.ZipFile(wheel_path) as zf:
+        files = {
+            name[len(prefix):]: zf.read(name).decode("utf-8", errors="replace")
+            for name in zf.namelist()
+            if name.startswith(prefix) and not name.endswith("/")
+        }
+    files.pop(".env", None)
+    for name in [n for n in files if _is_generated_compose_file(n)]:
+        del files[name]
+    return files
+
+
+def _convergence_pending(wheel_path: str | None) -> bool:
+    """True only when bring-up could change something: the release's bundled
+    compose differs from what is deployed. Anything the wheel cannot change,
+    it must not bring the stack up for."""
+    from cove.stateless import resolve_compose_dir
+
+    deployed = _compose_files(resolve_compose_dir())
+    bundled = _bundled_compose_files(wheel_path)
+    if bundled is None:
+        return True  # cannot prove no-impact → converge (fail loud)
+    return deployed != bundled
+
+
+def _converge(check: bool, quiet: bool, wheel_path: str | None) -> None:
+    """Bring up, but only when it has impact: pending pin changes AND a stack
+    that is already running."""
+    pending = _convergence_pending(wheel_path)
+    if check:
+        click.echo(f"  converge:          {'pending' if pending else 'no-op (pins converged)'}")
+        click.echo(f"  stack:             {'running' if _stack_running() else 'not running'}")
+        return
+    if not pending:
+        if not quiet:
+            click.echo("  stack already converged — nothing to bring up.")
+        return
+    if not _stack_running():
+        # Logged even in quiet mode: the scheduled run's log should say why
+        # it did nothing.
+        click.echo(
+            "  stack is not running — skipped bring-up. Update converges "
+            "running services only; `cove up` when you want the stack."
+        )
+        return
+    if quiet:
+        env = dict(os.environ, COVE_PULL_POLICY="always")
+        subprocess.run(
+            [which("cove") or "cove", "up", "--no-provision", "--non-interactive"],
+            stdin=subprocess.DEVNULL, env=env, check=False,
+        )
+    else:
+        subprocess.run([_cove_bin(), "up"], check=False)
 
 
 def _check_container_pins() -> None:
@@ -136,6 +249,7 @@ def _do_update(check: bool, quiet: bool) -> None:
         click.echo(f"  cove cli installed: {installed}")
         click.echo(f"  cove cli latest:    {latest or '(unreachable)'}")
         _check_container_pins()
+        _converge(check=True, quiet=quiet, wheel_path=None)
         return
 
     if latest is None:
@@ -145,26 +259,21 @@ def _do_update(check: bool, quiet: bool) -> None:
             "from a machine with repo access."
         )
 
-    newer = _version_tuple(latest) > _version_tuple(installed)
-    if newer:
+    wheel_path: str | None = None
+    if _version_tuple(latest) > _version_tuple(installed):
         click.echo(f"Updating cove: {installed} -> {latest}...")
-        _install_wheel(latest)
+        wheel_path = _install_wheel(latest)
         click.echo(f"Installed cove {latest}.")
     elif not quiet:
         click.echo(f"cove cli is up to date ({installed}).")
 
-    # Converge the stack to the (possibly new) wheel's pins: bringup re-renders
-    # the bundled compose resources and runs data migrations. Quiet mode is the
-    # scheduled path: no TTY, no 1Password, no provisioning; floating tags are
-    # force-re-pulled so they actually receive upstream patches.
-    if quiet:
-        env = dict(os.environ, COVE_PULL_POLICY="always")
-        subprocess.run(
-            [which("cove") or "cove", "up", "--no-provision", "--non-interactive"],
-            stdin=subprocess.DEVNULL, env=env, check=False,
-        )
-    else:
-        subprocess.run([_cove_bin(), "up"], check=False)
+    # Converge the stack to the (possibly new) wheel's pins — but only when
+    # it changes something AND the stack is running (operator decision
+    # 2026-10-13): updates never resurrect stopped services and never run
+    # bring-up on a converged stack. Quiet mode is the scheduled path: no
+    # TTY, no 1Password, no provisioning; floating tags are force-re-pulled
+    # so they actually receive upstream patches.
+    _converge(check=False, quiet=quiet, wheel_path=wheel_path)
 
 
 def _cove_bin() -> str:
