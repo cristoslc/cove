@@ -4,13 +4,14 @@ Read **[PURPOSE.md](PURPOSE.md)** for this project's identity, worldview, and fo
 
 ## Cove-specific notes
 
-- **`cove up` requires sudo** for `/etc/resolver/cove` and system trust store install. Do not run it autonomously — ask the operator to run it, or offer to set up passwordless sudo for those specific commands via a `/etc/sudoers.d/cove` entry.
+- **`cove up` requires sudo** for `/etc/resolver/cove` and system trust store install. Passwordless sudo is toggled with `cove sudo enable` (installs a validated `/etc/sudoers.d/cove` drop-in after one sudo prompt; `setup` remains as a hidden alias), `cove sudo status` checks it, and `cove sudo disable` removes it. With the drop-in installed, `cove up` runs with no BECOME prompt. Until it is installed on a machine, do not run `cove up` autonomously — ask the operator to run it.
 - **`cove up --no-sudo`** skips sudo tasks but DNS resolution for `*.cove` won't work without the resolver file. Use `curl -H "Host: ..." https://127.0.0.1/...` for health checks when testing without sudo.
 - **Colima** is the Docker runtime on macOS. `cove up` auto-starts it if not running and switches the Docker context to `colima`.
 - **`uv run --directory cli cove up`** runs the project-local CLI without reinstalling the system tool. Use this for testing changes.
 - **`fj`** is the Forgejo CLI. See [docs/guides/fj-guide.md](docs/guides/fj-guide.md) for draft PR workflow, WIP title conventions, and Cove-specific usage rules.
 - **`cove litellm`** manages the optional LiteLLM proxy service (hardened LLM proxy with Headroom compression). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://litellm.cove/` through nginx ingress. Security posture: version-pinned, nginx route-whitelisted, read-only container, env-var-only credentials. See [docs/services/litellm-proxy.md](docs/services/litellm-proxy.md).
 - **`cove speedtest`** manages the optional Speedtest Tracker service (WAN-link monitor). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://speedtest.cove/` through nginx ingress. The admin identity comes from the shared **`Cove Admin`** 1Password item (keyed to `https://cove.local/`, ADR-017); the APP_KEY lives in the `Speedtest Tracker` item keyed to `https://speedtest.cove.local/`. Both reused across all machines. See [docs/services/speedtest.md](docs/services/speedtest.md).
+- **`cove toolhive`** manages the optional ToolHive MCP gateway service (MCP gateway at `mcp.cove`; the only MCP surface in Cove — LiteLLM MCP stays disabled, CVE-2026-42271). Subcommands: `up`, `down`, `status`, `logs`. Accessible at `https://mcp.cove/` through nginx ingress; the API/UI binds `127.0.0.1` only (loopback). The docker socket is mounted read-only; MCP servers run as sibling containers constrained by permission profiles and explicit mounts. The curated registry is IaC (`compose/toolhive/registry.json`, mounted read-only, remote fetch off). See [docs/services/toolhive.md](docs/services/toolhive.md).
 - **`cove runner`** manages the optional Forgejo Actions Runner (CI runner). Subcommands: `up`, `down`, `status`, `logs`. No ingress URL (outbound-only service). Registration is IaC: `cove runner up` starts the container but does NOT register; `cove up` with the runner profile active registers it. See [docs/services/forgejo-runner.md](docs/services/forgejo-runner.md).
 - **`cove ade`** manages the ADE bb server (agentic harness, core service since 0.8.0 — `cove up` starts it). Subcommands: `up`, `down`, `status`, `logs`, `update`. Accessible at `https://ade.cove/` through nginx with WebSocket upgrade. Runs pinned `bb-app` (build arg `ADE_BB_APP_VERSION`), data under `${cove_data_root}/ade/`, bound `0.0.0.0` inside the container. Direct-URL mode is unauthenticated by design — the Cove network is the trust boundary. `cove ade down` stops it until the next `cove up`. `cove ade update` re-pins bb-app (latest or explicit) into the compose `.env`, rebuilds, recreates, health-checks, and rolls back on failure — the server is the version anchor; enrolled machines follow it. Enrolling the Mac as machine #1 is the Phase 2 cutover (runbook in docs). See [docs/services/ade.md](docs/services/ade.md).
 
@@ -45,6 +46,18 @@ The `cove` CLI is installed as a **uv tool** (`~/.local/bin/cove`) from a wheel 
   uv build --wheel --out-dir cli/dist             # from cli/
   uv tool install --force --from cli/dist/cove_cli-<ver>-py3-none-any.whl
   ```
+- **Publish — BOTH hosts, always.** A release is not cut until it exists on
+  **GitHub** (`github` remote, the public install path) AND **Forgejo**
+  (`origin`, git.cove), each with the wheel attached and notes from its
+  CHANGELOG section. Canonical command after tagging:
+  ```
+  scripts/release.sh <ver>      # pushes tag to origin+github, publishes both hosts, idempotent
+  ```
+  The Forgejo host is LAN-only, so GitHub-hosted runners cannot publish there —
+  `.github/workflows/release.yml` covers the GitHub side on tag push, while the
+  Forgejo half always goes through `scripts/release.sh` from the operator's
+  machine. See docs/tech-debt/dual-host-release-drift.md (the 2026-09-28 drift
+  this rule closes: GitHub releases had stopped at v0.5.0).
 - **Rollback** on breakage (restore the last tagged release, then re-promote):
   ```
   git checkout v<last-tag> -- cli/ compose/   # restore canonical source for the tag
@@ -80,5 +93,5 @@ Master coverage matrix: `docs/test-coverage-matrix.yaml`
 
 ## Staging E2E
 
-Staging runs the branch as an **isolated** Docker Compose project (`-p cove-staging`, nginx on `https://127.0.0.1:9443`) — the live stack is never re-rendered or restarted. Scripts: `scripts/staging/deploy-isolated.sh` (deploy), `e2e.sh` (tier 2 tests), `teardown.sh` (compose down -v + staging data removal). The legacy in-live mode (`deploy.sh`, port 8443) still exists but re-renders live nginx and restarts live containers; use it only deliberately.
+Staging runs the branch as an **isolated** Docker Compose project (`-p cove-staging`, nginx on `https://127.0.0.1:9443`) — the live stack is never re-rendered or restarted. Scripts: `scripts/staging/deploy-isolated.sh` (deploy), `e2e.sh` (tier 2 tests), `teardown.sh` (compose down -v + staging data removal). The legacy in-live mode (`deploy.sh`, port 443 since the pf shim was dropped) still exists but re-renders live nginx and restarts live containers; use it only deliberately.
 Full reference: `.agents/agents-md-detail/staging-e2e.md`.

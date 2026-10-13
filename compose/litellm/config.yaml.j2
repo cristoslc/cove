@@ -27,6 +27,10 @@ litellm_settings:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   disable_end_user_auth: true
+  # MCP endpoints stay disabled permanently (CVE-2026-42271). ToolHive is
+  # Cove's only MCP surface — see docs/plans/toolhive-mcp-gateway.md. Do not
+  # re-enable this "helpfully"; the guard test in cli/tests/test_toolhive.py
+  # (TestLitellmMcpGuard) will fail.
   disable_mcp: true
   disable_user_management: false
   disable_jwt_auth: true

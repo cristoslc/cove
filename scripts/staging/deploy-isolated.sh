@@ -39,6 +39,8 @@ STAGING_HTTPS_PORT="${STAGING_NGINX_HTTPS_PORT:-9443}"
 STAGING_DATA_ROOT="${COVE_STAGING_DATA_ROOT:-$HOME/Documents/cove-data-staging}"
 LIVE_DATA_ROOT="${COVE_LIVE_DATA_ROOT:-$HOME/Documents/cove-data}"
 ADE_PORT="${ADE_PORT:-38886}"
+# Branch compose profiles the isolated stack should start (detected below).
+MCP_PROFILE=false
 
 # --- Safety guards: the staging root must never be the live root -------------
 if [[ "$STAGING_DATA_ROOT" == "$LIVE_DATA_ROOT" ]]; then
@@ -58,7 +60,7 @@ fi
 echo "Isolated staging deploy — branch: $BRANCH" >&2
 echo "  project:      $STAGING_PROJECT" >&2
 echo "  data root:    $STAGING_DATA_ROOT" >&2
-echo "  nginx:        https://127.0.0.1:$STAGING_HTTPS_PORT (Host: ade.cove)" >&2
+echo "  nginx:        https://127.0.0.1:$STAGING_HTTPS_PORT (Host: ade.cove, mcp.cove)" >&2
 echo "  live stack:   untouched (no cove up, no live container restarts)" >&2
 
 # --- Build the branch wheel + venv (same as deploy.sh; venv provides jinja2) -
@@ -84,7 +86,7 @@ python3 -m venv "$STAGING_VENV"
 
 # --- Prepare the staging data tree (staging root only) -----------------------
 echo "Preparing staging data root: $STAGING_DATA_ROOT" >&2
-mkdir -p "$STAGING_DATA_ROOT"/{certs,dnsmasq,pages/sites,vault/data,vault/logs,ade,nginx/user.d,nginx/config/dns,nginx-conf}
+mkdir -p "$STAGING_DATA_ROOT"/{certs,dnsmasq,pages/sites,vault/data,vault/logs,ade,nginx/user.d,nginx/config/dns,nginx-conf,toolhive/config,toolhive/state,toolhive/profiles}
 
 # Certs: reuse the live mkcert pair if present (READ-only copy from the live
 # root — never a mount, never a write). Otherwise generate a self-signed pair
@@ -140,6 +142,31 @@ with open(dest, "w") as f:
 PYEOF
 echo "  nginx conf: rendered from branch template (ade_port=$ADE_PORT)" >&2
 
+# ToolHive seed (staging root only; mirrors bringup.yml first-boot copies):
+# curated registry, default permission profile, and the control-plane config
+# pointing the API server at the local registry (remote fetch stays off).
+# registry.json MUST be a file before compose up — Docker would otherwise
+# auto-create a directory and wedge the read-only mount.
+if [[ -f "$COMPOSE_DIR/toolhive/registry.json" ]]; then
+    cp "$COMPOSE_DIR/toolhive/registry.json" "$STAGING_DATA_ROOT/toolhive/registry.json"
+    cp "$COMPOSE_DIR/toolhive/cove-default.json" "$STAGING_DATA_ROOT/toolhive/profiles/cove-default.json"
+    "$STAGING_VENV/bin/python" - "$COMPOSE_DIR/toolhive/config.yaml.j2" "$STAGING_DATA_ROOT/toolhive/config/toolhive/config.yaml" <<'PYEOF'
+import os
+import sys
+from pathlib import Path
+
+from jinja2 import Environment, FileSystemLoader
+
+template_path, dest = sys.argv[1], sys.argv[2]
+env = Environment(loader=FileSystemLoader(str(Path(template_path).parent)))
+rendered = env.get_template("config.yaml.j2").render({})
+os.makedirs(os.path.dirname(dest), exist_ok=True)
+with open(dest, "w") as f:
+    f.write(rendered)
+PYEOF
+    echo "  toolhive: registry/profiles/config seeded (staging root only)" >&2
+fi
+
 # --- Staging env file (absolute paths; compose env-file does not expand ~) ---
 STAGING_ENV_FILE="$STAGING_DATA_ROOT/staging.env"
 cat > "$STAGING_ENV_FILE" <<EOF
@@ -160,6 +187,16 @@ COMPOSE_CMD=(docker compose -p "$STAGING_PROJECT"
     -f "$COMPOSE_DIR/docker-compose.staging.yml"
     )
 
+# Start any branch compose profiles the staging E2E needs — same grep pattern
+# deploy.sh uses, but scoped to the ISOLATED project render so the live stack
+# is never touched. If the branch declares the mcp profile, the toolhive
+# staging instance comes up alongside ade (its e2e module requires it).
+if "${COMPOSE_CMD[@]}" config --profiles 2>/dev/null | grep -qx "mcp"; then
+    echo "Branch declares the mcp profile — starting toolhive in the staging project" >&2
+    MCP_PROFILE=true
+    COMPOSE_CMD+=(--profile mcp)
+fi
+
 echo "Bringing up $STAGING_PROJECT (build may take a few minutes on first run)..." >&2
 if ! "${COMPOSE_CMD[@]}" up -d --build 2>&1 >&2; then
     echo "deploy-isolated.sh: compose up failed" >&2
@@ -173,6 +210,12 @@ check_health() {
     docker inspect -f '{{.State.Running}}' "cove-staging-nginx" 2>/dev/null | grep -q '^true$' \
         && curl -sf -k --max-time 5 -H "Host: cove.local" "$STAGING_URL/_health" 2>/dev/null | grep -q '^ok$' \
         && curl -sf -k --max-time 5 -H "Host: ade.cove" "$STAGING_URL/health" 2>/dev/null | grep -q '"ok"'
+    local base_ok=$?
+    if [[ "$MCP_PROFILE" == true ]] && (( base_ok == 0 )); then
+        # mcp profile: wait for the toolhive control-plane healthcheck too.
+        docker inspect -f '{{.State.Health.Status}}' "cove-staging-toolhive" 2>/dev/null | grep -q '^healthy$' || return 1
+    fi
+    return "$base_ok"
 }
 
 HEALTH_TIMEOUT="${STAGING_HEALTH_TIMEOUT:-600}"
@@ -187,6 +230,10 @@ until check_health; do
         docker logs --tail 30 cove-staging-nginx 2>&1 >&2 || true
         echo "--- cove-staging-ade-server logs (last 30) ---" >&2
         docker logs --tail 30 cove-staging-ade-server 2>&1 >&2 || true
+        if [[ "$MCP_PROFILE" == true ]]; then
+            echo "--- cove-staging-toolhive logs (last 30) ---" >&2
+            docker logs --tail 30 cove-staging-toolhive 2>&1 >&2 || true
+        fi
         exit 1
     fi
     sleep 5
