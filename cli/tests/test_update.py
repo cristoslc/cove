@@ -451,10 +451,34 @@ class TestConvergeGating:
         )
 
 
+    def test_env_example_does_not_trip_pending(self, deployed_compose, monkeypatch):
+        """.env.example documents the override surface; the wheel may not ship
+        it (dotfile packaging), and it changes no pins — it must not read as
+        pending."""
+        import cove.update as upd
+
+        (deployed_compose / ".env.example").write_text("DOCUMENTED_OVERRIDE=1\n")
+        calls = []
+        fake_run = _fake_run_with_stack(stack_running=True)
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        monkeypatch.setattr(upd, "__version__", "0.9.0")
+
+        def recording(cmd, **kw):
+            cmd = [str(c) for c in cmd]
+            calls.append(cmd)
+            return fake_run(cmd, **kw)
+
+        monkeypatch.setattr(upd.subprocess, "run", recording)
+        result = CliRunner().invoke(upd.update, ["--quiet"])
+        assert result.exit_code == 0, result.output
+        assert installed_or_up_calls(calls) == [], (
+            ".env.example is override-surface documentation, not a pin change"
+        )
+
+
 def installed_or_up_calls(calls):
     """Calls that either install (uv tool install) or bring up (`cove up`)."""
     return [
         c for c in calls
         if ("tool" in c and "install" in c) or (c and c[0].endswith("cove") and "up" in c)
     ]
-

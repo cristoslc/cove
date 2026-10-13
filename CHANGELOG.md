@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Fixed
+- **`cove update` no longer treats `.env.example` as a pin change** — the wheel's packaging omits the dotfile while the synced resources and deployed checkouts include it, so wheel-vs-deployed comparison always differed by one file (live-verified: dev-checkout `--check` said pending while the stack was converged). `.env.example` documents the override surface; it, like `.env`, never counts as pending. Related packaging defects (dotfile omission, `build/lib` wheels pollution) documented in `docs/tech-debt/wheel-packaging-hygiene.md`.
+
 ### Changed
 - **`cove update` brings up only what it changes — and only what is running** — convergence runs bring-up only when the release's bundled compose differs from what is deployed (real pin change; `.env` overrides and gitignored runtime artifacts like the rendered nginx config, dnsmasq config, and credential seeds never count), and only when cove containers are already running. A downed stack is never resurrected by an update (`cove up` remains the explicit way to start it), and a converged stack skips the multi-minute bring-up entirely. `cove update --check` now reports the running stack and whether convergence is pending. The new wheel's bundled pins are compared from the wheel itself (post-install), since the running process still holds the old code.
 
