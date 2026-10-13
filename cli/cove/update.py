@@ -140,11 +140,16 @@ def _is_generated_compose_file(rel: str) -> bool:
     """Files bringup renders/generates locally and the wheel never ships:
     the rendered nginx config, the rendered dnsmasq config, and credential
     seed YAMLs (the bundle ships non-secret `*.example` seeds). Their
-    presence in the deployed dir is runtime state, not a pin change."""
+    presence in the deployed dir is runtime state, not a pin change.
+    Also `.env*` at the compose root: the override surface and the example
+    documenting it (.env.example can be missing from wheels' dotfile
+    packaging without affecting any pin)."""
     return (
         rel == "nginx/default.conf"
         or rel == "dnsmasq/cove.conf"
         or (rel.startswith("seeds/") and rel.endswith(".yaml"))
+        or rel == ".env"
+        or rel == ".env.example"
     )
 
 
