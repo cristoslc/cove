@@ -25,6 +25,7 @@ def _project_root() -> Path:
 
 PROJECT_ROOT = _project_root()
 COMPOSE_DIR = PROJECT_ROOT / "compose"
+CLI_DIR = PROJECT_ROOT / "cli"
 
 
 @pytest.fixture(autouse=True)
@@ -1523,3 +1524,17 @@ class TestInitPurge:
             result = runner.invoke(cove.cli.app, ["init", "--purge"])
             assert result.exit_code == 0
             assert "Nothing to remove" in result.output
+    def test_ade_probes_nginx_https_port(self):
+        """cove ade's health probes must use constants.NGINX_HTTPS_PORT — the
+        pf shim is gone, nginx owns 443, and nothing listens on 8443. The
+        ade-update-command branch predates the pf drop and shipped a dead
+        ADE_HEALTH_PORT = 8443: `cove ade status` reported UNREACHABLE on healthy
+        machines and `cove ade update`'s health-wait would spuriously fail and
+        roll back."""
+        text = (CLI_DIR / "cove" / "ade.py").read_text()
+        assert "8443" not in text, (
+            "ade.py must not hardcode the dead 8443 HTTPS port (nginx owns 443)"
+        )
+        assert "NGINX_HTTPS_PORT" in text, (
+            "ade.py must use the single source of truth NGINX_HTTPS_PORT"
+        )

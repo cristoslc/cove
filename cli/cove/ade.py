@@ -8,13 +8,13 @@ import time
 import click
 import requests
 
+from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import resolve_compose_dir
 
 
 ADE_SERVICE = "ade"
 ADE_CONTAINER_NAME = "cove-ade-server"
 ADE_URL = "https://ade.cove/"
-ADE_HEALTH_PORT = 8443
 NPM_LATEST_URL = "https://registry.npmjs.org/bb-app/latest"
 _VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$")
 
@@ -103,7 +103,7 @@ def _wait_healthy(timeout_s: int | None = None, poll_s: float | None = None) -> 
             try:
                 health = subprocess.run(
                     ["curl", "-sf", "-H", f"Host: {host}",
-                     f"https://127.0.0.1:{ADE_HEALTH_PORT}/health"],
+                     f"https://127.0.0.1:{NGINX_HTTPS_PORT}/health"],
                     capture_output=True, timeout=10,
                 )
             except subprocess.TimeoutExpired:
@@ -270,7 +270,7 @@ def status():
     for host in ("ade.cove.local", "ade.cove"):
         try:
             health = subprocess.run(
-                ["curl", "-sf", "-H", f"Host: {host}", f"https://127.0.0.1:{ADE_HEALTH_PORT}/health"],
+                ["curl", "-sf", "-H", f"Host: {host}", f"https://127.0.0.1:{NGINX_HTTPS_PORT}/health"],
                 capture_output=True, text=True, timeout=10,
             )
         except subprocess.TimeoutExpired:
