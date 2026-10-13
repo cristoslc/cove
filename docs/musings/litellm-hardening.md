@@ -103,3 +103,4 @@ For Cove: fail open is fine. The threat model doesn't justify blocking all LLM a
 - [ ] Log all requests, monitor for unexpected routes
 - [ ] Fail open when proxy is down
 - [ ] Subscribe to BerriAI/litellm security advisories
+- [x] **Upgrade procedure** — see `docs/musings/2026-09-26-vendor-update-policy.md` (registry + SLA + automation)
