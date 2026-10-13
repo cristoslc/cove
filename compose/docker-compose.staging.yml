@@ -90,5 +90,15 @@ services:
   ade:
     container_name: cove-staging-ade-server
 
+  toolhive:
+    container_name: cove-staging-toolhive
+    # Loopback-only in base; dropped entirely in staging (nginx fronts it via
+    # the mcp.cove vhost). Same mount targets as base — the registry/profiles/
+    # state paths resolve under the STAGING data root (${COVE_DATA_ROOT} comes
+    # from the staging --env-file). The docker.sock stays read-only and no
+    # MCP-server workloads are started in the staging E2E (health + auth
+    # posture only), so no sibling containers are ever spawned here.
+    ports: !override []
+
   tunnel:
     container_name: cove-staging-tunnel

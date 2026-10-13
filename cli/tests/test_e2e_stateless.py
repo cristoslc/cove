@@ -3,7 +3,7 @@
 These invoke the *built* `cove` binary from the session-scoped wheel fixture
 (`_cove_artifact` in conftest.py) against an isolated HOME. They exercise the
 branch's packaged resources and CLI code paths — not whatever happens to be
-running on 127.0.0.1:8443.
+running on 127.0.0.1:443.
 
 Coverage of the complete user flow per test-driven-design.md E2E Protocol:
   init          -> extract bundled resources
