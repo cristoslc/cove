@@ -1,7 +1,8 @@
 ---
 title: "Issue triage → agent-ready candidates: the tooling landscape"
 created: 2026-10-14
-status: Exploring
+status: Decided
+plan: forge-issue-triage
 trove: issue-triage-agents@f331955
 ---
 
@@ -89,3 +90,26 @@ tool is best at all three. The landscape clusters:
 Path C composes with the decided plan; Path B is the hedge that works before
 any steward exists. Worth a parley before anything becomes a plan — and per the
 ritual, `musing → plan → sashay`, no implementation on trunk from here.
+
+## Fork resolution (parley, 2026-10-14)
+
+Parley settled it, and the answer is neither A nor B nor C as written — it is a
+merge of B and C with a decision made in the room: **triage runs forge-side in
+Forgejo Actions, and implementation dispatch goes to the master ADE server,
+nowhere else.**
+
+- **Forgejo Actions natively supports the trigger surface** (`on.issues` with
+  opened/reopened/labeled/…, `on.issue_comment`, `on.schedule`). The gh-aw
+  issue-triage pattern and the Issue Monster backlog scan port to
+  `.forgejo/workflows/*.yml` without webhooks and without a foreign daemon.
+- **Path A collapsed.** ai-git-bot's value was the turnkey bundle; with native
+  Actions + the gh-aw prompt + bb dispatch, bundle parts already exist in cove.
+- **The runner stays sealed**: it reads issues, calls LiteLLM, and performs
+  only bounded, allowlisted writes (labels from a fixed set, max one comment).
+  No bb tokens, no coding-agent surface on the runner.
+- **Dispatch contract is a label**: triage marks a Suitable issue `agent-ready`;
+  a watcher on the master ADE server (polling `/api/v1`) opens a bb
+  implementation thread and swaps the label to `agent-dispatched`. In-issue,
+  auditable, offline-first.
+
+Plan of record: `docs/plans/forge-issue-triage.md`.
