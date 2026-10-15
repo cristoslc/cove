@@ -1,0 +1,46 @@
+trove: issue-triage-agents
+created: 2026-10-14
+refreshed: 2026-10-14
+tags:
+  - issue-triage
+  - forgejo
+  - gitea
+  - coding-agents
+  - self-hosted
+  - offline-first
+  - issue-to-pr
+
+history:
+  - event: created
+    date: 2026-10-14
+    commit: "--"
+    sources: 6
+
+referenced-by:
+  - artifact: musings/2026-10-14-issue-triage-agents
+    commit: "--"
+
+sources:
+  - slug: ai-git-bot
+    url: "https://github.com/tmseidel/ai-git-bot"
+    fetched: 2026-10-14
+
+  - slug: agentconnect-gitea
+    url: "https://www.agentconnect.md/blog/introducing-gitea-support/"
+    fetched: 2026-10-14
+
+  - slug: gh-aw-issue-triage
+    url: "https://github.github.com/gh-aw/gallery/ai-issue-triage/"
+    fetched: 2026-10-14
+
+  - slug: pr-agent
+    url: "https://github.com/The-PR-Agent/pr-agent"
+    fetched: 2026-10-14
+
+  - slug: devintern
+    url: "https://github.com/getdevintern/devintern"
+    fetched: 2026-10-14
+
+  - slug: forgejo-mcp
+    url: "https://github.com/raohwork/forgejo-mcp"
+    fetched: 2026-10-14
