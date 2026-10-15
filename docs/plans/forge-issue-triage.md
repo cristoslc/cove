@@ -10,11 +10,14 @@
 
 ## Goal
 
-Issues at `git.cove.local` get automatically scanned, classified, and evaluated
-for coding-agent suitability. Suitable issues flow to the master ADE server,
-where bb opens implementation threads against the repository checkout. The
-whole pipeline is offline-first: Forgejo Actions runner, `litellm.cove.local`,
-and the ADE server all sit on the cove network.
+A continuous pipeline that roombas the Forgejo issues list with no operator
+in the loop: every issue gets scanned and classified on arrival, the backlog
+is re-swept nightly, suitable issues are implemented by worker threads on the
+master ADE server, and the results land back on the forge as PRs. The
+operator's only steady-state touchpoints are read-only dashboards and the PRs
+themselves. This is machinery, not a bot interface: no mention surfaces, no
+comment chats. Comments and labels on an issue are machine-written records,
+the line's audit trail.
 
 Pipeline shape:
 
@@ -54,6 +57,48 @@ issue event (or daily schedule)
    ADE server. A webhook receiver is a later optimization; latency is not the
    requirement, correctness is.
 
+## Line design (industrial requirements, parley lens #2)
+
+This is a production line, so the plan carries the machinery obligations the
+surveyed tools each solved partially:
+
+- **Issue state machine (the label set is the queue).** `untriaged` →
+  classification labels → `agent-ready` (work order released) →
+  `agent-dispatched` (thread opened) → terminal states `agent-merged` (PR
+  merged), `agent-bounced` (worker failed, reason recorded), or `needs-human`
+  (gate refused, non-retryable). Labels transition in one direction; no state
+  is ever inferred, only read. Re-scans skip anything already in the machine.
+- **Idempotency.** The watcher dispatches an issue exactly once: the
+  `agent-ready` → `agent-dispatched` swap happens before the bb thread is
+  opened, so a crash between the two cannot double-dispatch. A re-dispatch
+  only occurs via an explicit `agent-retry` label, never by label polling.
+- **Backpressure.** Worker capacity is bounded: at most N concurrent bb
+  threads on the master ADE (one per issue, cap set to the bb concurrency
+  limit). The nightly scan releases at most one `agent-ready` per sweep per
+  repo beyond what the pool can drain, so the queue lives in the label state,
+  not in memory. Nothing in the pipeline needs to be fast; it needs to be
+  steady and resumable after any crash.
+- **Rework loop (DevIntern port, now mandatory).** A bounced thread writes
+  its failure reason as a machine-authored issue comment and applies
+  `agent-bounced`. The nightly sweeper may re-release a bounced issue to
+  `agent-ready` at most `max-retries` times (default 2), then parks it
+  `needs-human`. Bounce reasons feed the sweeper's scoring so the same trap
+  does not recycle forever.
+- **QA stage before humans.** Every worker thread runs its own review pass
+  (bb auto-review) against its PR before completion; the PR carries the review
+  summary as a machine record. Automated forge-side checks (CI status) gate
+  merge candidacy. The first human eyes see a self-reviewed PR, not a raw
+  attempt.
+- **Observability.** Counters for the whole line, matching the ai-git-bot
+  metric pattern: `issues_scanned`, `issues_classified{type,priority}`,
+  `issues_dispatched`, `issues_bounced{reason}`, `issues_merged`,
+  `watcher_polls`, `watcher_errors`. MVP exports from the watcher to the
+  existing cove Prometheus; the Actions side is read from run logs until a
+  metrics endpoint exists.
+- **Operator surface: zero interaction, dashboards only.** Nothing in the
+  pipeline waits for a reply. Merge stays human-gated for now (a safety gate,
+  not a collaboration), and `needs-human` is the explicit exception queue.
+
 ## Triage contract (ported from gh-aw, tightened)
 
 One triage run per issue, structured output validated by a fixed script:
@@ -77,6 +122,10 @@ One triage run per issue, structured output validated by a fixed script:
   (`bug`, `feature`, `question`, `needs-info`, `p0`, `p1`, `p2`, `duplicate`,
   `invalid`, `spam`, `agent-ready`), at most 4 labels per issue, at most one
   comment, and the report comment is one fixed-template markdown table.
+- **Report comment as record, not conversation.** The one comment the triage
+  pass may write is a machine-templated record (type, priority, duplicate
+  refs, suitability verdict), for audit and for later LLM context. Nothing
+  reads replies to it as input.
 - **Backlog scan (schedule)** — daily cron run; scores open, untriaged issues;
   ensures candidates are distinct and non-overlapping before any `agent-ready`
   goes out (Issue Monster discipline); cheap model tier suffices (gh-aw audit
@@ -90,8 +139,9 @@ One triage run per issue, structured output validated by a fixed script:
 | Triage gate script | same repo `.forgejo/scripts/triage/` | validated-writes gate, unit-testable |
 | LiteLLM endpoint | `litellm.cove.local/v1` (existing) | cheap model route for triage |
 | Forge token | Forgejo Actions secret, per repo | scopes: issues:read, write limited to issue/label; never a repo-write token |
-| Master ADE watcher | ADE server; bb automation (cron script) polling `/api/v1/issues/search` | token with issue read + label write, stored via the ADE secrets flow |
-| bb implementation thread | ADE server, bb CLI/env pointed at the repo checkout | issue number goes in the prompt; agent opens PR via `git.cove.local` remote |
+| Master ADE watcher | ADE server; bb automation (cron script) polling `/api/v1/issues/search` | token with issue read + label write; enforces the label state machine (idempotent dispatch swap, retry caps, backpressure cap) |
+| bb implementation thread | ADE server, bb CLI/env pointed at the repo checkout | issue number goes in the prompt; agent opens PR via `git.cove.local` remote; auto-review pass before handoff |
+| Metrics | ADE watcher → cove Prometheus | the `issues_*` / `watcher_*` counters listed under Line design |
 | Label set | created on pilot repo | contract labels above |
 
 ## Stages
@@ -110,11 +160,15 @@ One triage run per issue, structured output validated by a fixed script:
 - **P2 — triage workflow wired.** YAML + secrets on the pilot repo; run
   against seeded issues (one per contract branch: incomplete, spam, duplicate,
   p1 bug, clean candidate). Verify exactly-once comment/label behavior.
-- **P3 — ADE watcher.** Poll script + bb thread opening; unit tests for the
-  label swap idempotency (must not double-dispatch on re-poll). First manual.
-- **P4 — end-to-end UAT.** Operator-assisted: file a real issue, watch labels
-  land, watch the bb thread open on the ADE server, review the PR it opens.
-  Per test rules this is stage-gated on P0–P3 passing.
+- **P3 — ADE watcher (the line controller).** Poll script + bb thread opening;
+  unit tests for the label state machine: idempotent dispatch on re-poll,
+  retry cap after two bounces, park at `needs-human`, backpressure cap
+  respected. First manual, then run unattended for a day before P4.
+- **P4 — end-to-end seeded run.** Seed a fresh mix of issues, let the line
+  drain them with no operator input, then inspect records after the fact:
+  labels, report-record comments, bounced reasons, PRs, metrics. The first
+  run is supervised only because it is the first; the pass criterion is an
+  unsupervised steady state over the seeded batch.
 - **P5 — rollout + steward fold-in.** Template the workflow for other repos;
   document the watcher in `docs/services/`; note that this workflow set is the
   forge-steward's future second hosted workflow (its triage moves from
@@ -124,10 +178,17 @@ One triage run per issue, structured output validated by a fixed script:
 ## Non-goals
 
 - No coding agent on the runner, ever (parley decision, separation of duties).
+- No human-interface surface: no mention triggers, no chat-in-comments, no
+  conversational bots. Comments are machine records; the line does not read
+  or await replies.
+- No automated merge. The worker self-reviews and CI gates the PR, but the
+  merge button stays human for now; that is a safety gate, revisitable later
+  without touching the rest of the line.
+- No forge-side PR review service (approve/request-changes bots); that is
+  Tidesman's charter (forge-steward plan).
 - No AgentConnect / ai-git-bot / DevIntern adoption; behavior specs only.
 - No GitHub side yet; gh-aw remains usable as-is for true GitHub repos, this
   plan is the Forgejo twin.
-- No automated PR review; that is Tidesman's charter (forge-steward plan).
 
 ## Test command
 
