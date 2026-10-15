@@ -13,12 +13,12 @@ tags:
 history:
   - event: created
     date: 2026-10-14
-    commit: "--"
+    commit: f3319550b490f435ec4a00685ae4700843c78b4e
     sources: 6
 
 referenced-by:
   - artifact: musings/2026-10-14-issue-triage-agents
-    commit: "--"
+    commit: f3319550b490f435ec4a00685ae4700843c78b4e
 
 sources:
   - slug: ai-git-bot
