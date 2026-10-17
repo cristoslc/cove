@@ -27,9 +27,11 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 def _project_root() -> Path:
@@ -97,6 +99,9 @@ def _render(*, profiles: list[str] | None = None, with_override: bool = True,
 
     env = dict(os.environ)
     fake_staging_root = tmp_root / "cove-data-staging"
+    litellm_dir = fake_staging_root / "litellm"
+    litellm_dir.mkdir(parents=True, exist_ok=True)
+    (litellm_dir / "local.env").touch(mode=0o600, exist_ok=True)
     env["COVE_DATA_ROOT"] = str(fake_staging_root)
     env["FORGEJO_DATA_ROOT"] = str(fake_staging_root)
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=120)
@@ -259,15 +264,141 @@ class TestTeardownProfileCoverage:
             )
         )
         assert deploy_profiles, "deploy-isolated.sh declares no --profile flags"
+        compose_profiles = set()
+        for compose_file in (BASE_COMPOSE, STAGING_OVERRIDE):
+            compose_services = next(
+                value
+                for key, value in yaml.compose(compose_file.read_text()).value
+                if key.value == "services"
+            )
+            for _, service in compose_services.value:
+                profile_node = next(
+                    (value for key, value in service.value if key.value == "profiles"),
+                    None,
+                )
+                if profile_node is not None:
+                    compose_profiles.update(
+                        profile.value for profile in profile_node.value
+                    )
         teardown_text = (
             PROJECT_ROOT / "scripts" / "staging" / "teardown.sh"
         ).read_text()
         teardown_profiles = set(
             re.findall(r"--profile\s+([a-z0-9_-]+)", teardown_text)
         )
-        missing = deploy_profiles - teardown_profiles
+        missing = (deploy_profiles | compose_profiles) - teardown_profiles
         assert not missing, (
             f"teardown.sh does not enable profile(s) {sorted(missing)} that "
-            f"deploy-isolated.sh can start; profile-gated containers would "
-            f"survive teardown as orphans"
+            f"staging can start; profile-gated containers would survive "
+            f"teardown as orphans"
         )
+
+    def test_teardown_rejects_data_root_overlapping_live_root(self, tmp_path):
+        live_root = tmp_path / "cove-data"
+        live_root.mkdir()
+        sentinel = live_root / "keep.txt"
+        sentinel.write_text("live data")
+        staging_parent = tmp_path / "cove-data-staging"
+        staging_parent.mkdir()
+        fake_bin = tmp_path / "bin"
+        fake_bin.mkdir()
+        docker = fake_bin / "docker"
+        docker.write_text("#!/bin/sh\n[ \"$1\" = info ]\n")
+        docker.chmod(0o755)
+        env = os.environ.copy()
+        env.update(
+            {
+                "PATH": f"{fake_bin}:{env['PATH']}",
+                "COVE_STAGING_DATA_ROOT": str(staging_parent / ".." / "cove-data"),
+                "COVE_LIVE_DATA_ROOT": str(live_root),
+            }
+        )
+
+        result = subprocess.run(
+            [
+                "bash",
+                str(PROJECT_ROOT / "scripts" / "staging" / "teardown.sh"),
+                "review-branch",
+            ],
+            cwd=PROJECT_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode != 0
+        assert "staging and live data roots overlap" in result.stderr
+        assert sentinel.read_text() == "live data"
+
+
+class TestStagingRuntimeFiles:
+    def test_deploy_isolated_uses_nofollow_env_setup_before_compose_up(self, tmp_path):
+        script = (PROJECT_ROOT / "scripts" / "staging" / "deploy-isolated.sh").read_text()
+        directory_helper = (
+            '"$STAGING_VENV/bin/python" "$COMPOSE_DIR/litellm/config_overlay.py" '
+            '--ensure-private-dir "$STAGING_DATA_ROOT/litellm" '
+            '--trusted-root "$STAGING_DATA_ROOT"'
+        )
+        env_helper = (
+            '"$STAGING_VENV/bin/python" "$COMPOSE_DIR/litellm/config_overlay.py" '
+            '--ensure-env-file "$STAGING_DATA_ROOT/litellm/local.env" '
+            '--trusted-root "$STAGING_DATA_ROOT"'
+        )
+        compose_up = '"${COMPOSE_CMD[@]}" up -d --build'
+
+        for required in (directory_helper, env_helper):
+            assert required in script, f"staging deploy must run {required}"
+        assert 'mkdir -p "$STAGING_DATA_ROOT/litellm"' not in script
+        assert 'chmod 700 "$STAGING_DATA_ROOT/litellm"' not in script
+        assert 'touch "$STAGING_DATA_ROOT/litellm/local.env"' not in script
+        assert 'chmod 600 "$STAGING_DATA_ROOT/litellm/local.env"' not in script
+        assert script.index(directory_helper) < script.index(env_helper)
+        assert script.index(env_helper) < script.index(compose_up)
+        assert "STAGING_DATA_ROOT_REAL" in script
+        assert "LIVE_DATA_ROOT_REAL" in script
+
+        # Exercise the shared directory helper wired into staging against a
+        # symlink; the target must not be chmodded or receive env files.
+        trusted_root = tmp_path / "staging-root"
+        trusted_root.mkdir()
+        target = tmp_path / "outside-litellm"
+        target.mkdir()
+        target.chmod(0o755)
+        (trusted_root / "litellm").symlink_to(target, target_is_directory=True)
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(COMPOSE_DIR / "litellm" / "config_overlay.py"),
+                "--ensure-private-dir",
+                str(trusted_root / "litellm"),
+                "--trusted-root",
+                str(trusted_root),
+            ],
+            text=True,
+            capture_output=True,
+        )
+        assert result.returncode != 0
+        assert list(target.iterdir()) == []
+        assert target.stat().st_mode & 0o777 == 0o755
+
+    def test_deploy_isolated_rejects_canonical_live_root_alias(self, tmp_path):
+        live_root = tmp_path / "live-data"
+        live_root.mkdir()
+        staging_root = tmp_path / "cove-data-staging"
+        staging_root.symlink_to(live_root, target_is_directory=True)
+        env = os.environ.copy()
+        env["COVE_STAGING_DATA_ROOT"] = str(staging_root)
+        env["COVE_LIVE_DATA_ROOT"] = str(live_root)
+
+        result = subprocess.run(
+            ["bash", str(PROJECT_ROOT / "scripts" / "staging" / "deploy-isolated.sh"), "review-branch"],
+            cwd=PROJECT_ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+
+        assert result.returncode != 0
+        assert "staging and live data roots overlap" in result.stderr
+        assert list(live_root.iterdir()) == []

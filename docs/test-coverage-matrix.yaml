@@ -62,6 +62,55 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: manual
+  - path: "LiteLLM config overlay migration from legacy config.yaml"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "LiteLLM base and local overlay merge precedence"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable
+  - path: "LiteLLM local provider environment file injection"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "LiteLLM protected settings and credential validation"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "LiteLLM container-readable runtime config in private host directory"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "Isolated staging seeds private LiteLLM local.env before Compose"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "LiteLLM external secret references in local configuration"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
   - path: "cove litellm up"
     blast_radius: high
     coverage:

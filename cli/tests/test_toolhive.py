@@ -507,7 +507,7 @@ class TestLitellmMcpGuard:
     ToolHive is the only MCP surface in Cove (docs/plans/toolhive-mcp-gateway.md)."""
 
     def test_disable_mcp_still_true(self):
-        with open(LITELLM_DIR / "config.yaml.j2") as f:
+        with open(LITELLM_DIR / "config.base.yaml") as f:
             content = f.read()
         assert "disable_mcp: true" in content, (
             "LiteLLM disable_mcp: true must stay (CVE-2026-42271); ToolHive is the MCP surface"
@@ -516,10 +516,10 @@ class TestLitellmMcpGuard:
     def test_litellm_toolhive_cross_reference_present(self):
         """The plan mandates a comment cross-referencing the ToolHive plan so
         nobody 'helpfully' re-enables MCP endpoints."""
-        with open(LITELLM_DIR / "config.yaml.j2") as f:
+        with open(LITELLM_DIR / "config.base.yaml") as f:
             content = f.read()
         assert "toolhive" in content.lower(), (
-            "config.yaml.j2 must cross-reference the ToolHive MCP gateway plan"
+            "config.base.yaml must cross-reference the ToolHive MCP gateway plan"
         )
 
 

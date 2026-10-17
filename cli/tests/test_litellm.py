@@ -25,6 +25,10 @@ Run e2e:   pytest cli/tests/test_litellm.py -m e2e
 """
 
 from pathlib import Path
+import importlib.util
+import os
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -62,14 +66,25 @@ FULL_TEMPLATE_VARS = {
 }
 
 
+def _load_overlay_module():
+    spec = importlib.util.spec_from_file_location(
+        "cove_litellm_config_overlay_test", LITELLM_DIR / "config_overlay.py"
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Cannot load LiteLLM config overlay helper")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _load_compose() -> dict:
     with open(COMPOSE_DIR / "docker-compose.yml") as f:
         return yaml.safe_load(f)
 
 
 def _load_litellm_config() -> dict:
-    """Load the config template (config.yaml.j2 is the source of truth)."""
-    with open(LITELLM_DIR / "config.yaml.j2") as f:
+    """Load Cove's generic LiteLLM base configuration."""
+    with open(LITELLM_DIR / "config.base.yaml") as f:
         return yaml.safe_load(f)
 
 
@@ -154,6 +169,13 @@ class TestComposeServiceDefinitions:
         data = _load_compose()
         env = data["services"]["litellm"].get("environment", {})
         assert "OLLAMA_API_KEY" in env, "litellm must accept OLLAMA_API_KEY env var"
+
+    def test_litellm_loads_operator_provider_env_file(self):
+        data = _load_compose()
+        env_files = data["services"]["litellm"].get("env_file", [])
+        assert any("litellm/local.env" in str(path) for path in env_files), (
+            "litellm must load provider variables from the persistent local.env file"
+        )
 
     def test_litellm_container_name_has_cove_prefix(self):
         data = _load_compose()
@@ -389,43 +411,102 @@ class TestBringupIntegration:
             content = f.read()
         assert "litellm" in content, "bringup.yml must create litellm data directory"
 
-    def test_renders_config_template_on_first_boot(self):
-        """bringup.yml must render config.yaml from template, but only on first boot."""
+    def test_generates_runtime_config_on_every_bringup(self):
+        """Bundled base changes must apply on every bringup without losing local config."""
         bringup = _load_bringup()
         tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
-        render_task = [
+        config_task = [
             t for t in tasks
             if isinstance(t, dict)
             and "litellm" in (t.get("name", "") or "").lower()
-            and "template" in (t.get("name", "") or "").lower()
+            and "runtime config" in (t.get("name", "") or "").lower()
         ]
-        assert render_task, "No litellm config template task found in bringup.yml"
-        # Must have a when condition that checks if the file exists
-        when = str(render_task[0].get("when", ""))
-        assert "exists" in when or "is not exists" in when, (
-            f"litellm config render must be conditional on first boot, got when: {when}"
-        )
+        assert config_task, "No LiteLLM runtime config generation task found in bringup.yml"
+        argv = config_task[0]["ansible.builtin.command"]["argv"]
+        assert "config_overlay.py" in argv[1]
+        assert any("config.local.yaml" in arg for arg in argv)
+        assert any("config.base.yaml" in arg for arg in argv)
+        assert any("config.yaml" in arg for arg in argv)
+        assert "--trusted-root" in argv
 
+    def test_provider_env_file_is_created_with_private_permissions(self):
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        env_task = next(
+            (task for task in tasks if isinstance(task, dict)
+             and task.get("name") == "Ensure persistent LiteLLM provider environment file exists"),
+            None,
+        )
+        assert env_task is not None
+        argv = env_task["ansible.builtin.command"]["argv"]
+        assert "config_overlay.py" in argv[1]
+        assert "--ensure-env-file" in argv
+        assert "--trusted-root" in argv
+        assert any("local.env" in arg for arg in argv)
+        assert env_task["changed_when"] == "litellm_env_file_setup.stdout != 'unchanged'"
+
+    def test_bringup_uses_trusted_root_for_litellm_directory(self):
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        directory_task = next(
+            (task for task in tasks if isinstance(task, dict)
+             and task.get("name") == "Restrict LiteLLM configuration directory"),
+            None,
+        )
+        assert directory_task is not None
+        argv = directory_task["ansible.builtin.command"]["argv"]
+        assert "--ensure-private-dir" in argv
+        assert "--trusted-root" in argv
+        assert any("{{ cove_data_root }}/litellm" in arg for arg in argv)
+        create_task = next(
+            task for task in tasks if isinstance(task, dict)
+            and task.get("name") == "Create cove data directories"
+        )
+        assert "{{ cove_data_root }}/litellm" not in create_task["loop"]
+
+    def test_litellm_data_directory_is_private(self):
+        bringup = _load_bringup()
+        tasks = bringup[0]["tasks"] if isinstance(bringup, list) else bringup.get("tasks", [])
+        private_task = next(
+            (task for task in tasks if isinstance(task, dict)
+             and task.get("name") == "Restrict LiteLLM configuration directory"),
+            None,
+        )
+        assert private_task is not None
+        argv = private_task["ansible.builtin.command"]["argv"]
+        assert "--ensure-private-dir" in argv
+        assert "--trusted-root" in argv
 
 class TestConfigTemplate:
-    """Validate config.yaml.j2 has provider configs and security settings."""
+    """Validate Cove's generic LiteLLM base settings."""
+
+    def test_quick_start_uses_configured_data_root_and_changelog_mentions_overlay(self):
+        service_docs = (PROJECT_ROOT / "docs" / "services" / "litellm-proxy.md").read_text()
+        quick_start = service_docs.split(
+            "## Configuration ownership", 1
+        )[0]
+        changelog = (PROJECT_ROOT / "CHANGELOG.md").read_text().split(
+            "## 0.13.0", 1
+        )[0]
+        assert '"$COVE_DATA_ROOT/litellm/local.env"' in quick_start
+        assert "COVE_COMPOSE_DIR" in quick_start
+        assert "~/Documents/cove-data/litellm" not in quick_start
+        assert "Update-safe local LiteLLM configuration overlays" in changelog
+        assert "configured `COVE_DATA_ROOT` is the trusted root" in service_docs
+        assert "staging roots equal to, inside, or above the live data root" in service_docs
 
     def _load_template(self) -> str:
-        return (LITELLM_DIR / "config.yaml.j2").read_text()
+        return (LITELLM_DIR / "config.base.yaml").read_text()
 
-    def test_template_has_model_list(self):
-        content = self._load_template()
-        assert "model_list:" in content, "config template must have model_list"
+    def test_template_has_no_operator_models_or_routing_policy(self):
+        config = yaml.safe_load(self._load_template())
+        assert "model_list" not in config
+        assert "router_settings" not in config
 
-    def test_template_has_ollama_provider(self):
+    def test_template_uses_external_env_reference_for_master_key(self):
         content = self._load_template()
-        assert "ollama.com/v1" in content, "config template must include Ollama Cloud API base"
-
-    def test_template_uses_env_var_for_api_keys(self):
-        content = self._load_template()
-        assert "os.environ/OLLAMA_API_KEY" in content, (
-            "config template must read Ollama key from env, not hardcode"
-        )
+        assert "os.environ/LITELLM_MASTER_KEY" in content
+        assert "OLLAMA_API_KEY" not in content
 
     def test_template_has_headroom_enabled(self):
         content = self._load_template()
@@ -463,6 +544,259 @@ class TestConfigTemplate:
         )
 
 
+class TestLocalConfigOverlay:
+    """Contract for persistent local configuration and generated runtime YAML."""
+
+    def test_merge_recurses_and_local_values_win(self):
+        merge_config = _load_overlay_module().merge_config
+
+        base = {
+            "general_settings": {
+                "disable_mcp": True,
+                "clear": "base-value",
+                "nested": {"base": 1, "same": "base"},
+            },
+            "model_list": [{"model_name": "shared-group", "deployment": "base-entry"}],
+            "labels": ["base"],
+        }
+        local = {
+            "general_settings": {
+                "clear": None,
+                "nested": {"same": "local", "local": 2},
+            },
+            "model_list": [{"model_name": "shared-group", "deployment": "overlay-entry"}],
+            "router_settings": {"fallbacks": [{"primary-group": ["fallback-group"]}]},
+            "labels": ["local"],
+        }
+
+        assert merge_config(base, local) == {
+            "general_settings": {
+                "disable_mcp": True,
+                "clear": None,
+                "nested": {"base": 1, "same": "local", "local": 2},
+            },
+            "model_list": [
+                {"model_name": "shared-group", "deployment": "base-entry"},
+                {"model_name": "shared-group", "deployment": "overlay-entry"},
+            ],
+            "labels": ["local"],
+            "router_settings": {"fallbacks": [{"primary-group": ["fallback-group"]}]},
+        }
+
+    def test_migrates_legacy_config_without_changing_its_bytes(self, tmp_path, monkeypatch):
+        generate_runtime_config = _load_overlay_module().generate_runtime_config
+
+        base = tmp_path / "config.base.yaml"
+        local = tmp_path / "config.local.yaml"
+        runtime = tmp_path / "config.yaml"
+        legacy = tmp_path / "legacy.yaml"
+        legacy_bytes = b"model_list:\n  - model_name: fixture-entry\n    litellm_params:\n      api_key: os.environ/PROVIDER_TOKEN\n"
+        monkeypatch.setenv("PROVIDER_TOKEN", "sensitive-sentinel")
+        base.write_text("general_settings:\n  disable_mcp: true\n  disable_jwt_auth: true\n")
+        legacy.write_bytes(legacy_bytes)
+
+        merged = generate_runtime_config(base, local, runtime, legacy=legacy)
+
+        assert local.read_bytes() == legacy_bytes
+        assert runtime.exists()
+        assert merged["general_settings"]["disable_mcp"] is True
+        assert merged["model_list"][0]["model_name"] == "fixture-entry"
+        assert "sensitive-sentinel" not in runtime.read_text()
+        assert "os.environ/PROVIDER_TOKEN" in runtime.read_text()
+        assert local.stat().st_mode & 0o777 == 0o600
+        assert runtime.stat().st_mode & 0o777 == 0o644
+
+    @pytest.mark.parametrize("symlink_role", ["local", "runtime", "legacy"])
+    def test_rejects_symlinked_config_files_without_touching_target(
+        self, tmp_path, symlink_role
+    ):
+        generate_runtime_config = _load_overlay_module().generate_runtime_config
+        base = tmp_path / "config.base.yaml"
+        local = tmp_path / "config.local.yaml"
+        runtime = tmp_path / "config.yaml"
+        legacy = tmp_path / "legacy.yaml"
+        target = tmp_path / "external.yaml"
+        base.write_text(
+            "general_settings:\n  disable_mcp: true\n  disable_jwt_auth: true\n"
+        )
+        target_bytes = b"general_settings:\n  operator: keep\n"
+        target.write_bytes(target_bytes)
+        target.chmod(0o644)
+
+        link = {"local": local, "runtime": runtime, "legacy": legacy}[symlink_role]
+        link.symlink_to(target)
+        # CLI uses config.yaml for both runtime output and the legacy migration source.
+        migration_source = runtime if symlink_role == "runtime" else legacy
+
+        with pytest.raises((OSError, ValueError)):
+            generate_runtime_config(base, local, runtime, legacy=migration_source)
+
+        assert target.read_bytes() == target_bytes
+        assert target.stat().st_mode & 0o777 == 0o644
+
+    @pytest.mark.parametrize("fifo_role", ["local", "runtime", "legacy"])
+    def test_fifo_config_paths_fail_without_blocking(self, tmp_path, fifo_role):
+        data_root = tmp_path / "data"
+        config_dir = data_root / "litellm"
+        config_dir.mkdir(parents=True)
+        base = LITELLM_DIR / "config.base.yaml"
+        local = config_dir / "config.local.yaml"
+        runtime = config_dir / "config.yaml"
+        legacy = config_dir / "legacy.yaml"
+
+        if fifo_role == "local":
+            os.mkfifo(local)
+        else:
+            local.write_text("{}\n")
+        if fifo_role == "runtime":
+            os.mkfifo(runtime)
+        if fifo_role == "legacy":
+            local.unlink()
+            os.mkfifo(legacy)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(LITELLM_DIR / "config_overlay.py"),
+                "--base", str(base),
+                "--local", str(local),
+                "--runtime", str(runtime),
+                "--legacy", str(legacy),
+                "--trusted-root", str(data_root),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+
+        assert result.returncode != 0
+
+    def test_fifo_local_env_fails_without_blocking(self, tmp_path):
+        data_root = tmp_path / "data"
+        config_dir = data_root / "litellm"
+        config_dir.mkdir(parents=True)
+        env_file = config_dir / "local.env"
+        os.mkfifo(env_file)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                str(LITELLM_DIR / "config_overlay.py"),
+                "--ensure-env-file", str(env_file),
+                "--trusted-root", str(data_root),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+
+        assert result.returncode != 0
+
+    def test_updates_base_on_each_run_without_changing_local_overlay(self, tmp_path):
+        generate_runtime_config = _load_overlay_module().generate_runtime_config
+
+        base = tmp_path / "base.yaml"
+        local = tmp_path / "local.yaml"
+        runtime = tmp_path / "runtime.yaml"
+        base.write_text("general_settings:\n  disable_mcp: true\n  disable_jwt_auth: true\n  keep: base\n")
+        local_bytes = b"general_settings:\n  operator: true\n"
+        local.write_bytes(local_bytes)
+
+        first = generate_runtime_config(base, local, runtime)
+        base.write_text("general_settings:\n  disable_mcp: true\n  disable_jwt_auth: true\n  keep: updated\n  new_default: true\n")
+        second = generate_runtime_config(base, local, runtime)
+
+        assert first["general_settings"]["keep"] == "base"
+        assert second["general_settings"] == {
+            "disable_mcp": True, "disable_jwt_auth": True,
+            "keep": "updated", "new_default": True, "operator": True,
+        }
+        assert local.read_bytes() == local_bytes
+
+    def test_repairs_runtime_read_mode_when_content_is_unchanged(self, tmp_path):
+        generate_runtime_config = _load_overlay_module().generate_runtime_config
+        base = tmp_path / "base.yaml"
+        local = tmp_path / "local.yaml"
+        runtime = tmp_path / "runtime.yaml"
+        base.write_text(
+            "general_settings:\n  disable_mcp: true\n  disable_jwt_auth: true\n"
+        )
+        local.write_text("{}\n")
+
+        generate_runtime_config(base, local, runtime)
+        runtime.chmod(0o600)
+        generate_runtime_config(base, local, runtime)
+
+        assert runtime.stat().st_mode & 0o777 == 0o644
+
+    def test_existing_overlay_is_never_overwritten_by_legacy_config(self, tmp_path):
+        generate_runtime_config = _load_overlay_module().generate_runtime_config
+
+        base = tmp_path / "base.yaml"
+        local = tmp_path / "local.yaml"
+        runtime = tmp_path / "runtime.yaml"
+        legacy = tmp_path / "legacy.yaml"
+        base.write_text("general_settings:\n  disable_mcp: true\n  disable_jwt_auth: true\ndefaults:\n  enabled: true\n")
+        local.write_text("operator:\n  value: local\n")
+        legacy.write_text("operator:\n  value: legacy\n")
+
+        merged = generate_runtime_config(base, local, runtime, legacy=legacy)
+
+        assert merged["operator"]["value"] == "local"
+        assert legacy.read_text() == "operator:\n  value: legacy\n"
+
+    def test_invalid_yaml_fails_without_emitting_runtime_config(self, tmp_path):
+        generate_runtime_config = _load_overlay_module().generate_runtime_config
+
+        base = tmp_path / "base.yaml"
+        local = tmp_path / "local.yaml"
+        runtime = tmp_path / "runtime.yaml"
+        base.write_text("defaults: [unterminated\n")
+        local.write_text("{}\n")
+
+        previous_runtime = b"previous runtime\n"
+        runtime.write_bytes(previous_runtime)
+        with pytest.raises(yaml.YAMLError):
+            generate_runtime_config(base, local, runtime)
+        assert runtime.read_bytes() == previous_runtime
+
+    @pytest.mark.parametrize("setting", ["disable_mcp", "disable_jwt_auth"])
+    def test_rejects_local_reenable_of_cove_security_setting(self, tmp_path, setting):
+        generate_runtime_config = _load_overlay_module().generate_runtime_config
+
+        base = tmp_path / "base.yaml"
+        local = tmp_path / "local.yaml"
+        runtime = tmp_path / "runtime.yaml"
+        base.write_text(f"general_settings:\n  disable_mcp: true\n  disable_jwt_auth: true\n")
+        local.write_text(f"general_settings:\n  {setting}: false\n")
+
+        with pytest.raises(ValueError, match=setting):
+            generate_runtime_config(base, local, runtime)
+        assert not runtime.exists()
+
+    @pytest.mark.parametrize(
+        "credential_field",
+        ["api_key", "aws_secret_access_key", "client_secret", "api_token", "password"],
+    )
+    def test_rejects_literal_credentials_without_echoing_values(self, tmp_path, credential_field):
+        generate_runtime_config = _load_overlay_module().generate_runtime_config
+
+        base = tmp_path / "base.yaml"
+        local = tmp_path / "local.yaml"
+        runtime = tmp_path / "runtime.yaml"
+        secret_value = "synthetic-test-credential"
+        base.write_text("{}\n")
+        local.write_text(
+            f"model_list:\n  - litellm_params:\n      {credential_field}: {secret_value}\n"
+        )
+
+        with pytest.raises(ValueError) as error:
+            generate_runtime_config(base, local, runtime)
+        assert credential_field in str(error.value)
+        assert secret_value not in str(error.value)
+        assert not runtime.exists()
+
+
 class TestCLI:
     """Validate the cove litellm CLI module."""
 
@@ -495,6 +829,73 @@ class TestCLI:
         commands = list(litellm.commands.keys())
         assert "logs" in commands
 
+    def test_prepare_runtime_files_seeds_env_file_and_runs_generator(self, tmp_path, monkeypatch):
+        import cove.litellm as ll
+
+        data_root = tmp_path / "operator-data"
+        monkeypatch.setenv("COVE_DATA_ROOT", str(data_root))
+        with patch("cove.litellm.resolve_compose_dir", return_value=COMPOSE_DIR):
+            ll._prepare_runtime_files()
+
+        local_env = data_root / "litellm" / "local.env"
+        assert local_env.exists()
+        assert local_env.stat().st_mode & 0o777 == 0o600
+        assert (data_root / "litellm").stat().st_mode & 0o777 == 0o700
+        assert (data_root / "litellm" / "config.yaml").exists()
+
+    def test_prepare_runtime_files_rejects_symlinked_env_without_chmodding_target(
+        self, tmp_path, monkeypatch
+    ):
+        import cove.litellm as ll
+
+        data_root = tmp_path / "operator-data"
+        config_dir = data_root / "litellm"
+        config_dir.mkdir(parents=True)
+        target = tmp_path / "outside.env"
+        target.write_text("KEEP_THIS_CONTENT=unchanged\n")
+        target.chmod(0o644)
+        (config_dir / "local.env").symlink_to(target)
+        monkeypatch.setenv("COVE_DATA_ROOT", str(data_root))
+
+        with patch("cove.litellm.resolve_compose_dir", return_value=COMPOSE_DIR):
+            with pytest.raises((OSError, ValueError, subprocess.CalledProcessError)):
+                ll._prepare_runtime_files()
+
+        assert target.read_text() == "KEEP_THIS_CONTENT=unchanged\n"
+        assert target.stat().st_mode & 0o777 == 0o644
+
+    def test_prepare_runtime_files_rejects_symlinked_litellm_parent(self, tmp_path, monkeypatch):
+        import cove.litellm as ll
+
+        data_root = tmp_path / "operator-data"
+        data_root.mkdir()
+        outside = tmp_path / "outside-litellm"
+        outside.mkdir()
+        outside.chmod(0o755)
+        (data_root / "litellm").symlink_to(outside, target_is_directory=True)
+        monkeypatch.setenv("COVE_DATA_ROOT", str(data_root))
+
+        with patch("cove.litellm.resolve_compose_dir", return_value=COMPOSE_DIR):
+            with pytest.raises(subprocess.CalledProcessError):
+                ll._prepare_runtime_files()
+
+        assert list(outside.iterdir()) == []
+        assert outside.stat().st_mode & 0o777 == 0o755
+
+    def test_configured_data_root_may_be_a_symlink(self, tmp_path, monkeypatch):
+        import cove.litellm as ll
+
+        actual_root = tmp_path / "operator-data"
+        actual_root.mkdir()
+        configured_root = tmp_path / "configured-data-root"
+        configured_root.symlink_to(actual_root, target_is_directory=True)
+        monkeypatch.setenv("COVE_DATA_ROOT", str(configured_root))
+
+        with patch("cove.litellm.resolve_compose_dir", return_value=COMPOSE_DIR):
+            ll._prepare_runtime_files()
+
+        assert (actual_root / "litellm" / "local.env").stat().st_mode & 0o777 == 0o600
+
     def test_litellm_up_uses_profile_flag(self):
         """cove litellm up must use --profile litellm so it doesn't start
         core services."""
@@ -519,8 +920,9 @@ class TestCLI:
 
         with patch("cove.litellm.subprocess.run", side_effect=fake_subprocess_run):
             with patch("cove.litellm._ensure_master_key", return_value="sk-test"):
-                runner = CliRunner()
-                result = runner.invoke(litellm, ["up"])
+                with patch("cove.litellm._prepare_runtime_files"):
+                    runner = CliRunner()
+                    result = runner.invoke(litellm, ["up"])
 
         assert result.exit_code == 0, f"cove litellm up failed: {result.output}"
         assert captured, "no subprocess call captured"
