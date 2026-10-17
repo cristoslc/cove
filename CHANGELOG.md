@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Fixed
+- **Compose resource re-extraction preserves runtime `.env` and generated nginx config** — resource updates keep the persistent environment file and current `nginx/default.conf` inode in place while refreshing bundled source and pins, including when a resource copy fails. `cove up` remains responsible for rendering the current nginx config.
+
 ## 0.14.0 (2026-10-17)
 
 ### Added
