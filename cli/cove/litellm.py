@@ -2,7 +2,9 @@
 
 import os
 import subprocess
+import sys
 import tempfile
+from pathlib import Path
 
 import click
 
@@ -33,6 +35,46 @@ def _compose_cmd(*args: str) -> list[str]:
 
 def _compose_env_path():
     return resolve_compose_dir() / ".env"
+
+
+def _cove_data_root() -> Path:
+    explicit = os.environ.get("COVE_DATA_ROOT")
+    if explicit:
+        return Path(explicit).expanduser()
+    env_path = _compose_env_path()
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("COVE_DATA_ROOT="):
+                value = line.split("=", 1)[1].strip().strip("\"'")
+                if value:
+                    return Path(value).expanduser()
+    return Path.home() / "Documents" / "cove-data"
+
+
+def _prepare_runtime_files() -> None:
+    """Create the local provider env file and render current LiteLLM config."""
+    compose_dir = resolve_compose_dir()
+    data_root = _cove_data_root()
+    config_dir = data_root / "litellm"
+    env_file = config_dir / "local.env"
+
+    config_file = config_dir / "config.yaml"
+    script = compose_dir / "litellm" / "config_overlay.py"
+    subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--ensure-private-dir", str(config_dir),
+            "--trusted-root", str(data_root),
+            "--ensure-env-file", str(env_file),
+            "--trusted-root", str(data_root),
+            "--base", str(compose_dir / "litellm" / "config.base.yaml"),
+            "--local", str(config_dir / "config.local.yaml"),
+            "--runtime", str(config_file),
+            "--legacy", str(config_file),
+        ],
+        check=True,
+    )
 
 
 def _seed_example_path():
@@ -208,6 +250,7 @@ def litellm():
 def up():
     """Start the LiteLLM proxy and Headroom sidecar."""
     _ensure_master_key()
+    _prepare_runtime_files()
     click.echo("Starting LiteLLM proxy...")
     subprocess.run(_compose_cmd("--profile", "litellm", "up", "-d", "--build"), check=True)
     click.echo("LiteLLM proxy is running at https://litellm.cove/")

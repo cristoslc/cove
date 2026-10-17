@@ -66,11 +66,25 @@ if [[ "$STAGING_PROJECT" != *"staging"* || "$STAGING_PROJECT" == "cove" ]]; then
     exit 1
 fi
 
-# Guard 4: the staging data root must contain "staging" AND must not equal the
-# live data root. (The check is equality plus the "staging" substring marker,
-# not an ancestor walk.)
-if [[ "$STAGING_DATA_ROOT" != *"staging"* || "$STAGING_DATA_ROOT" == "$LIVE_DATA_ROOT" ]]; then
+# Guard 4: the staging data root must contain "staging" and its canonical path
+# must be disjoint from the live data root. Match deploy-isolated.sh so aliases
+# such as `staging/../cove-data` and ancestor/child roots cannot reach live data.
+if [[ "$STAGING_DATA_ROOT" != *"staging"* ]]; then
     echo "teardown.sh: SAFETY VIOLATION — staging data root '$STAGING_DATA_ROOT' is not isolated from live root '$LIVE_DATA_ROOT'" >&2
+    exit 1
+fi
+STAGING_DATA_ROOT_REAL=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$STAGING_DATA_ROOT")
+LIVE_DATA_ROOT_REAL=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$LIVE_DATA_ROOT")
+if ! python3 - "$STAGING_DATA_ROOT_REAL" "$LIVE_DATA_ROOT_REAL" <<'PYEOF'
+import os
+import sys
+
+staging_root, live_root = sys.argv[1:]
+common = os.path.commonpath((staging_root, live_root))
+sys.exit(1 if common in (staging_root, live_root) else 0)
+PYEOF
+then
+    echo "teardown.sh: SAFETY VIOLATION — staging and live data roots overlap ($STAGING_DATA_ROOT_REAL, $LIVE_DATA_ROOT_REAL)" >&2
     exit 1
 fi
 
@@ -83,13 +97,17 @@ if docker info >/dev/null 2>&1; then
         DOWN_ARGS=(-p "$STAGING_PROJECT"
             -f "$COMPOSE_DIR/docker-compose.yml"
             -f "$COMPOSE_DIR/docker-compose.staging.yml"
-            # Enable every profile deploy-isolated.sh may have started; a
-            # profile-gated service whose profile is NOT enabled here is not
-            # part of the project for this down (and --remove-orphans does
-            # not catch it), leaving an orphan container behind (observed:
-            # cove-staging-toolhive survived a --profile ade teardown).
+            # Enable every profile declared by Compose; a profile-gated
+            # service whose profile is NOT enabled here is not part of the
+            # project for this down (and --remove-orphans does not catch it),
+            # leaving an orphan container behind (observed for ToolHive and
+            # LiteLLM during isolated staging teardown).
             --profile ade
             --profile mcp
+            --profile litellm
+            --profile runner
+            --profile speedtest
+            --profile tunnel
             down -v --remove-orphans)
         DOWN_CMD=(docker compose)
         if [[ -f "$STAGING_DATA_ROOT/staging.env" ]]; then

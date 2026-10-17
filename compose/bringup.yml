@@ -339,12 +339,23 @@
         - "{{ cove_data_root }}/nginx/user.d"
         - "{{ cove_data_root }}/nginx/config/dns"
         - "{{ cove_data_root }}/dnsmasq"
-        - "{{ cove_data_root }}/litellm"
         - "{{ cove_data_root }}/speedtest"
         - "{{ cove_data_root }}/ade"
         - "{{ cove_data_root }}/toolhive/config"
         - "{{ cove_data_root }}/toolhive/state"
         - "{{ cove_data_root }}/toolhive/profiles"
+
+    - name: Restrict LiteLLM configuration directory
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/litellm/config_overlay.py"
+          - --ensure-private-dir
+          - "{{ cove_data_root }}/litellm"
+          - --trusted-root
+          - "{{ cove_data_root }}"
+      register: litellm_directory_setup
+      changed_when: "litellm_directory_setup.stdout != 'unchanged'"
 
     - name: Create forgejo-runner data directory (restricted)
       ansible.builtin.file:
@@ -474,15 +485,35 @@
           {% endfor %}
           {{ repaired }}
 
-    - name: Render litellm config from template (first boot only)
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/litellm/config.yaml.j2"
-        dest: "{{ cove_data_root }}/litellm/config.yaml"
-        mode: "0644"
-      when: >-
-        (not (cove_data_root ~ "/litellm/config.yaml") is exists)
-        or ((cove_data_root ~ "/litellm/config.yaml")
-            in (repaired_data_mounts | default([])))
+    - name: Ensure persistent LiteLLM provider environment file exists
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/litellm/config_overlay.py"
+          - --ensure-env-file
+          - "{{ cove_data_root }}/litellm/local.env"
+          - --trusted-root
+          - "{{ cove_data_root }}"
+      register: litellm_env_file_setup
+      changed_when: "litellm_env_file_setup.stdout != 'unchanged'"
+
+    - name: Generate LiteLLM runtime config from Cove base and local overlay
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "{{ playbook_dir }}/litellm/config_overlay.py"
+          - --base
+          - "{{ playbook_dir }}/litellm/config.base.yaml"
+          - --local
+          - "{{ cove_data_root }}/litellm/config.local.yaml"
+          - --trusted-root
+          - "{{ cove_data_root }}"
+          - --runtime
+          - "{{ cove_data_root }}/litellm/config.yaml"
+          - --legacy
+          - "{{ cove_data_root }}/litellm/config.yaml"
+      register: litellm_config_generation
+      changed_when: "'updated' in litellm_config_generation.stdout"
 
     # TOOLHIVE -----------------------------------------------------------------
     # IaC: the curated registry, the default permission profile, and the
