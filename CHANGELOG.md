@@ -6,13 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+## 0.14.0 (2026-10-17)
+
 ### Added
 - **Update-safe local LiteLLM configuration overlays** — Cove now bundles generic proxy defaults and composes them with persistent per-machine operator configuration. Existing `config.yaml` customizations migrate once into `config.local.yaml`, which survives future bundled-default updates. Model deployments, aliases, load balancing, fallback policy, and credentials remain local and outside the repo/wheel; credentials use environment references backed by the private `local.env` or the operator's secret workflow.
 
 ### Fixed
 - **`cove update` no longer treats `.env.example` as a pin change** — the wheel's packaging omits the dotfile while the synced resources and deployed checkouts include it, so wheel-vs-deployed comparison always differed by one file (live-verified: dev-checkout `--check` said pending while the stack was converged). `.env.example` documents the override surface; it, like `.env`, never counts as pending. Related packaging defects (dotfile omission, `build/lib` wheels pollution) documented in `docs/tech-debt/wheel-packaging-hygiene.md`.
 
-### Fixed
 - **`cove ade update` rollback restored the wrong state — claimed rollback while the failed version kept running** (found live updating bb-app 0.44.0 → 0.46.0): when `.env` never recorded `ADE_IMAGE` (pin from bringup defaults only), the rollback kept the new image and compose, seeing no spec change, skipped recreation. The pre-update container image is now captured before any recreation and always restored, with the version pin derived from it, and the rollback recreates with `--force-recreate` (`_previous_image()` contract-tested, red-first).
 - **bb-app >= 0.46 host allowlist broke ade health checks via nginx** (live: `forbidden_host` on `Host: ade.cove` — bb-app now accepts only localhost/IPs/`BB_APP_URL`'s hostname). The ade compose service declares `BB_APP_URL: ${ADE_APP_URL:-https://ade.cove}`; without it the 0.46.0 web UI and ingress health probe 403.
 
