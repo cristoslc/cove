@@ -52,21 +52,7 @@ Set it in `compose/group_vars/all.yml` (`forgejo_webhook_allowed_host_list`) so 
 
 The compose `.env` is rendered **on first boot only** (`compose/bringup.yml`, "Render compose .env (first boot only)"). Changing `forgejo_webhook_allowed_host_list` in group_vars on an existing machine does **not** rewrite the existing `.env`.
 
-Options on an existing deployment:
-
-- Change `forgejo_webhook_allowed_host_list` in `compose/group_vars/all.yml` and let the
-  post-merge promote (below) carry it into a fresh `.env`, **or**
-- Recreate the container and let the compose default apply (temporary stopgap, no hand-editing
-  of runtime files — the durable path is group_vars + promote):
-
-  ```shell
-  cd ~/.config/cove/compose && docker compose up -d forgejo
-  ```
-
-  This must run against the **deployed runtime copy** of the compose bundle (the directory the
-  wheel extracts), not the repo's dev-time `compose/` directory.
-
-The compose-level `:-loopback` default still applies whenever the variable is absent from `.env`.
+On an existing deployment, changing `forgejo_webhook_allowed_host_list` in `compose/group_vars/all.yml` does not rewrite the persistent `.env`. Resource re-extraction preserves `.env` to protect operator overrides, so a promote will not carry this setting into an existing environment file. Do not delete `.env` to force a re-render; use the approved configuration recovery path for an existing installation. The compose-level `:-loopback` default still applies whenever the variable is absent from `.env`.
 
 ### Promote path (wheel is the source of truth)
 
@@ -77,3 +63,5 @@ cd ~/.config/cove/compose && docker compose up -d forgejo
 ```
 
 Never hand-edit the deployed compose directory (`~/.config/cove/compose/`) — it is a runtime copy regenerated from the wheel.
+
+Resource extraction replaces bundled Compose files and pins, but leaves the operator's `.env` and generated `nginx/default.conf` in place. The files keep their existing inodes, which protects nginx's bind mount until `cove up` re-renders nginx from the bundled template during bring-up. `.env` stays private; unsafe symlink or special-file paths stop extraction before pruning.

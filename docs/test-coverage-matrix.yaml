@@ -41,6 +41,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: manual
+  - path: "Compose resource re-extraction preserves persistent .env and nginx config inodes, including copy failure"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
   - path: "cove install / cove uninstall"
     blast_radius: high
     coverage:

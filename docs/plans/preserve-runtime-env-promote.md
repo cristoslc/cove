@@ -1,6 +1,12 @@
-# Plan: Preserve runtime `.env` across compose re-extraction (promote safety)
+---
+title: Preserve runtime Compose files across resource extraction
+status: in progress
+updated: 2026-10-17
+tags: [compose, preservation, sashay]
+---
 
-**Status:** Ready for sashay
+# Plan: Preserve runtime Compose files across resource extraction
+
 **Source:** Tech debt log `docs/tech-debt/extract-resources-deletes-env.md` (incident during PR #46 promote, 2026-09-02)
 **Type:** Bug fix / hardening — chore sashay
 
@@ -16,70 +22,49 @@ mode is silent and the docs assume `.env` survives promotes.
 
 ## Change
 
-1. **`cli/cove/stateless.py` — `extract_resources()`**: preserve runtime files
-   across re-extraction. Define a module-level constant:
-   `RUNTIME_PRESERVED_FILES = (".env",)`.
-   Before `shutil.rmtree(target)`, copy each preserved file to a temp stash
-   (`tempfile.mkdtemp`); after re-copy, restore into the target; clean up.
-   Fail loud: if a preserved file exists but cannot be read, let the exception
-   propagate (never swallow).
-2. **`cli/cove/stateless.py` — blank data-root preflight (fail loud at boundary)**:
-   new function `assert_no_blank_data_roots(compose_dir: Path)` that runs
-   `docker compose --project-directory <dir> config` (stderr captured), raises
-   `click.ClickException` if (a) the command fails, or (b) any
-   `level=warning msg="The \"..._DATA_ROOT\" variable is not set` line appears.
-   Call it from `cove up` (cli.py) after `ensure_init()` / `resolve_compose_dir()`,
-   before any ansible run — only when `~/.config/cove/compose/.env` is absent or
-   blank-rooted... **No**: keep it simple — always run the preflight on the
-   *deployed* dir only when `resolve_compose_dir()` returned `_config_compose_dir()`
-   (installed mode). Dev/worktree modes use a repo compose dir where `.env` is
-   gitignored/dev-supplied and docker isn't necessarily live; skip there.
-3. **`docs/services/forgejo.md`** — correct the promote-path section: a promote
-   re-extracts the compose bundle; runtime files (`.env`) are now **preserved**
-   by `extract_resources()`; the first-boot-only render still applies on a brand
-   new machine.
-4. **`docs/tech-debt/extract-resources-deletes-env.md`** — append "RESOLVED" note
-   with PR reference (do not delete the file; keep the incident record).
-5. **`CHANGELOG.md`** — Unreleased/Fixed entry.
+1. **`cli/cove/stateless.py` — in-place resource refresh**: preserve the narrow runtime allowlist `(".env", "nginx/default.conf")` in place while replacing bundled resources. Prune stale non-allowlisted entries, retaining the ancestor directory for `nginx/default.conf`, then copy fresh bundle resources while skipping those exact paths. Safely invalidate `.version` before pruning and write a new marker only after all bundled copies succeed; then a partial copy failure forces the next `ensure_init()` to retry without removing the last runtime files.
+2. **Safe path handling**: validate `.env`, `nginx/default.conf`, and the `.version` marker using descriptor-relative `O_NOFOLLOW` opens and require regular files. Use `O_NONBLOCK` to reject FIFOs without hanging. Walk from the resolved home directory without following symlinked Compose parents. Restrict `.env` to owner-only permissions without replacing its inode, unlink `.version` safely before pruning, and write it atomically only after copying succeeds.
+3. **Test isolation**: redirect `TestCoveUpCommand` and `TestNoUpgradeFlag` resource initialization to temporary homes and patch resource extraction entry points, so the required gate cannot alter the operator's installed Compose tree.
+4. **Docs and release notes**: clarify that bundled sources/pins refresh while `.env` and generated nginx config remain in place until `cove up` rerenders nginx. Update the Unreleased changelog and coverage matrix. Keep the incident record open until merge.
+
+### Deferred separately
+
+The earlier plan proposed a `docker compose config` blank-data-root preflight. That guard is not required to preserve an existing `.env`, and a guard before first-boot env rendering needs separate lifecycle design and tests. Do not include it in this preservation change.
 
 ## Tests (TDD — write first, watch fail, then implement)
 
-`cli/tests/test_resources.py` (existing conventions: `patch Path.home`,
-mocked `_bundled_compose_root`, tmp_path):
+`cli/tests/test_resources.py` uses temporary roots and a mocked bundled resource directory:
 
-- `test_preserves_env_file_on_force_reextract`: target with `.version=old`,
-  an `inventory.yml`, and a `.env` with sentinel content; force extract; assert
-  `.env` survives byte-identical and `.version` updated. (RED: currently `.env`
-  is deleted by rmtree.)
-- `test_preserves_env_file_on_maybe_reextract`: same via `maybe_reextract()`
-  path (version mismatch).
-- `test_no_preserved_files_new_install`: fresh extract still works when no
-  `.env` exists.
-- `TestAssertNoBlankDataRoots`:
-  - `test_fails_when_compose_config_warns_blank` (stub subprocess returning the
-    observed warning line → ClickException).
-  - `test_raises_when_compose_config_fails` (returncode != 0 → ClickException).
-  - `test_passes_clean_output` (no warning → no raise).
-  - `test_skipped_in_dev_mode` (function itself always checks; the *skip* logic
-    lives in `cove up` — test that `up`'s guard only calls the preflight in
-    installed mode via source/assert or by factoring the guard into a small
-    helper `_is_installed_mode(compose_dir)` and unit-testing it).
+- Exercise forced and hash-mismatch extraction; assert `.env` and generated nginx bytes, private mode, and inode identity remain stable while bundled pins and templates refresh.
+- Inject a resource-copy failure after partial copying; assert both runtime files remain and `.version` is absent, allowing the next `ensure_init()` to retry.
+- Reject symlinked runtime files, symlinked Compose/runtime parents, and FIFOs without blocking.
+- Verify `.env` permissions are restricted without replacing its inode.
+- Keep new-install extraction functional when runtime files do not exist.
+
+`cli/tests/test_cli.py` isolates `TestCoveUpCommand` and `TestNoUpgradeFlag` from the actual installed resource directory. Confirm its manifest is unchanged before and after the required gate once parent recovery is complete.
 
 ## Non-goals
 
-- No change to bringup.yml first-boot-only render semantics.
-- No compose file changes (blank-defaults remain in compose; the preflight is
-  the guard, not YAML surgery).
-- No re-architecture of stateless extraction (temp-dir restore only).
+- No live service or staging operations, release, or stable tool install.
+- No changes to bringup.yml first-boot env rendering.
+- No preservation of bundled Compose source, pins, or arbitrary activation backups.
+- No blank-root preflight in this change.
+
+## Runtime preservation refinement (2026-10-17)
+
+The implementation keeps the two allowlisted runtime files physically in place
+while pruning stale bundled resources around them. This replaces the original
+temp-stash design: copy failure cannot discard the last runtime copy, and nginx
+keeps the same bind-mounted inode until `cove up` rerenders it. Other bundled
+Compose source and pins are refreshed on each successful extraction.
 
 ## Acceptance
 
-- New tests red→green; full gate `uv run --directory cli pytest -x -q -m "not e2e and not staging"` green.
-- Manual verification on the live machine: `cove init` (or promote path) with a
-  sentinel `.env` present → `.env` survives.
-- Tech-debt doc marked RESOLVED; CHANGELOG updated.
+- The focused regression and isolation tests pass in temporary roots.
+- The required gate `uv run --directory cli pytest -x -q -m "not e2e and not staging"` passes after parent recovery is paused and the live installed-directory manifest is recorded before/after.
+- The local chronicle is committed and projected as separate PR comments.
+- The draft PR remains unmerged; no live mutation or release occurs in this work.
 
 ## Coverage matrix rows
 
-- `extract_resources preserves runtime .env on re-extraction` — blast high, happy/sad/edge executable, corner skip
-- `cove up fails loud on blank data roots (installed mode)` — blast high, happy/sad executable, edge skip, corner skip
+- `Compose resource re-extraction preserves persistent .env and nginx config inodes, including copy failure, and validates its version marker` — blast high, happy/sad/edge executable, corner skip
