@@ -22,7 +22,7 @@ cove litellm status
 
 The first `cove litellm up` may start the proxy before providers are configured. The data root defaults to `~/Documents/cove-data`; Cove may use a different root from the shell or deployed Compose `.env`. `local.env` uses Docker env-file syntax (`NAME=value`). It is local runtime state, must remain private, and is not copied into YAML or committed to the repository. Cove passes this file to LiteLLM's container so the overlay can reference locally supplied provider variables. The existing `OLLAMA_API_KEY` Compose mapping remains sourced through Compose interpolation (the deployed Compose `.env` or the shell); use that existing path for this variable. Put other provider variables in `local.env`. If a variable is defined in both places, Compose's explicit `environment` mapping wins over `env_file`. Keep credentials in a secret store where available and materialize them through the operator's secret workflow.
 
-LiteLLM is available through Cove's nginx ingress at `https://litellm.cove.local/`. The container binds to `127.0.0.1:4000`; nginx exposes only the whitelisted health and model API routes.
+LiteLLM is available through Cove's nginx ingress at `https://litellm.cove.local/`. The container binds to `127.0.0.1:4000`. Nginx allows up to 3600 seconds for upstream reads and sends, and disables response buffering so long-running streamed completions can reach clients as they arrive.
 
 ## Configuration ownership
 

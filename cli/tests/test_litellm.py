@@ -372,6 +372,16 @@ class TestNginxRouteWhitelist:
             "litellm.cove must proxy all paths (admin UI enabled), not return 403"
         )
 
+    def test_streaming_proxy_settings_are_applied_to_litellm_location(self):
+        """Long-running streamed LLM responses must not hit nginx's 60s defaults."""
+        rendered = _render_nginx()
+        block = self._extract_litellm_block(rendered)
+        location = block.split("location / {", 1)[1].split("\n    }", 1)[0]
+
+        assert "proxy_read_timeout 3600s;" in location
+        assert "proxy_send_timeout 3600s;" in location
+        assert "proxy_buffering off;" in location
+
 
 class TestBringupIntegration:
     """Validate bringup.yml includes litellm.cove in cert SANs, hosts, .env,
