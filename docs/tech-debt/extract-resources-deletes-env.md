@@ -47,3 +47,12 @@ present. Data was never lost — the wrong mount was empty, not the real one.
   runtime `.env`; the next `cove up` re-renders it (needs BECOME).
 - Tests: unit test that `extract_resources(force=True)` preserves a pre-existing
   `.env`; adversarial test that compose up with blank data-root fails loudly.
+## Draft remediation
+
+PR #66 proposes preserving the persistent `.env` and generated
+`nginx/default.conf` in place while pruning and refreshing bundled resources.
+The runtime file paths retain their inode identity; symlinks and special files
+are rejected before pruning; and `.version` is removed safely before pruning,
+then atomically recreated only after a complete bundle copy. A copy failure
+therefore forces the next `ensure_init()` to retry. The allowlist is intentionally limited to
+those two runtime files. This record remains open until the PR is merged.

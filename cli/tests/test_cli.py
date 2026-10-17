@@ -51,6 +51,18 @@ def _fake_ansible_popen(monkeypatch):
     monkeypatch.setattr("cove.cli.passwordless_sudo_ok", lambda: False)
     return holder
 
+
+@pytest.fixture
+def isolated_compose_resources(tmp_path, monkeypatch):
+    """Keep `cove up` CLI tests away from the operator's installed resources."""
+    home = tmp_path / "home"
+    compose_dir = home / ".config" / "cove" / "compose"
+    compose_dir.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    monkeypatch.setattr(cove.cli, "ensure_init", lambda: compose_dir)
+    monkeypatch.setattr(cove.cli, "maybe_reextract", lambda: False)
+    return compose_dir
+
 import cove.cli
 from cove.stateless import resolve_compose_dir
 
@@ -474,6 +486,12 @@ class TestFindComposeDir:
 
 
 class TestCoveUpCommand:
+    @pytest.fixture(autouse=True)
+    def _isolate_installed_resources(self, isolated_compose_resources):
+        # The up callback calls ensure_init even with --no-upgrade. Both
+        # resource entry points are patched and Path.home points into tmp_path.
+        return isolated_compose_resources
+
     def test_up_passes_stable_ansible_hostname_override(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up must pass `-e ansible_hostname=<stable>` so Ansible's
         gathered fact (kernel hostname) cannot diverge from the stable hostname
@@ -1486,6 +1504,10 @@ class TestProgressiveDisclosure:
 
 
 class TestNoUpgradeFlag:
+    @pytest.fixture(autouse=True)
+    def _isolate_installed_resources(self, isolated_compose_resources):
+        return isolated_compose_resources
+
     def test_no_upgrade_skips_reextract(self, tmp_path, monkeypatch):
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
