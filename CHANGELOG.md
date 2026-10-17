@@ -7,6 +7,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## Unreleased
 
 ### Fixed
+- **Long-running LiteLLM streams no longer hit nginx's 60-second proxy timeout** — LiteLLM ingress now uses the same 3600-second read/send timeouts and disabled response buffering as Cove's other streaming routes.
 - **Compose resource re-extraction preserves runtime `.env` and generated nginx config** — resource updates keep the persistent environment file and current `nginx/default.conf` inode in place while refreshing bundled source and pins, including when a resource copy fails. `cove up` remains responsible for rendering the current nginx config.
 
 ## 0.14.0 (2026-10-17)
