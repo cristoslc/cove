@@ -126,7 +126,12 @@ def extract_resources(force: bool = False) -> Path:
 def _copy_resource(src, dst: Path) -> None:
     src_path = Path(str(src))
     if src_path.is_dir():
-        shutil.copytree(src_path, dst / src_path.name, dirs_exist_ok=True)
+        shutil.copytree(
+            src_path,
+            dst / src_path.name,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
     else:
         shutil.copy2(src_path, dst / src_path.name)
 

@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+- **Update-safe local LiteLLM configuration overlays** — Cove now bundles generic proxy defaults and composes them with persistent per-machine operator configuration. Existing `config.yaml` customizations migrate once into `config.local.yaml`, which survives future bundled-default updates. Model deployments, aliases, load balancing, fallback policy, and credentials remain local and outside the repo/wheel; credentials use environment references backed by the private `local.env` or the operator's secret workflow.
+
 ### Fixed
 - **`cove update` no longer treats `.env.example` as a pin change** — the wheel's packaging omits the dotfile while the synced resources and deployed checkouts include it, so wheel-vs-deployed comparison always differed by one file (live-verified: dev-checkout `--check` said pending while the stack was converged). `.env.example` documents the override surface; it, like `.env`, never counts as pending. Related packaging defects (dotfile omission, `build/lib` wheels pollution) documented in `docs/tech-debt/wheel-packaging-hygiene.md`.
 

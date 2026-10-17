@@ -47,6 +47,20 @@ if [[ "$STAGING_DATA_ROOT" == "$LIVE_DATA_ROOT" ]]; then
     echo "deploy-isolated.sh: SAFETY VIOLATION — staging data root equals live root ($LIVE_DATA_ROOT)" >&2
     exit 1
 fi
+STAGING_DATA_ROOT_REAL=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$STAGING_DATA_ROOT")
+LIVE_DATA_ROOT_REAL=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$LIVE_DATA_ROOT")
+if ! python3 - "$STAGING_DATA_ROOT_REAL" "$LIVE_DATA_ROOT_REAL" <<'PYEOF'
+import os
+import sys
+
+staging_root, live_root = sys.argv[1:]
+common = os.path.commonpath((staging_root, live_root))
+sys.exit(1 if common in (staging_root, live_root) else 0)
+PYEOF
+then
+    echo "deploy-isolated.sh: SAFETY VIOLATION — staging and live data roots overlap ($STAGING_DATA_ROOT_REAL, $LIVE_DATA_ROOT_REAL)" >&2
+    exit 1
+fi
 if [[ "$STAGING_DATA_ROOT" != *"staging"* ]]; then
     echo "deploy-isolated.sh: SAFETY VIOLATION — staging data root '$STAGING_DATA_ROOT' does not contain 'staging'" >&2
     exit 1
@@ -87,6 +101,12 @@ python3 -m venv "$STAGING_VENV"
 # --- Prepare the staging data tree (staging root only) -----------------------
 echo "Preparing staging data root: $STAGING_DATA_ROOT" >&2
 mkdir -p "$STAGING_DATA_ROOT"/{certs,dnsmasq,pages/sites,vault/data,vault/logs,ade,nginx/user.d,nginx/config/dns,nginx-conf,toolhive/config,toolhive/state,toolhive/profiles}
+
+# LiteLLM's generated YAML is readable by container UID 1000, so keep its
+# parent directory private on the host. Provider values remain in this 0600
+# env file and are never copied into config.yaml.
+"$STAGING_VENV/bin/python" "$COMPOSE_DIR/litellm/config_overlay.py" --ensure-private-dir "$STAGING_DATA_ROOT/litellm" --trusted-root "$STAGING_DATA_ROOT" >/dev/null
+"$STAGING_VENV/bin/python" "$COMPOSE_DIR/litellm/config_overlay.py" --ensure-env-file "$STAGING_DATA_ROOT/litellm/local.env" --trusted-root "$STAGING_DATA_ROOT" >/dev/null
 
 # Certs: reuse the live mkcert pair if present (READ-only copy from the live
 # root — never a mount, never a write). Otherwise generate a self-signed pair
