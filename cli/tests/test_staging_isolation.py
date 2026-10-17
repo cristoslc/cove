@@ -48,6 +48,30 @@ COMPOSE_DIR = PROJECT_ROOT / "compose"
 BASE_COMPOSE = COMPOSE_DIR / "docker-compose.yml"
 STAGING_OVERRIDE = COMPOSE_DIR / "docker-compose.staging.yml"
 
+
+def _teardown_script_in_git_checkout(tmp_path: Path, branch: str) -> tuple[Path, Path]:
+    """Copy teardown.sh into a tiny repo so tests control its branch guard."""
+    repo_root = tmp_path / f"teardown-{branch}"
+    script = repo_root / "scripts" / "staging" / "teardown.sh"
+    script.parent.mkdir(parents=True)
+    (repo_root / "compose").mkdir()
+    shutil.copy2(PROJECT_ROOT / "scripts" / "staging" / "teardown.sh", script)
+    result = subprocess.run(
+        ["git", "init", "--quiet", "--initial-branch", branch, str(repo_root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    actual_branch = subprocess.run(
+        ["git", "-C", str(repo_root), "branch", "--show-current"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    assert actual_branch == branch
+    return script, repo_root
+
 # Live container names observed on this machine (docker ps, 2026-09-25).
 # The staging project must never produce any of these names.
 LIVE_CONTAINER_NAMES = {
@@ -305,6 +329,9 @@ class TestTeardownProfileCoverage:
         docker = fake_bin / "docker"
         docker.write_text("#!/bin/sh\n[ \"$1\" = info ]\n")
         docker.chmod(0o755)
+        teardown_script, checkout = _teardown_script_in_git_checkout(
+            tmp_path, branch="review-branch"
+        )
         env = os.environ.copy()
         env.update(
             {
@@ -317,10 +344,10 @@ class TestTeardownProfileCoverage:
         result = subprocess.run(
             [
                 "bash",
-                str(PROJECT_ROOT / "scripts" / "staging" / "teardown.sh"),
+                str(teardown_script),
                 "review-branch",
             ],
-            cwd=PROJECT_ROOT,
+            cwd=checkout,
             env=env,
             capture_output=True,
             text=True,
@@ -329,6 +356,34 @@ class TestTeardownProfileCoverage:
 
         assert result.returncode != 0
         assert "staging and live data roots overlap" in result.stderr
+        assert sentinel.read_text() == "live data"
+
+    def test_teardown_rejects_main_branch_in_isolated_checkout(self, tmp_path):
+        live_root = tmp_path / "cove-data"
+        live_root.mkdir()
+        sentinel = live_root / "keep.txt"
+        sentinel.write_text("live data")
+        staging_root = tmp_path / "cove-data-staging"
+        staging_root.mkdir()
+        teardown_script, checkout = _teardown_script_in_git_checkout(
+            tmp_path, branch="main"
+        )
+
+        result = subprocess.run(
+            ["bash", str(teardown_script), "review-branch"],
+            cwd=checkout,
+            env={
+                **os.environ,
+                "COVE_STAGING_DATA_ROOT": str(staging_root),
+                "COVE_LIVE_DATA_ROOT": str(live_root),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode != 0
+        assert "refusing to tear down from production branch 'main'" in result.stderr
         assert sentinel.read_text() == "live data"
 
 
