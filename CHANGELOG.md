@@ -6,6 +6,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+- **`cove --sbom`** — print-only inventory of the pinned artifacts, parsed live from `compose/` (group_vars authoritative where it carries a pin; `python -m cove.pins --json` for the machine-readable form). Deliberately an about item, not a command with state: it prints the pin matrix and exits, and bare `cove` still shows help. Generation stays a development step: `scripts/sbom.sh` writes CycloneDX via trivy into `sbom/`, committed inside version-bump PRs so the PR diff is the SBOM delta.
+- **Stack-update runbook** — `docs/guides/stack-update-guide.md` carries the update SLA (patch merged within a day, minor within 3, major filed as a gap-analysis issue instead of a PR), the master pin inventory, the per-component upgrade procedure, the SBOM process, and the design for the Forgejo `version-audit` workflow plus the BB reviewer automation (planned; activation documented there).
+
+### Security
+- **`adguard/dnsproxy` pinned `latest` → `v0.86.0@sha256:4d65bafb…`** — the DoH sidecar was the last image in the stack floating on `:latest`, violating the documented no-latest posture; the pinned tag and current `latest` share the same image-index digest, so no runtime change occurs.
+
+### Changed
+- **`scripts/release.sh` attaches the committed `sbom/*.cdx.json` snapshots to releases on both hosts** and fails loud when the snapshot directory is empty (run them with `scripts/sbom.sh` first).
+
 ## 0.14.1 (2026-10-17)
 
 ### Fixed
