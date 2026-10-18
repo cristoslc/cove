@@ -89,7 +89,7 @@ services:
       - NET_BIND_SERVICE
 
   dnsproxy:
-    image: adguard/dnsproxy:latest
+    image: adguard/dnsproxy:v0.86.0@sha256:4d65bafbf246b206a1af35d4263a86c35451d957458c7836304199f1cd2c1535
     container_name: ${DNSPROXY_CONTAINER_NAME:-cove-dnsproxy}
     restart: unless-stopped
     depends_on:

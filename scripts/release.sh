@@ -36,24 +36,43 @@ if [[ -z "$NOTES" ]]; then
   exit 1
 fi
 
+SBOM_FILES=()
+for f in sbom/*.cdx.json; do
+  [[ -f "$f" ]] && SBOM_FILES+=("$f")
+done
+if [[ ${#SBOM_FILES[@]} -eq 0 ]]; then
+  echo "error: no sbom/*.cdx.json snapshots present — run scripts/sbom.sh first" >&2
+  echo "  (runbook: docs/guides/stack-update-guide.md)" >&2
+  exit 1
+fi
+
 echo "==> Pushing tag ${TAG} to both remotes..."
 git push origin "$TAG"
 git push github "$TAG"
 
 echo "==> GitHub release..."
 if gh release view "$TAG" --repo cristoslc/cove >/dev/null 2>&1; then
-  echo "    release $TAG exists — ensuring wheel attached"
-  gh release upload "$TAG" --repo cristoslc/cove --clobber "$WHEEL"
+  echo "    release $TAG exists — ensuring wheel and SBOMs attached"
+  gh release upload "$TAG" --repo cristoslc/cove --clobber "$WHEEL" "${SBOM_FILES[@]}"
 else
   gh release create "$TAG" --repo cristoslc/cove \
-    --title "cove-cli ${VER}" --notes "$NOTES" "$WHEEL"
+    --title "cove-cli ${VER}" --notes "$NOTES" "$WHEEL" "${SBOM_FILES[@]}"
 fi
 
+FORGEJO_SBOM_ARGS=()
+for f in "${SBOM_FILES[@]}"; do
+  FORGEJO_SBOM_ARGS+=(-a "$f")
+done
 echo "==> Forgejo release (git.cove)..."
 if fj -H git.cove release view "$VER" >/dev/null 2>&1; then
-  echo "    release $VER exists — skipped (delete it first to re-attach assets)"
+  echo "    release $VER exists — ensuring SBOM assets attached"
+  for f in "${SBOM_FILES[@]}"; do
+    if ! fj -H git.cove release asset create "$VER" "$f" "$(basename "$f")" >/dev/null 2>&1; then
+      echo "    note: $(basename "$f") not attached (already present or asset error)" >&2
+    fi
+  done
 else
-  fj -H git.cove release create "$VER" -t "$TAG" -b "$NOTES" -a "$WHEEL"
+  fj -H git.cove release create "$VER" -t "$TAG" -b "$NOTES" -a "$WHEEL" "${FORGEJO_SBOM_ARGS[@]}"
 fi
 
 echo "==> ${VER} published to GitHub and Forgejo."
