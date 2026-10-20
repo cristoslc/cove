@@ -55,6 +55,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: manual
+  - path: "Compose-source guard: refuse a dir with no usable COVE_DATA_ROOT / FORGEJO_DATA_ROOT (or hijacking the live project name) before Ansible or Docker"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable
   - path: "cove certs ensure-ca / sign"
     blast_radius: high
     coverage:

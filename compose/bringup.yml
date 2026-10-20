@@ -754,6 +754,28 @@
             line: "ZROK_SHARE_NAME={{ zrok_share_name }}"
 
     # CONTAINERS -------------------------------------------------------------
+    # An empty COVE_DATA_ROOT collapses every `${COVE_DATA_ROOT}/x` bind to
+    # container-absolute `/x` (incident 20261018-015539). `cove up` guards this
+    # in Python before it shells out; this assert covers a direct
+    # `ansible-playbook compose/bringup.yml` run and is the last line of defense
+    # before `docker compose up`. It reads the value Compose would interpolate:
+    # the process environment wins when non-empty, then the rendered .env.
+    - name: Assert the compose .env carries a usable COVE_DATA_ROOT
+      ansible.builtin.assert:
+        that:
+          - >-
+            (lookup('env', 'COVE_DATA_ROOT') | default('', true) | string | length) > 0
+            or (lookup('file', compose_dir ~ '/.env', errors='ignore')
+                | default('', true) | string
+                | regex_search('(?m)^COVE_DATA_ROOT=.+') is not none)
+        fail_msg: >
+          No usable COVE_DATA_ROOT (unset in both the environment and
+          {{ compose_dir }}/.env). An empty COVE_DATA_ROOT collapses every
+          ${COVE_DATA_ROOT}/x bind mount to container-absolute /x and would
+          recreate containers against the wrong data. Run `cove up` from the
+          canonical compose dir so bringup renders a complete .env first, or
+          set COVE_DATA_ROOT in the environment.
+
     - name: Detect active docker context endpoint
       ansible.builtin.command: docker context inspect --format '{{ "{{" }} .Endpoints.docker.Host {{ "}}" }}'
       register: docker_host_detect

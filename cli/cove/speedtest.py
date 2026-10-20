@@ -8,7 +8,7 @@ import subprocess
 import click
 
 from cove.constants import NGINX_HTTPS_PORT
-from cove.stateless import resolve_compose_dir
+from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
 
 
 SPEEDTEST_URL = "https://speedtest.cove.local/"
@@ -251,6 +251,7 @@ def up():
     Ensures a SPEEDTEST_APP_KEY is available, auto-generating one and storing
     it in 1Password + Vault + the compose .env on first run.
     """
+    ensure_compose_source_ready(resolve_compose_dir())
     _ensure_app_key()
     click.echo("Starting Speedtest Tracker...")
     subprocess.run(_compose_cmd("--profile", "speedtest", "up", "-d"), check=True)
@@ -260,6 +261,7 @@ def up():
 @speedtest.command()
 def down():
     """Stop the Speedtest Tracker service (data preserved)."""
+    ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping Speedtest Tracker...")
     subprocess.run(_compose_cmd("stop", "speedtest-tracker"), check=True)
     click.echo("Speedtest Tracker stopped.")

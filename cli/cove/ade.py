@@ -9,7 +9,7 @@ import click
 import requests
 
 from cove.constants import NGINX_HTTPS_PORT
-from cove.stateless import resolve_compose_dir
+from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
 
 
 ADE_SERVICE = "ade"
@@ -188,6 +188,7 @@ def ade():
 def up():
     """Ensure the ADE bb server is built and running."""
     click.echo("Starting ADE bb server...")
+    ensure_compose_source_ready(resolve_compose_dir())
     _run_checked(_compose_cmd("up", "-d", "--build", ADE_SERVICE), "up")
     click.echo(f"ADE bb server is running at {ADE_URL}")
 
@@ -220,6 +221,8 @@ def update(version_: str | None, check: bool):
         click.echo(f"  .env pin: {pinned or '(wheel default)'}")
         click.echo(f"  latest:   {target if version_ is None else '(explicit pin) ' + target}")
         return
+
+    ensure_compose_source_ready(resolve_compose_dir())
 
     if target == running:
         # Running already matches the target: converge the .env pin (it may
@@ -272,6 +275,7 @@ def update(version_: str | None, check: bool):
 @ade.command()
 def down():
     """Stop the ADE bb server (data preserved)."""
+    ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping ADE bb server...")
     _run_checked(_compose_cmd("stop", ADE_SERVICE), "stop")
     click.echo("ADE bb server stopped.")

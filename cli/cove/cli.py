@@ -31,6 +31,7 @@ from cove.project import (
 from cove.stateless import (
     resolve_compose_dir, extract_resources, ensure_init, maybe_reextract,
     changed_resource_files, compose_resource_dir, bundle_is_current,
+    ensure_compose_source_ready,
 )
 from cove.constants import VAULT_CONTAINER_NAME
 from cove.vault_unseal import ensure_unsealed
@@ -269,6 +270,10 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
         maybe_reextract()
     ensure_init()
     compose_dir = resolve_compose_dir()
+    # Refuse a compose source that would collapse every ${COVE_DATA_ROOT}/x bind
+    # to container-absolute /x, or hijack the live project from a foreign data
+    # root. Runs before Ansible and before any container is touched.
+    ensure_compose_source_ready(compose_dir)
     host_vars_file = ensure_host_vars()
     inventory = compose_dir / "inventory.yml"
     bringup = compose_dir / "bringup.yml"
@@ -520,6 +525,7 @@ def down(volumes):
         cove down --volumes
     """
     compose_dir = resolve_compose_dir()
+    ensure_compose_source_ready(compose_dir)
     cmd = [
         "docker", "compose",
         "--project-directory", str(compose_dir),
@@ -569,6 +575,7 @@ def uninstall(all_, force, global_):
 
     if all_:
         click.echo("Stopping containers...")
+        ensure_compose_source_ready(compose_dir)
         subprocess.run(
             [
                 "docker", "compose",

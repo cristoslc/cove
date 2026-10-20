@@ -73,10 +73,18 @@ def runner():
 
 @pytest.fixture
 def fake_compose_env(tmp_path, monkeypatch):
-    """Point the CLI at an isolated compose dir with a fake .env."""
+    """Point the CLI at an isolated compose dir with a realistic fake .env.
+
+    The .env carries the data roots the compose-source guard
+    (cove.stateless.ensure_compose_source_ready) requires; an empty .env would
+    model the hazardous shape from incident 20261018-015539 and be refused.
+    """
     monkeypatch.setenv("COVE_COMPOSE_DIR", str(tmp_path))
     (tmp_path / "inventory.yml").write_text("hosts: {}\n")
-    (tmp_path / ".env").write_text("")
+    (tmp_path / ".env").write_text(
+        "COVE_DATA_ROOT=/tmp/cove-test-data\n"
+        "FORGEJO_DATA_ROOT=/tmp/cove-test-data\n"
+    )
     return tmp_path
 
 
