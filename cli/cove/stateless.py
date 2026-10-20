@@ -15,7 +15,13 @@ import click
 
 from cove import __version__
 
-RUNTIME_PRESERVED_FILES = (".env", "nginx/default.conf")
+# Files bringup generates at runtime that extraction must never prune or
+# overwrite. `certs/rootCA.pem` is copied from the machine's CA by bringup (the
+# bundle may ship no `certs/` at all — `compose/certs/` is gitignored, so a
+# wheel built from a clean checkout, e.g. the `cove update` git-worktree path,
+# has none). Pruning it left the file missing; Docker then auto-created it as a
+# directory and `docker restart cove-nginx` refused to start (2026-10-19 sev-2).
+RUNTIME_PRESERVED_FILES = (".env", "nginx/default.conf", "certs/rootCA.pem")
 
 
 def detect_hostname() -> str:

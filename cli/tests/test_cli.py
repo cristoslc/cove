@@ -247,6 +247,71 @@ class TestDeploymentManifests:
             f"'Reload nginx' must restart the nginx container, got: {cmd!r}"
         )
 
+    def test_bringup_guards_compose_dir_file_bind_sources(self):
+        """Regression (2026-10-19 sev-2): every compose-dir FILE bind source
+        must be pre-flighted for TYPE before `docker compose up`. Docker
+        auto-creates a MISSING bind source as a DIRECTORY, and a file-typed
+        destination then refuses to start ("mount a directory onto a file"),
+        taking the whole edge down. `certs/rootCA.pem` (copied from the CA, not
+        shipped in certs-less wheels) was the uncovered source; `vault/vault.hcl`
+        and `forgejo-runner/config.yml` are the other compose-dir file binds.
+        The guard must run before 'Bring up pod via docker compose'."""
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+
+        with open(bp) as f:
+            data = yaml.safe_load(f)
+
+        tasks = data[0]["tasks"] if isinstance(data, list) else data.get("tasks", [])
+        compose_up_index = next(
+            i for i, t in enumerate(tasks)
+            if isinstance(t, dict) and t.get("name") == "Bring up pod via docker compose"
+        )
+
+        guard_names = {
+            t.get("name") for t in tasks[:compose_up_index] if isinstance(t, dict)
+        }
+        assert any(
+            "compose-dir file bind" in (n or "").lower() for n in guard_names
+        ), (
+            "bringup.yml must include a guard family asserting compose-dir file "
+            "bind-mount sources exist and are not directories"
+        )
+
+        text = bp.read_text()
+        for source in (
+            "{{ compose_dir }}/certs/rootCA.pem",
+            "{{ compose_dir }}/vault/vault.hcl",
+            "{{ compose_dir }}/forgejo-runner/config.yml",
+        ):
+            assert source in text, (
+                f"compose-dir file bind guard must cover {source}"
+            )
+
+    def test_bringup_fails_loudly_on_missing_file_bind_source(self):
+        """The compose-dir file bind guard must FAIL (not silently skip) when a
+        source is missing or wedged as a directory: a missing file bind source
+        is exactly the pre-condition that let Docker create the directory that
+        blocked the nginx restart."""
+        bp = COMPOSE_DIR / "bringup.yml"
+        assert bp.exists(), f"bringup.yml not found at {bp}"
+
+        with open(bp) as f:
+            data = yaml.safe_load(f)
+
+        tasks = data[0]["tasks"] if isinstance(data, list) else data.get("tasks", [])
+        fail_tasks = [
+            t for t in tasks
+            if isinstance(t, dict)
+            and "fail" in str(list(t.keys()))
+            and "compose-dir file bind" in str(t.get("name", "")).lower()
+        ]
+        assert fail_tasks, (
+            "the compose-dir file bind guard must include an ansible.builtin.fail "
+            "task so a missing/directory source halts before `docker compose up`"
+        )
+
+
     def test_bringup_bootstraps_compose_plugin(self):
         """The docker CLI alone lacks `docker compose`; bringup must bootstrap it.
 

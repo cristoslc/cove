@@ -195,6 +195,63 @@
         mode: "0644"
         content: "{{ root_ca_slurp.content | b64decode }}"
 
+    # COMPOSE-DIR FILE BIND GUARD ---------------------------------------------
+    # Every compose-dir FILE bind source must exist as a FILE before `docker
+    # compose up`. Docker auto-creates a MISSING bind source as a DIRECTORY and
+    # then refuses to start a file-typed destination ("mount a directory onto a
+    # file"), taking the whole edge down (2026-10-19 sev-2: certs/rootCA.pem was
+    # missing — a certs-less wheel pruned it — so a `docker restart cove-nginx`
+    # created the directory and every vhost went dark). Pre-flight every source's
+    # TYPE so a wedge halts here, loudly, instead of at container start.
+    - name: Assert compose-dir file bind-mount sources are not directories
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ compose_dir }}/certs/rootCA.pem"
+        - "{{ compose_dir }}/vault/vault.hcl"
+        - "{{ compose_dir }}/forgejo-runner/config.yml"
+      register: compose_file_mount_targets
+    - name: List contents of wedged compose-dir file bind sources
+      ansible.builtin.find:
+        paths: "{{ item.stat.path }}"
+        file_type: any
+      loop: "{{ compose_file_mount_targets.results }}"
+      when: item.stat.isdir | default(false)
+      register: compose_file_wedged_scan
+      loop_control:
+        label: "{{ item.stat.path }}"
+    - name: Remove empty Docker-created directories on compose-dir file bind sources
+      # Auto-repair: an empty Docker-created dir is safe to delete. The certs
+      # copy above (or a re-run of `cove up`) then recreates the real file.
+      ansible.builtin.file:
+        path: "{{ item.item.stat.path }}"
+        state: absent
+      loop: "{{ compose_file_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) == 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
+    - name: Fail if a compose-dir file bind source is a non-empty directory
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.item.stat.path }} exists as a NON-EMPTY DIRECTORY where a file
+          must be bind-mounted (Docker auto-created it and contents were written
+          inside). Remove it and re-run: rm -rf {{ item.item.stat.path }} && cove up
+      loop: "{{ compose_file_wedged_scan.results }}"
+      when: item.files is defined and (item.files | length) > 0
+      loop_control:
+        label: "{{ item.item.stat.path }}"
+    - name: Fail if a compose-dir file bind source is missing
+      ansible.builtin.fail:
+        msg: >-
+          {{ item.stat.path }} is MISSING but is bind-mounted into a container.
+          Docker would auto-create it as a DIRECTORY and the file-typed mount
+          would refuse to start ("mount a directory onto a file"). Restore it
+          (for certs/rootCA.pem: `cove certs ensure-ca`, then re-run).
+      loop: "{{ compose_file_mount_targets.results }}"
+      when: not (item.stat.exists | default(false))
+      loop_control:
+        label: "{{ item.stat.path }}"
+
     - name: Base64-encode root CA (strip PEM headers for .mobileconfig)
       when: ca_path_result.rc == 0
       ansible.builtin.set_fact:
