@@ -516,6 +516,48 @@ class TestRuntimeResourcePreservation:
         else:
             assert (target / ".version").read_text() == "old-bundle-hash"
 
+    def test_preserves_runtime_root_ca_when_bundle_omits_certs(self, tmp_path):
+        """Regression (2026-10-19 sev-2): a bundle built from a clean checkout
+        (the `cove update` wheel path) ships no `certs/` because `compose/certs/`
+        is gitignored. Extraction used to prune the runtime `certs/rootCA.pem`
+        (bringup copies it from the CA) and never restore it, leaving the
+        file missing; Docker then auto-created it as a DIRECTORY and
+        `docker restart cove-nginx` refused to start ("mount a directory onto a
+        file"), taking every vhost down. The runtime CA must survive."""
+        home = tmp_path / "home"
+        target = home / ".config" / "cove" / "compose"
+        (target / "certs").mkdir(parents=True)
+        (target / ".version").write_text("old-bundle-hash")
+        ca = target / "certs" / "rootCA.pem"
+        ca.write_bytes(b"-----BEGIN CERTIFICATE-----\nlive\n")
+        inode = ca.stat().st_ino
+
+        self._extract(home, self._bundle(tmp_path), force=True)
+
+        assert ca.exists(), "extraction must not prune the runtime root CA"
+        assert ca.read_bytes() == b"-----BEGIN CERTIFICATE-----\nlive\n"
+        assert ca.stat().st_ino == inode
+
+    def test_bundled_root_ca_never_overwrites_live_ca(self, tmp_path):
+        """The live CA (copied from the machine's CA by bringup) is the source
+        of truth; a `certs/rootCA.pem` shipped in the bundle must never replace
+        it (a stale shipped copy would silently break TLS trust)."""
+        home = tmp_path / "home"
+        target = home / ".config" / "cove" / "compose"
+        (target / "certs").mkdir(parents=True)
+        (target / ".version").write_text("old-bundle-hash")
+        ca = target / "certs" / "rootCA.pem"
+        ca.write_bytes(b"live-ca\n")
+        inode = ca.stat().st_ino
+
+        bundle = self._bundle(tmp_path)
+        (bundle / "certs").mkdir()
+        (bundle / "certs" / "rootCA.pem").write_text("shipped-ca\n")
+        self._extract(home, bundle, force=True)
+
+        assert ca.read_bytes() == b"live-ca\n"
+        assert ca.stat().st_ino == inode
+
 
 class TestBundledResourceFiles:
     """`bundled_resource_files` names the bundle files extraction rewrites.
