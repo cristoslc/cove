@@ -9,6 +9,12 @@ Per `~/.agents/agents-md-detail/test-driven-design.md` E2E Protocol:
   - single command: `pytest tests/` runs these by default (no -m flag needed)
   - shared build helper: session-scoped `_cove_artifact` builds wheel once
   - complete flow: init -> ops -> cleanup/idempotency covered in test_e2e_stateless.py
+
+Safety gate: tests that touch a real container carry `@pytest.mark.live` and
+are skipped unless `COVE_ALLOW_LIVE_TESTS` is set (see `live_tier_gate.py`).
+A pytest marker is a selection mechanism, not a safety mechanism; the gate and
+an autouse mutation guard ensure a bare `pytest` cannot reach the live stack
+(incident 20261018-015539).
 """
 
 from __future__ import annotations
@@ -25,6 +31,26 @@ import pytest
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+# Make the sibling gate module importable, then re-export its pytest hooks so
+# `@pytest.mark.live` tests skip and the mutation guard is installed for the
+# whole suite. See live_tier_gate.py for the rationale.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import live_tier_gate  # noqa: E402
+
+pytest_configure = live_tier_gate.pytest_configure
+pytest_collection_modifyitems = live_tier_gate.pytest_collection_modifyitems
+
+
+@pytest.fixture(autouse=True)
+def _guard_live_container_access(monkeypatch):
+    """Backstop: without the opt-in, a mutating docker command fails loudly
+    instead of reaching the live Docker daemon. Inherited by every test, so a
+    future container-touching test is protected even if it forgets the marker."""
+    if live_tier_gate.live_tests_allowed():
+        return
+    live_tier_gate.install_container_mutation_guard(monkeypatch)
 
 
 def _copy_cli_tree(repo: Path, dst: Path) -> None:

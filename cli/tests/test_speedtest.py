@@ -1092,12 +1092,18 @@ class TestAuthPosture:
         )
 
 
+@pytest.mark.live
 @pytest.mark.e2e
 @pytest.mark.staging
 class TestE2ESpeedtestStack:
-    """Integration tests requiring a live Cove stack with speedtest profile.
+    """Container-touching tests requiring a live Cove stack with speedtest profile.
 
-    Run with: pytest cli/tests/test_speedtest.py -m e2e
+    Skipped unless COVE_ALLOW_LIVE_TESTS=1 (see live_tier_gate.py). The
+    incident this gate closes was an unfiltered pytest, so this class MUST NOT
+    rely on the `-m` filter to stay out of a default run: it invokes the real
+    `cove speedtest up`.
+
+    Run with: COVE_ALLOW_LIVE_TESTS=1 pytest cli/tests/test_speedtest.py -m live
     """
 
     def test_speedtest_up_starts_container(self):

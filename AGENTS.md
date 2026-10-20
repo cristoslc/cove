@@ -75,11 +75,26 @@ The `cove` CLI is installed as a **uv tool** (`~/.local/bin/cove`) from a wheel 
 uv run --directory cli pytest -x -q -m "not e2e and not staging"
 ```
 
+The `-m` filter **selects** the tier; it is **not** what keeps the live stack
+safe. Any test that touches a real container or the running Cove stack carries
+`@pytest.mark.live` and is **skipped** unless `COVE_ALLOW_LIVE_TESTS` is set
+(see `cli/tests/live_tier_gate.py`, and the opt-in section below). A bare
+`uv run --directory cli pytest` with no filter therefore cannot mutate the live
+stack: the container-touching tests skip, and an autouse guard aborts on any
+mutating `docker` command from an un-opted-in test. Incident 20261018-015539 was
+exactly an unfiltered `pytest` that recreated the live stack; relying on the
+flag was the root defect.
+
 ## Test command (integration)
 
 ```
 uv run --directory cli pytest -x -q -m "e2e and not staging"
 ```
+
+These build the wheel once, install it into an isolated venv, and run the built
+binary against a temp `HOME` — sandboxed, no container access. Tests in this
+tier that reach the live stack or a real container are additionally marked
+`live` and need the opt-in below.
 
 ## Test command (staging)
 
@@ -88,6 +103,20 @@ uv run --directory cli pytest -x -q -m staging
 ```
 
 Invoked via `scripts/staging/e2e.sh` against the deployed staging stack.
+
+## Live / container-touching tests (opt-in)
+
+```
+COVE_ALLOW_LIVE_TESTS=1 uv run --directory cli pytest -m live
+```
+
+Tests marked `@pytest.mark.live` perform real container operations or read the
+live Cove stack (recreating containers, `docker exec`, HTTP/DoH against
+`127.0.0.1:443`). They **skip by default**, and the skip message names
+`COVE_ALLOW_LIVE_TESTS`. Set it to a truthy value (`1`, `true`, `yes`, `on`) only
+when you mean to operate on the live stack. Container-touching tests are marked
+`live` in addition to their tier marker (`e2e`/`staging`); add `live` to any new
+test that shells out to Docker.
 
 ## Test coverage matrix
 
