@@ -31,10 +31,14 @@ testpaths = ["tests"]
 # Tier 0 (unit/config): pytest -m "not e2e and not staging"
 # Tier 1 (integration): pytest -m "e2e and not staging"
 # Tier 2 (staging E2E): pytest -m staging
+# Live / container-touching: pytest -m live (SKIPS unless COVE_ALLOW_LIVE_TESTS
+#   is set; see tests/live_tier_gate.py). The `-m` filters SELECT a tier and are
+#   NOT a safety mechanism: a bare `pytest` must not touch the live stack.
 # All tiers:           pytest
 markers = [
     "e2e: integration tests that build+install the wheel and invoke the cove binary (tier 1)",
     "staging: E2E tests that require a live Cove stack deployed to staging (tier 2)",
+    "live: touches a real container or the running Cove stack; skipped unless COVE_ALLOW_LIVE_TESTS is set",
 ]
 
 
