@@ -974,9 +974,12 @@ class TestCLI:
 
         with patch("cove.litellm.subprocess.run", side_effect=fake_subprocess_run):
             with patch("cove.litellm._ensure_master_key", return_value="sk-test"):
-                with patch("cove.litellm._prepare_runtime_files"):
-                    runner = CliRunner()
-                    result = runner.invoke(litellm, ["up"])
+                with patch(
+                    "cove.litellm._ensure_ollama_key", return_value="ollama-test-key"
+                ):
+                    with patch("cove.litellm._prepare_runtime_files"):
+                        runner = CliRunner()
+                        result = runner.invoke(litellm, ["up"])
 
         assert result.exit_code == 0, f"cove litellm up failed: {result.output}"
         assert captured, "no subprocess call captured"
@@ -1019,8 +1022,11 @@ class TestCLI:
         with patch("cove.litellm.subprocess.run") as mock_run:
             mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
             with patch("cove.litellm._ensure_master_key", return_value="sk-test"):
-                with patch("cove.litellm._prepare_runtime_files"):
-                    result = CliRunner().invoke(litellm, ["up"])
+                with patch(
+                    "cove.litellm._ensure_ollama_key", return_value="ollama-test-key"
+                ):
+                    with patch("cove.litellm._prepare_runtime_files"):
+                        result = CliRunner().invoke(litellm, ["up"])
 
         assert result.exit_code == 0, result.output
         assert "litellm.cove.local/ui/" in result.output, (
@@ -1058,6 +1064,8 @@ def _fake_provision_run(*args, **kwargs):
     (the CLI resolves the secret via stdout), and succeeds for compose invocations.
     """
     import subprocess
+
+    from cove.litellm import OLLAMA_OP_REF
     argv = args[0] if args and isinstance(args[0], list) else []
     argv_str = " ".join(str(a) for a in argv)
     if "creds" in argv_str and "vault-put" in argv_str:
@@ -1068,6 +1076,10 @@ def _fake_provision_run(*args, **kwargs):
             return subprocess.CompletedProcess(argv, 0, stdout="admin@cove.local")
         if "Cove Admin" in argv_str and "password" in argv_str:
             return subprocess.CompletedProcess(argv, 0, stdout="breeze-canyon-garden-quartz")
+        if OLLAMA_OP_REF in argv_str:
+            # The Ollama provider key is already cached in Vault (its steady
+            # state after the first pull), so up() must not re-fetch.
+            return subprocess.CompletedProcess(argv, 0, stdout="ollama-key-from-cache")
         return subprocess.CompletedProcess(argv, 2, stdout="")  # not cached
     return subprocess.CompletedProcess(argv, 0, stdout="")
 
@@ -1276,6 +1288,151 @@ class TestMasterKeyAutoGen:
         content = env_file.read_text()
         assert content.count("LITELLM_MASTER_KEY=") == 1, (
             f".env must not get a duplicate LITELLM_MASTER_KEY line, got: {content}"
+        )
+
+
+class TestOllamaKeySourcing:
+    """OLLAMA_API_KEY must be code-managed: sourced from 1Password on every
+    `litellm up`, with the compose .env as a write-only projection.
+
+    Regression coverage for the 2026-10-20 incident: a hand-added
+    OLLAMA_API_KEY line in the compose .env went stale and was served to the
+    proxy while 1Password held the current key. Unlike the master key, the
+    .env value is NEVER reused, and there is no generate fallback — the key
+    already exists in 1Password, so a missing item fails loud."""
+
+    def _patch(self, monkeypatch, tmp_path):
+        import cove.litellm as ll
+
+        monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
+        env_file = tmp_path / ".env"
+        monkeypatch.setattr(ll, "_compose_env_path", lambda: env_file)
+        return env_file
+
+    def test_explicit_env_wins_and_is_upserted(self, monkeypatch, tmp_path):
+        import cove.litellm as ll
+
+        env_file = self._patch(monkeypatch, tmp_path)
+        env_file.write_text("OLLAMA_API_KEY=stale-from-previous-run\n")
+        monkeypatch.setenv("OLLAMA_API_KEY", "explicit-key")
+        vault_get_calls = []
+        vault_put_calls = []
+        monkeypatch.setattr(ll, "_vault_get", lambda ref: vault_get_calls.append(ref))
+        monkeypatch.setattr(ll, "_vault_put", lambda ref: vault_put_calls.append(ref))
+
+        value = ll._ensure_ollama_key()
+
+        assert value == "explicit-key"
+        assert "OLLAMA_API_KEY=explicit-key" in env_file.read_text()
+        assert vault_get_calls == [], "explicit env must short-circuit before Vault"
+        assert vault_put_calls == [], "explicit env must not trigger a fetch"
+
+    def test_vault_cache_hit_upserts_without_vault_put(self, monkeypatch, tmp_path):
+        import cove.litellm as ll
+
+        env_file = self._patch(monkeypatch, tmp_path)
+        monkeypatch.setattr(ll, "_vault_get", lambda ref: "cached-ollama-key")
+
+        with patch("cove.litellm._vault_put") as mock_put:
+            value = ll._ensure_ollama_key()
+
+        assert value == "cached-ollama-key"
+        assert "OLLAMA_API_KEY=cached-ollama-key" in env_file.read_text()
+        assert mock_put.call_count == 0, "cache hit must not trigger vault-put"
+
+    def test_cache_miss_fetches_exactly_once(self, monkeypatch, tmp_path):
+        import cove.litellm as ll
+
+        env_file = self._patch(monkeypatch, tmp_path)
+        monkeypatch.setattr(ll, "_vault_get", lambda ref: None)
+        expected_ref = ll.OLLAMA_OP_REF
+
+        with patch("cove.litellm._vault_put", return_value="fresh-key") as mock_put:
+            value = ll._ensure_ollama_key()
+
+        assert value == "fresh-key"
+        assert mock_put.call_count == 1, "cache miss must fetch exactly once"
+        assert mock_put.call_args.args[0] == expected_ref, (
+            f"vault-put must receive the resolved op_ref, got: {mock_put.call_args}"
+        )
+        assert "OLLAMA_API_KEY=fresh-key" in env_file.read_text()
+
+    def test_fetch_failure_and_empty_value_raise(self, monkeypatch, tmp_path):
+        """Fail loud: a failed or empty fetch must raise, naming the missing
+        1Password item and pointing at `cove creds batch-pull` — never fall
+        back to generating a key or reusing the .env value."""
+        import cove.litellm as ll
+        import click
+
+        env_file = self._patch(monkeypatch, tmp_path)
+        monkeypatch.setattr(ll, "_vault_get", lambda ref: None)
+        expected_ref = ll.OLLAMA_OP_REF
+
+        with patch(
+            "cove.litellm._vault_put",
+            side_effect=click.ClickException("op failed"),
+        ):
+            with pytest.raises(click.ClickException) as err:
+                ll._ensure_ollama_key()
+        message = str(err.value)
+        assert "OLLAMA_API_KEY" in message
+        assert expected_ref in message, "error must name the missing 1Password item"
+        assert "cove creds batch-pull" in message
+
+        with patch("cove.litellm._vault_put", return_value=""):
+            with pytest.raises(click.ClickException, match="OLLAMA_API_KEY"):
+                ll._ensure_ollama_key()
+        assert not env_file.exists() or "OLLAMA_API_KEY=" not in env_file.read_text(), (
+            "a failed fetch must not upsert anything into the .env"
+        )
+
+    def test_stale_env_line_is_overwritten_never_reused(self, monkeypatch, tmp_path):
+        """Incident regression: a stale hand-added OLLAMA_API_KEY= line in the
+        .env must be OVERWRITTEN from Vault, never reused as the value."""
+        import cove.litellm as ll
+
+        env_file = self._patch(monkeypatch, tmp_path)
+        env_file.write_text(
+            "LITELLM_MASTER_KEY=sk-keep\nOLLAMA_API_KEY=stale-incident-key\n"
+        )
+        monkeypatch.setattr(ll, "_vault_get", lambda ref: "current-key")
+
+        value = ll._ensure_ollama_key()
+
+        assert value == "current-key", "the .env value must never be returned"
+        content = env_file.read_text()
+        assert content.count("OLLAMA_API_KEY=") == 1
+        assert "OLLAMA_API_KEY=stale-incident-key" not in content, (
+            "the stale .env value must be overwritten, not reused"
+        )
+        assert "OLLAMA_API_KEY=current-key" in content
+        assert "LITELLM_MASTER_KEY=sk-keep" in content, "other .env lines must survive"
+
+    def test_op_refs_contains_ollama_entry(self):
+        from cove.creds import OP_REFS
+        from cove.litellm import OLLAMA_OP_REF
+
+        assert "ollama" in OP_REFS, (
+            "OP_REFS must include the ollama ref so batch-pull caches it"
+        )
+        ref = OP_REFS["ollama"]
+        assert ref.startswith("op://"), f"not an op_ref: {ref}"
+        assert ref == OLLAMA_OP_REF, (
+            f"OP_REFS entry must agree with litellm.OLLAMA_OP_REF: "
+            f"{ref!r} vs {OLLAMA_OP_REF!r}"
+        )
+
+    def test_up_calls_ensure_ollama_key_after_master_key(self):
+        """Call-site contract: `up` resolves the Ollama key immediately after
+        the master key and before runtime files are prepared."""
+        source = (PROJECT_ROOT / "cli" / "cove" / "litellm.py").read_text()
+        up_body = source[source.index("def up():"):]
+        master_idx = up_body.index("_ensure_master_key()")
+        ollama_idx = up_body.index("_ensure_ollama_key()")
+        prepare_idx = up_body.index("_prepare_runtime_files()")
+        assert master_idx < ollama_idx < prepare_idx, (
+            "up must call _ensure_ollama_key() after _ensure_master_key() "
+            "and before _prepare_runtime_files()"
         )
 
 
