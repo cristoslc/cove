@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,85 @@ import pytest
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+
+def _copy_cli_tree(repo: Path, dst: Path) -> None:
+    """Copy `cli/` and `compose/` into an isolated build tree.
+
+    Skips the local venv, build/dist outputs, bytecode caches, and the
+    gitignored in-tree `cove/resources/compose/` artifact so a build here never
+    reads or mutates the working tree's copy.
+    """
+    skip_dirs = {".venv", "venv", "build", "dist", "__pycache__", ".pytest_cache"}
+    artifact = Path("cove") / "resources" / "compose"
+
+    def _ignore(dirpath, names):
+        here = Path(dirpath)
+        rel = here.relative_to(repo)
+        ignored = []
+        for name in names:
+            if name in skip_dirs:
+                ignored.append(name)
+            elif name.endswith(".egg-info"):
+                ignored.append(name)
+            elif (rel / name).as_posix() == artifact.as_posix():
+                ignored.append(name)
+        return ignored
+
+    for sub in ("cli", "compose"):
+        shutil.copytree(
+            repo / sub, dst / sub, ignore=_ignore, symlinks=True
+        )
+
+
+def _build_wheel(cli_dir: Path, out_dir: Path) -> Path:
+    """Build the wheel for `cli_dir` into `out_dir`; fail loudly on error."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    proc = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(out_dir)],
+        cwd=str(cli_dir),
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        pytest.fail(f"`uv build` failed:\n{proc.stderr}\n{proc.stdout}")
+    wheels = sorted(out_dir.glob("cove_cli-*.whl"))
+    assert wheels, f"no wheel produced in {out_dir}"
+    return wheels[-1]
+
+
+def _wheel_compose_files(wheel: Path) -> dict[str, bytes]:
+    """Map relpath -> bytes for `cove/resources/compose/` inside the wheel."""
+    prefix = "cove/resources/compose/"
+    files: dict[str, bytes] = {}
+    with zipfile.ZipFile(wheel) as zf:
+        for name in zf.namelist():
+            if name.startswith(prefix) and not name.endswith("/"):
+                files[name[len(prefix):]] = zf.read(name)
+    return files
+
+
+@pytest.fixture(scope="session")
+def bundled_compose(tmp_path_factory) -> dict[str, bytes]:
+    """The checked-in `compose/` tree as packaged into a freshly built wheel.
+
+    The wheel is the deploy artifact (`cove up` / `cove update` extract
+    `~/.config/cove/compose/` from it), so this is the authoritative view of
+    what actually ships. Built in an isolated copy of the repo: the gitignored
+    in-tree artifact (`cli/cove/resources/compose/`) is neither read nor
+    mutated, so a stale local copy cannot fail the drift guards and a real
+    packaging gap still can.
+    """
+    repo = _repo_root()
+    if not (repo / "cli" / "pyproject.toml").exists():
+        pytest.skip(f"cli/ not found under {repo}")
+
+    work = tmp_path_factory.mktemp("cove-bundle")
+    tree = work / "src"
+    tree.mkdir()
+    _copy_cli_tree(repo, tree)
+    wheel = _build_wheel(tree / "cli", work / "wheels")
+    return _wheel_compose_files(wheel)
 
 
 @pytest.fixture(scope="session")
