@@ -61,6 +61,13 @@ def isolated_compose_resources(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
     monkeypatch.setattr(cove.cli, "ensure_init", lambda: compose_dir)
     monkeypatch.setattr(cove.cli, "maybe_reextract", lambda: False)
+    # The compose-source guard (cove.stateless.ensure_compose_source_ready)
+    # refuses a compose dir whose effective data roots are empty; these
+    # tests build bare tmp compose dirs, so give them a data root. Guard
+    # behavior itself is covered in test_compose_source_guards.py.
+    data_root = str(tmp_path / "cove-data")
+    monkeypatch.setenv("COVE_DATA_ROOT", data_root)
+    monkeypatch.setenv("FORGEJO_DATA_ROOT", data_root)
     return compose_dir
 
 import cove.cli
@@ -77,6 +84,20 @@ def _invoke_callback(command: str, **kwargs) -> object:
     callback = getattr(cove.cli, command).callback
     assert callback is not None, f"command {command!r} has no callback"
     return callback(**kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _compose_source_env(monkeypatch):
+    """Model a realistic compose source for `down`/`uninstall` tests.
+
+    The compose-source guard (cove.stateless.ensure_compose_source_ready)
+    refuses a compose dir whose effective data roots are empty, and these tests
+    build bare tmp compose dirs. The guard's own behavior is covered in
+    test_compose_source_guards.py.
+    """
+    data_root = "/tmp/cove-test-data-root"
+    monkeypatch.setenv("COVE_DATA_ROOT", data_root)
+    monkeypatch.setenv("FORGEJO_DATA_ROOT", data_root)
 
 
 class TestDeploymentManifests:

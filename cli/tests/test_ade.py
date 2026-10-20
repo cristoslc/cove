@@ -45,9 +45,19 @@ TEMPLATE_VARS = {
 
 
 @pytest.fixture(autouse=True)
-def _pin_compose_dir(monkeypatch):
-    """Pin COVE_COMPOSE_DIR so CLI tests don't shell out to git to resolve it."""
+def _pin_compose_dir(monkeypatch, tmp_path):
+    """Pin COVE_COMPOSE_DIR so CLI tests don't shell out to git to resolve it.
+
+    Also pins COVE_DATA_ROOT and sets the foreign-data-root override: the
+    compose-source guard (cove.stateless.ensure_compose_source_ready) refuses a
+    compose dir whose effective COVE_DATA_ROOT is empty, and these tests pair
+    the repo compose dir (project name `cove`) with a temp data root. The
+    guard's own behavior is covered in test_compose_source_guards.py.
+    """
     monkeypatch.setenv("COVE_COMPOSE_DIR", str(COMPOSE_DIR))
+    monkeypatch.setenv("COVE_DATA_ROOT", str(tmp_path / "cove-data"))
+    monkeypatch.setenv("FORGEJO_DATA_ROOT", str(tmp_path / "cove-data"))
+    monkeypatch.setenv("COVE_ALLOW_FOREIGN_DATA_ROOT", "1")
 
 
 def _load_compose() -> dict:

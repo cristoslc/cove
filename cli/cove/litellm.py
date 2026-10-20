@@ -9,7 +9,7 @@ from pathlib import Path
 import click
 
 from cove.constants import NGINX_HTTPS_PORT
-from cove.stateless import resolve_compose_dir
+from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
 
 
 LITELLM_URL = "https://litellm.cove.local/"
@@ -250,6 +250,7 @@ def litellm():
 @litellm.command()
 def up():
     """Start the LiteLLM proxy and Headroom sidecar."""
+    ensure_compose_source_ready(resolve_compose_dir())
     _ensure_master_key()
     _prepare_runtime_files()
     click.echo("Starting LiteLLM proxy...")
@@ -260,6 +261,7 @@ def up():
 @litellm.command()
 def down():
     """Stop the LiteLLM proxy and Headroom sidecar."""
+    ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping LiteLLM proxy...")
     subprocess.run(_compose_cmd("stop", "litellm", "headroom"), check=True)
     click.echo("LiteLLM proxy stopped.")
