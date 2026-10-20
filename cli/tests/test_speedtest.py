@@ -41,9 +41,6 @@ def _project_root() -> Path:
 PROJECT_ROOT = _project_root()
 COMPOSE_DIR = PROJECT_ROOT / "compose"
 NGINX_DIR = COMPOSE_DIR / "nginx"
-RESOURCES_COMPOSE_DIR = (
-    PROJECT_ROOT / "cli" / "cove" / "resources" / "compose"
-)
 
 MINIMAL_TEMPLATE_VARS = {
     "ansible_hostname": "testhost",
@@ -1010,18 +1007,14 @@ class TestStatusOptionalServices:
 
 class TestResourcesSync:
     """Validate the bundled compose resources reflect the compose/ source
-    (integrity/drift guard). The resources dir is a build artifact synced via
-    cli/scripts/sync_compose_resources.py."""
+    (integrity/drift guard). The bundled copy is a build artifact synced via
+    cli/scripts/sync_compose_resources.py before every wheel build — the wheel
+    is the deploy artifact (`cove up`/`cove update` extract from it), so that
+    is what we compare against, never the stale gitignored copy on disk."""
 
-    def test_resources_tree_in_sync(self):
-        """SHA-256 of the synced resources tree must match compose/ for the
-        speedtest additions (exclude rendered + PII files, same rules as the
-        sync script)."""
-        if not RESOURCES_COMPOSE_DIR.is_dir():
-            pytest.fail(
-                "cli/cove/resources/compose/ missing — run "
-                "python3 cli/scripts/sync_compose_resources.py"
-            )
+    def test_resources_tree_in_sync(self, bundled_compose):
+        """The built wheel must carry the speedtest additions byte-identical to
+        compose/ (exclude rendered + PII files, same rules as the sync script)."""
         excluded_names = {".env", "default.conf", "cove.conf"}
         for rel in [
             "docker-compose.yml",
@@ -1030,14 +1023,13 @@ class TestResourcesSync:
             "nginx/landing.html",
         ]:
             src = COMPOSE_DIR / rel
-            dst = RESOURCES_COMPOSE_DIR / rel
             if src.name in excluded_names:
                 continue
-            assert dst.exists(), (
-                f"bundled resources missing {rel} — run sync_compose_resources.py"
+            assert rel in bundled_compose, (
+                f"bundled resources missing {rel} — wheel packaging gap"
             )
-            assert src.read_bytes() == dst.read_bytes(), (
-                f"bundled resources out of sync for {rel} — run sync_compose_resources.py"
+            assert src.read_bytes() == bundled_compose[rel], (
+                f"bundled resources out of sync for {rel}"
             )
 
 

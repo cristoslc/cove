@@ -13,7 +13,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import pytest
 import yaml
 
 
@@ -28,9 +27,6 @@ def _project_root() -> Path:
 
 PROJECT_ROOT = _project_root()
 COMPOSE_DIR = PROJECT_ROOT / "compose"
-RESOURCES_COMPOSE_DIR = (
-    PROJECT_ROOT / "cli" / "cove" / "resources" / "compose"
-)
 
 
 def _load_compose() -> dict:
@@ -491,15 +487,12 @@ class TestStatusOptionalServices:
 
 class TestResourcesSync:
     """Validate the bundled compose resources reflect the compose/ source
-    (integrity/drift guard). The resources dir is a build artifact synced via
-    cli/scripts/sync_compose_resources.py."""
+    (integrity/drift guard). The bundled copy is a build artifact synced via
+    cli/scripts/sync_compose_resources.py before every wheel build — the wheel
+    is the deploy artifact (`cove up`/`cove update` extract from it), so that
+    is what we compare against, never the stale gitignored copy on disk."""
 
-    def test_resources_tree_in_sync(self):
-        if not RESOURCES_COMPOSE_DIR.is_dir():
-            pytest.skip(
-                "cli/cove/resources/compose/ missing — run "
-                "python3 cli/scripts/sync_compose_resources.py"
-            )
+    def test_resources_tree_in_sync(self, bundled_compose):
         excluded_names = {".env", "default.conf", "cove.conf"}
         for rel in [
             "docker-compose.yml",
@@ -507,15 +500,13 @@ class TestResourcesSync:
             "provision_forgejo.yml",
         ]:
             src = COMPOSE_DIR / rel
-            dst = RESOURCES_COMPOSE_DIR / rel
             if src.name in excluded_names:
                 continue
-            if not dst.exists():
-                pytest.fail(
-                    f"bundled resources missing {rel} — run sync_compose_resources.py"
-                )
-            assert src.read_bytes() == dst.read_bytes(), (
-                f"bundled resources out of sync for {rel} — run sync_compose_resources.py"
+            assert rel in bundled_compose, (
+                f"bundled resources missing {rel} — wheel packaging gap"
+            )
+            assert src.read_bytes() == bundled_compose[rel], (
+                f"bundled resources out of sync for {rel}"
             )
 
 
