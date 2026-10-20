@@ -30,8 +30,10 @@ from cove.project import (
 )
 from cove.stateless import (
     resolve_compose_dir, extract_resources, ensure_init, maybe_reextract,
-    bundled_resource_files, compose_resource_dir, bundle_is_current,
+    changed_resource_files, compose_resource_dir, bundle_is_current,
 )
+from cove.constants import VAULT_CONTAINER_NAME
+from cove.vault_unseal import ensure_unsealed
 from cove.state import ensure_host_vars
 
 
@@ -77,21 +79,21 @@ def _container_bind_sources(container: str) -> list[Path]:
     return [Path(line) for line in result.stdout.splitlines() if line.strip()]
 
 
-def _restart_stale_bind_containers(compose_dir: Path, rebuilt: frozenset[str]) -> None:
-    """Restart running Cove containers whose bind sources extraction just
-    rewrote.
+def _restart_stale_bind_containers(compose_dir: Path, rebuilt: frozenset[str]) -> list[str]:
+    """Restart running Cove containers whose bind sources extraction replaced.
 
-    `cove up` re-extracts the bundled compose resources, which prunes and
-    re-copies every bind-mounted file, giving each a fresh inode even when its
-    bytes are unchanged. A running container keeps the old (now-deleted) inode
-    — e.g. nginx serves a stale /landing.html and 404s — until it restarts.
-    Restart ONLY the containers that actually bind a rebuilt file: a whole-stack
-    restart or an unconditional nginx restart would blip healthy services for
-    no reason.
-    """
+    Extraction replaces a bind-mounted file only when its content (or mode)
+    changed; a container holding the old unlinked inode serves stale content
+    (e.g. nginx 404ing /landing.html) until it restarts. Restart ONLY the
+    containers that bind a replaced file: a whole-stack restart would blip
+    healthy services for no reason.
+
+    Returns the restarted container names so the caller can heal services whose
+    restart has a side effect (Vault starts sealed)."""
     if not rebuilt:
-        return
+        return []
     rebuilt_abs = {(compose_dir / rel).resolve() for rel in rebuilt}
+    restarted: list[str] = []
     for container in _running_compose_containers():
         sources = {p.resolve() for p in _container_bind_sources(container)}
         if not (sources & rebuilt_abs):
@@ -100,7 +102,9 @@ def _restart_stale_bind_containers(compose_dir: Path, rebuilt: frozenset[str]) -
             ["docker", "restart", container],
             capture_output=True, text=True, timeout=120, check=False,
         )
+        restarted.append(container)
         click.echo(f"  restarted {container} (rebuilt bind-mounted files)")
+    return restarted
 
 
 def _start_optional_services() -> None:
@@ -256,12 +260,11 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
 
         cove up --log
     """
-    # Re-extraction rewrites every bind-mounted bundled file with a fresh
-    # inode; a running container keeps the stale (deleted) inode until it
-    # restarts (e.g. nginx serves a stale /landing.html and 404s — 2026-10-19
-    # sev-2). Detect a stale bundle BEFORE the extract calls, then restart only
-    # the affected running containers after bringup.
-    resources_rebuilt = not bundle_is_current()
+    # Re-extraction only changes an inode for a file whose CONTENT changed
+    # (unchanged files are overwritten in place). Those are the only files that
+    # can leave a running container with a stale, unlinked bind, so only they
+    # may trigger a restart (2026-10-19 stale-inode sev-2).
+    changed = changed_resource_files() if not bundle_is_current() else frozenset()
     if not no_upgrade:
         maybe_reextract()
     ensure_init()
@@ -355,13 +358,25 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
 
     _run_ansible(bringup, "Bringing up containers...")
 
-    if resources_rebuilt:
-        # Re-extraction replaced bind-mounted files' inodes; restart only the
-        # running containers that bind them (bringup already restarted nginx
-        # via the 'Reload nginx' handler when IT render, which overlaps).
-        _restart_stale_bind_containers(
-            compose_resource_dir(), bundled_resource_files()
+    if changed:
+        # Re-extraction replaced these files' inodes; restart only the running
+        # containers that bind one (bringup's 'Reload nginx' handler covers
+        # Ansible-rendered configs, not bundle extraction).
+        restarted = _restart_stale_bind_containers(
+            compose_resource_dir(), changed
         )
+        if VAULT_CONTAINER_NAME in restarted:
+            # Vault reads vault.hcl only at startup, so a genuine config change
+            # requires this restart — and Vault then comes up SEALED. Heal it
+            # here, unconditionally: `cove update` converges via
+            # `cove up --no-provision`, which never runs bootstrap_vault.yml.
+            try:
+                ensure_unsealed()
+            except RuntimeError as exc:
+                raise click.ClickException(
+                    "Vault was restarted (its config changed) and could not be "
+                    f"unsealed automatically: {exc}"
+                ) from exc
 
     if not no_provision:
         _run_ansible(compose_dir / "bootstrap_vault.yml", "Bootstrapping Vault...")

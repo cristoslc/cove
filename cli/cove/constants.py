@@ -6,3 +6,4 @@ suppression or logging reconfiguration in the importing module.
 
 NGINX_HTTPS_PORT = 443
 NGINX_HTTP_PORT = 8080
+VAULT_CONTAINER_NAME = "cove-vault"
