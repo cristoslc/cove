@@ -1503,6 +1503,87 @@ class TestProgressiveDisclosure:
         assert "# Existing Project" in agents_text
 
 
+class TestUpRestartsStaleBinds:
+    """Regression (2026-10-19 sev-2): `cove up` re-extracts bundled compose
+    resources, which prunes-and-recopies every bind-mounted file, giving each a
+    NEW inode even when its bytes are unchanged. A running container keeps the
+    old (deleted) inode, so e.g. /landing.html 404s. `cove up` must restart
+    exactly the running containers that bind a rebuilt file — never the whole
+    stack, and never a container whose binds are untouched."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_installed_resources(self, isolated_compose_resources):
+        return isolated_compose_resources
+
+    def _run_up_with(self, tmp_path, restarts, *, bundle_current):
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+
+        home = tmp_path / "home"
+        compose_dir = home / ".config" / "cove" / "compose"
+        data_root = home / "Documents" / "cove-data"
+
+        def _fake_run(cmd, *a, **k):
+            class _R:
+                returncode = 0
+                stderr = ""
+                stdout = ""
+            r = _R()
+            if cmd[:2] == ["docker", "ps"]:
+                r.stdout = "cove-nginx\ncove-vault\ncove-dnsmasq\ncove-forgejo\n"
+            elif cmd[:2] == ["docker", "inspect"]:
+                mounts = {
+                    "cove-nginx": [
+                        compose_dir / "nginx" / "landing.html",
+                        data_root / "nginx" / "config.html",
+                    ],
+                    "cove-vault": [compose_dir / "vault" / "vault.hcl"],
+                    "cove-dnsmasq": [data_root / "dnsmasq" / "cove.conf"],
+                    "cove-forgejo": [data_root / "forgejo" / "gitea"],
+                }[cmd[2]]
+                r.stdout = "".join(f"{m}\n" for m in mounts)
+            elif cmd[:2] == ["docker", "restart"]:
+                restarts.append(list(cmd))
+            return r
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch.object(
+            cove.cli.Path, "home", classmethod(lambda cls: home)
+        ), patch("cove.cli.subprocess.run", side_effect=_fake_run), patch(
+            "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
+        ), patch("cove.cli.bundle_is_current", return_value=bundle_current), patch(
+            "cove.cli.bundled_resource_files",
+            return_value=frozenset({"nginx/landing.html", "vault/vault.hcl"}),
+        ), patch("cove.status.check_all", return_value=[]), patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch("cove.cli.getpass.getpass", return_value="secret"):
+            _invoke_callback(
+                "up", no_provision=True, no_upgrade=False, all_=False, log=False
+            )
+
+    def test_restarts_only_containers_binding_rebuilt_files(
+        self, tmp_path, _fake_ansible_popen
+    ):
+        restarts: list = []
+        self._run_up_with(tmp_path, restarts, bundle_current=False)
+        restarted = {c[2] for c in restarts}
+        assert restarted == {"cove-nginx", "cove-vault"}, (
+            "only running containers whose bind sources were rebuilt must be "
+            f"restarted, got: {restarts}"
+        )
+
+    def test_no_restart_when_bundle_already_current(
+        self, tmp_path, _fake_ansible_popen
+    ):
+        restarts: list = []
+        self._run_up_with(tmp_path, restarts, bundle_current=True)
+        assert restarts == [], (
+            "the deployed bundle already matched, so extraction did not run and "
+            "no container's bind inode changed"
+        )
+
+
 class TestNoUpgradeFlag:
     @pytest.fixture(autouse=True)
     def _isolate_installed_resources(self, isolated_compose_resources):
