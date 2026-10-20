@@ -308,6 +308,50 @@ class TestNginxConfig:
         )
 
 
+class TestLandingCardLinksAdminConsole:
+    """The landing page's LiteLLM card MUST deep-link the admin console
+    (`/ui/`), not the API root. The API root serves Swagger UI, which renders
+    as an empty Models/Endpoints list — the exact confusion the operator
+    reported. The console is the human-facing surface; the API base is the
+    programmatic one, and nothing about the card should point a human at the
+    raw API root."""
+
+    def _landing(self) -> str:
+        return (NGINX_DIR / "landing.html").read_text()
+
+    def test_litellm_card_links_console_not_api_root(self):
+        content = self._landing()
+        assert 'href="https://litellm.cove.local/ui/"' in content, (
+            "LiteLLM landing card must link the admin console at "
+            "https://litellm.cove.local/ui/"
+        )
+        assert 'href="https://litellm.cove.local/"' not in content, (
+            "LiteLLM landing card must NOT link the API root — it serves "
+            "Swagger UI and reads as an empty endpoint list"
+        )
+
+    def test_litellm_card_url_text_names_the_console_path(self):
+        """The visible card-url text must name the console path so the card
+        states where it lands (LiteLLM's root is not its UI, unlike the other
+        service cards)."""
+        content = self._landing()
+        card = content[content.index('id="litellm"') :]
+        card = card[: card.index("</a>")]
+        assert "litellm.cove.local/ui" in card, (
+            "LiteLLM card's visible card-url text must include the /ui path"
+        )
+
+    def test_only_the_litellm_card_changed(self):
+        """Guard against over-reach: the other four cards keep their existing
+        root hrefs (Forgejo and Speedtest roots are their UIs; Vault's root
+        307s to /ui/ on its own; Pages is a separate, tracked concern)."""
+        content = self._landing()
+        for host in ("git.cove.local", "vault.cove.local", "speedtest.cove.local"):
+            assert f'href="https://{host}/"' in content, (
+                f"{host} card must be left alone by this change"
+            )
+
+
 class TestNginxRouteWhitelist:
     """Verify the nginx route whitelist is correct: only /health, /v1/models,
     and /v1/* are proxied; everything else returns 403."""
@@ -960,6 +1004,41 @@ class TestCLI:
         source = (PROJECT_ROOT / "cli" / "cove" / "litellm.py").read_text()
         assert "litellm.cove" in source, (
             "cove litellm status must check through nginx with Host: litellm.cove"
+        )
+
+    def test_up_message_points_at_console_not_api_root(self):
+        """`cove litellm up` must not name the bare host as the place to go.
+        The bare host serves Swagger UI (an empty endpoint list to a human);
+        the console is the human surface. The success message must say so.
+
+        LITELLM_URL stays the API base (the API root is correct for API use,
+        and the test suite pins it) — only the user-facing echo changes."""
+        from click.testing import CliRunner
+        from cove.litellm import litellm
+
+        with patch("cove.litellm.subprocess.run") as mock_run:
+            mock_run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+            with patch("cove.litellm._ensure_master_key", return_value="sk-test"):
+                with patch("cove.litellm._prepare_runtime_files"):
+                    result = CliRunner().invoke(litellm, ["up"])
+
+        assert result.exit_code == 0, result.output
+        assert "litellm.cove.local/ui/" in result.output, (
+            f"`cove litellm up` must name the admin console; got: {result.output!r}"
+        )
+        assert "https://litellm.cove/" not in result.output, (
+            "`cove litellm up` must not advertise the bare host (Swagger UI); "
+            f"got: {result.output!r}"
+        )
+
+    def test_litellm_url_still_names_the_api_base(self):
+        """The API base constant is deliberately the root: it is the API
+        surface, not the console. This pins the constraint alongside the
+        message test so the two cannot drift into each other."""
+        import cove.litellm as ll
+
+        assert ll.LITELLM_URL == "https://litellm.cove.local/", (
+            "LITELLM_URL names the API base and must stay the root URL"
         )
 
 

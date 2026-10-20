@@ -286,6 +286,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "landing page LiteLLM card links the admin console (/ui/), not the API root"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
   - path: "forgejo webhook ALLOWED_HOST_LIST compose default (loopback)"
     blast_radius: medium
     coverage:
