@@ -215,14 +215,70 @@ def _remove_tree_entry(parent_fd: int, name: str) -> None:
     os.rmdir(name, dir_fd=parent_fd)
 
 
-def _prune_for_extraction(target: Path) -> None:
-    """Remove stale resources while retaining runtime files and their inodes."""
+def _file_matches_bundle(
+    directory_fd: int, name: str, relative: str, src_root: Path
+) -> bool:
+    """True when the deployed entry is a regular file byte-identical (and
+    mode-identical) to the bundle's copy at the same relative path.
+
+    Used to skip pruning entries extraction would otherwise delete and re-copy:
+    deletion is what forces a new inode, and a new inode under a running
+    container's file bind is a stale (unlinked) mount. Never follows a symlink
+    and never blocks on a special file — any such entry reports False and takes
+    the normal remove-and-recopy path."""
+    source = src_root / relative
+    try:
+        source_stat = source.lstat()
+    except OSError:
+        return False
+    if not stat.S_ISREG(source_stat.st_mode):
+        return False
+
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        return False
+    try:
+        fd = os.open(
+            name,
+            os.O_RDONLY | nofollow | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=directory_fd,
+        )
+    except OSError:
+        return False
+    try:
+        deployed_stat = os.fstat(fd)
+        if not stat.S_ISREG(deployed_stat.st_mode):
+            return False
+        if stat.S_IMODE(deployed_stat.st_mode) != stat.S_IMODE(source_stat.st_mode):
+            return False
+        if deployed_stat.st_size != source_stat.st_size:
+            return False
+        with os.fdopen(fd, "rb") as stream:
+            fd = -1
+            deployed = stream.read()
+    finally:
+        if fd != -1:
+            os.close(fd)
+    try:
+        return deployed == source.read_bytes()
+    except OSError:
+        return False
+
+
+def _prune_for_extraction(target: Path, src_root: Path) -> None:
+    """Remove stale resources while retaining runtime files and their inodes.
+
+    An entry whose content already matches the bundle is *not* stale: it is left
+    in place so `_copy_resource` overwrites it in place (same inode). Deleting it
+    would give it a fresh inode, which a running container's file bind would not
+    see (2026-10-19 stale-inode/sealed-vault class)."""
     nofollow = getattr(os, "O_NOFOLLOW", 0)
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | nofollow
     root_fd = _open_compose_directory(target)
     if root_fd is None:
         return
     preserved = set(RUNTIME_PRESERVED_FILES)
+    source_root = Path(str(src_root))
 
     def prune(directory_fd: int, prefix: str = "") -> None:
         for name in os.listdir(directory_fd):
@@ -235,6 +291,24 @@ def _prune_for_extraction(target: Path) -> None:
                     prune(child_fd, relative)
                 finally:
                     os.close(child_fd)
+                continue
+            # Recurse into real directories instead of removing them wholesale:
+            # their unchanged files must keep their inodes. The directory is
+            # removed only if nothing was kept.
+            try:
+                child_fd = os.open(name, flags, dir_fd=directory_fd)
+            except OSError:
+                child_fd = None
+            if child_fd is not None:
+                try:
+                    prune(child_fd, relative)
+                    remaining = os.listdir(child_fd)
+                finally:
+                    os.close(child_fd)
+                if not remaining:
+                    os.rmdir(name, dir_fd=directory_fd)
+                continue
+            if _file_matches_bundle(directory_fd, name, relative, source_root):
                 continue
             _remove_tree_entry(directory_fd, name)
 
@@ -357,7 +431,7 @@ def extract_resources(force: bool = False) -> Path:
         for relative_path in RUNTIME_PRESERVED_FILES:
             _read_runtime_file(target, relative_path)
         _invalidate_version_file(target)
-        _prune_for_extraction(target)
+        _prune_for_extraction(target, Path(str(src_root)))
     else:
         target_fd = _open_compose_directory(target, create=True)
         assert target_fd is not None
@@ -387,13 +461,12 @@ def _copy_resource(src, dst: Path, relative: Path | None = None) -> None:
 
 
 def bundled_resource_files() -> frozenset[str]:
-    """Bundle-relative paths of every file extraction would (re)write.
+    """Bundle-relative paths of every file extraction may write.
 
-    Extraction prunes then re-copies each of these, giving it a NEW inode even
-    when its bytes are unchanged. Any running container binding one of them
-    ends up holding a stale (deleted) inode, so `cove up` restarts exactly the
-    containers whose bind sources appear here. Mirrors `_copy_resource`'s
-    exclusions (runtime-preserved files and `.version`)."""
+    Mirrors `_copy_resource`'s exclusions (runtime-preserved files and
+    `.version`). This is the *universe* of bindable bundle files; use
+    `changed_resource_files()` to learn which ones extraction will actually
+    replace (only those change an inode)."""
     root = _bundled_compose_root()
     root_path = Path(str(root))
     if not root_path.is_dir():
@@ -409,6 +482,45 @@ def bundled_resource_files() -> frozenset[str]:
     return frozenset(files)
 
 
+def changed_resource_files() -> frozenset[str]:
+    """Bundle files whose deployed copy extraction would actually replace.
+
+    A file is "changed" when it is missing, differs in content, or differs in
+    mode. Content-identical files are left in place by
+    `_prune_for_extraction`, keeping their inode, so they cannot invalidate a
+    running container's bind. Only this set may trigger a container restart.
+
+    Returns empty when the compose dir was never extracted (no `.version`):
+    nothing can be attributed to it, and a fresh install has no running
+    containers holding its inodes."""
+    target = _config_compose_dir()
+    src_root = Path(str(_bundled_compose_root()))
+    if not src_root.is_dir():
+        return frozenset()
+    if _read_runtime_file(target, ".version") is None:
+        return frozenset()
+    root_fd = _open_compose_directory(target)
+    if root_fd is None:
+        return frozenset()
+
+    changed: set[str] = set()
+    try:
+        for relative in bundled_resource_files():
+            parts = tuple(Path(relative).parts)
+            parent_fd = _directory_fd(root_fd, parts[:-1], relative)
+            if parent_fd is None:
+                changed.add(relative)
+                continue
+            try:
+                if not _file_matches_bundle(parent_fd, parts[-1], relative, src_root):
+                    changed.add(relative)
+            finally:
+                os.close(parent_fd)
+    finally:
+        os.close(root_fd)
+    return frozenset(changed)
+
+
 def compose_resource_dir() -> Path:
     """The deployed compose dir that extraction writes (~/.config/cove/compose).
 
@@ -419,16 +531,11 @@ def compose_resource_dir() -> Path:
 
 
 def bundle_is_current() -> bool:
-    """True when there is nothing to re-extract: the deployed compose dir is
-    absent (fresh install, no running stack to reconcile), or its `.version`
-    marker matches the bundled bundle hash.
-
-    A missing `.version` is treated as "nothing to do" — the stack was never
-    extracted from this dir, so no container can hold a stale inode from it.
-    This keeps `cove up` from probing Docker when there is nothing to restart."""
+    """True when the deployed compose dir carries the current bundle marker, so
+    extraction would early-return without touching any file."""
     version = _read_runtime_file(_config_compose_dir(), ".version")
     if version is None:
-        return True
+        return False
     return version[0].decode().strip() == _bundled_content_hash()
 
 
