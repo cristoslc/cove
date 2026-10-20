@@ -1570,17 +1570,19 @@ class TestProgressiveDisclosure:
 
 class TestUpRestartsStaleBinds:
     """Regression (2026-10-19 sev-2): `cove up` re-extracts bundled compose
-    resources, which prunes-and-recopies every bind-mounted file, giving each a
-    NEW inode even when its bytes are unchanged. A running container keeps the
-    old (deleted) inode, so e.g. /landing.html 404s. `cove up` must restart
-    exactly the running containers that bind a rebuilt file — never the whole
-    stack, and never a container whose binds are untouched."""
+    resources. Extraction used to prune-and-recopy every bind-mounted file,
+    giving each a NEW inode even when its bytes were unchanged, and a running
+    container kept the old (deleted) inode (e.g. /landing.html 404s). `cove up`
+    must restart exactly the running containers that bind a file whose content
+    actually changed — never the whole stack, never an untouched container."""
 
     @pytest.fixture(autouse=True)
     def _isolate_installed_resources(self, isolated_compose_resources):
         return isolated_compose_resources
 
-    def _run_up_with(self, tmp_path, restarts, *, bundle_current):
+    def _run_up_with(
+        self, tmp_path, restarts, *, bundle_current, changed=(), unseals=None
+    ):
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -1613,28 +1615,39 @@ class TestUpRestartsStaleBinds:
                 restarts.append(list(cmd))
             return r
 
+        def _fake_unseal():
+            if unseals is not None:
+                unseals.append(True)
+            return {"sealed": False}
+
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch.object(
             cove.cli.Path, "home", classmethod(lambda cls: home)
         ), patch("cove.cli.subprocess.run", side_effect=_fake_run), patch(
             "cove.cli.ensure_host_vars", return_value=tmp_path / "nonexistent.yml"
         ), patch("cove.cli.bundle_is_current", return_value=bundle_current), patch(
-            "cove.cli.bundled_resource_files",
-            return_value=frozenset({"nginx/landing.html", "vault/vault.hcl"}),
-        ), patch("cove.status.check_all", return_value=[]), patch(
-            "cove.cli._detect_running_optional_profiles", return_value=[]
-        ), patch("cove.cli.getpass.getpass", return_value="secret"):
+            "cove.cli.changed_resource_files", return_value=frozenset(changed)
+        ), patch("cove.cli.ensure_unsealed", side_effect=_fake_unseal), patch(
+            "cove.status.check_all", return_value=[]
+        ), patch("cove.cli._detect_running_optional_profiles", return_value=[]), patch(
+            "cove.cli.getpass.getpass", return_value="secret"
+        ):
             _invoke_callback(
                 "up", no_provision=True, no_upgrade=False, all_=False, log=False
             )
 
-    def test_restarts_only_containers_binding_rebuilt_files(
+    def test_restarts_only_containers_binding_changed_files(
         self, tmp_path, _fake_ansible_popen
     ):
         restarts: list = []
-        self._run_up_with(tmp_path, restarts, bundle_current=False)
+        self._run_up_with(
+            tmp_path,
+            restarts,
+            bundle_current=False,
+            changed={"nginx/landing.html", "vault/vault.hcl"},
+        )
         restarted = {c[2] for c in restarts}
         assert restarted == {"cove-nginx", "cove-vault"}, (
-            "only running containers whose bind sources were rebuilt must be "
+            "only running containers whose bind sources changed must be "
             f"restarted, got: {restarts}"
         )
 
@@ -1646,6 +1659,77 @@ class TestUpRestartsStaleBinds:
         assert restarts == [], (
             "the deployed bundle already matched, so extraction did not run and "
             "no container's bind inode changed"
+        )
+
+    def test_unchanged_bundle_file_does_not_restart_its_container(
+        self, tmp_path, _fake_ansible_popen
+    ):
+        """The root fix: extraction preserves the inode of content-identical
+        files, so only files in `changed_resource_files()` can trigger a
+        restart. `vault/vault.hcl` unchanged ⇒ Vault is left alone."""
+        restarts: list = []
+        self._run_up_with(
+            tmp_path,
+            restarts,
+            bundle_current=False,
+            changed={"nginx/landing.html"},
+        )
+        restarted = {c[2] for c in restarts}
+        assert restarted == {"cove-nginx"}, (
+            "a container whose bound file content is unchanged must not be "
+            f"restarted, got: {restarts}"
+        )
+
+
+class TestUpHealsSealedVault:
+    """A genuine `vault/vault.hcl` change must restart Vault (its config is read
+    only at startup), and Vault then comes up SEALED. `cove up` must heal that
+    from the keystore on every run: `cove update` converges via
+    `cove up --no-provision`, which skips `bootstrap_vault.yml`, so gating the
+    heal on "provisioning enabled" would leave an updated machine sealed."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_installed_resources(self, isolated_compose_resources):
+        return isolated_compose_resources
+
+    def _up(self, tmp_path, unseals, *, changed, bundle_current=False):
+        TestUpRestartsStaleBinds()._run_up_with(
+            tmp_path,
+            [],
+            bundle_current=bundle_current,
+            changed=changed,
+            unseals=unseals,
+        )
+
+    def test_unseals_vault_after_restarting_it(self, tmp_path, _fake_ansible_popen):
+        unseals: list = []
+        self._up(tmp_path, unseals, changed={"vault/vault.hcl"})
+        assert unseals == [True], (
+            "a restarted Vault comes up sealed; cove up must unseal it from the "
+            "keystore"
+        )
+
+    def test_unseals_vault_even_when_provisioning_is_skipped(
+        self, tmp_path, _fake_ansible_popen
+    ):
+        """`cove update` converges with `--no-provision`; the heal must not
+        depend on bootstrap_vault.yml running."""
+        unseals: list = []
+        self._up(tmp_path, unseals, changed={"vault/vault.hcl"})
+        playbooks = [str(p) for call in _fake_ansible_popen["calls"] for p in call]
+        assert not any("bootstrap_vault.yml" in p for p in playbooks), (
+            "precondition: no-provision skips bootstrap_vault.yml, so the "
+            "unseal below cannot have come from it"
+        )
+        assert len(unseals) == 1
+
+    def test_no_unseal_attempt_when_vault_was_not_restarted(
+        self, tmp_path, _fake_ansible_popen
+    ):
+        unseals: list = []
+        self._up(tmp_path, unseals, changed={"nginx/landing.html"})
+        assert unseals == [], (
+            "an untouched Vault must not be probed or unsealed"
         )
 
 

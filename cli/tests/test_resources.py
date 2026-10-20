@@ -589,3 +589,176 @@ class TestBundledResourceFiles:
 
         with patch("cove.stateless._bundled_compose_root", return_value=tmp_path / "nope"):
             assert bundled_resource_files() == frozenset()
+
+
+class TestUnchangedFilesKeepInodes:
+    """Regression (2026-10-19): extraction pruned every non-preserved file and
+    re-copied it, so ALL bundled files got fresh inodes on any bundle change,
+    even when their bytes were identical. A running container that bind-mounts
+    one of them then holds a stale (unlinked) inode. `cove up` had to restart
+    every affected container, which for `cove-vault` means restarting a
+    stateful service whose config did not change (Vault comes up sealed).
+
+    Extraction must leave content-identical files alone so their inode is
+    preserved; only new or genuinely changed files get a new inode."""
+
+    def _bundle(self, tmp_path):
+        bundle = tmp_path / "bundle"
+        (bundle / "nginx").mkdir(parents=True)
+        (bundle / "vault").mkdir()
+        (bundle / "docker-compose.yml").write_text("services: fresh-pins\n")
+        (bundle / "nginx" / "landing.html").write_text("<html>fresh</html>\n")
+        (bundle / "vault" / "vault.hcl").write_text("storage \"raft\" {}\n")
+        return bundle
+
+    def _extract(self, home, bundle, *, force=True):
+        with patch("cove.stateless.Path.home", return_value=home), patch(
+            "cove.stateless._bundled_compose_root", return_value=bundle
+        ):
+            return extract_resources(force=force)
+
+    def test_identical_top_level_file_keeps_its_inode(self, tmp_path):
+        home = tmp_path / "home"
+        target = home / ".config" / "cove" / "compose"
+        target.mkdir(parents=True)
+        (target / ".version").write_text("old-bundle-hash")
+
+        bundle = self._bundle(tmp_path)
+        deployed = target / "docker-compose.yml"
+        deployed.write_bytes((bundle / "docker-compose.yml").read_bytes())
+        inode = deployed.stat().st_ino
+
+        self._extract(home, bundle)
+
+        assert deployed.read_text() == "services: fresh-pins\n"
+        assert deployed.stat().st_ino == inode, (
+            "a content-identical file must keep its inode so a container "
+            "binding it does not hold a stale, unlinked inode"
+        )
+
+    def test_identical_file_in_non_preserved_subdirectory_keeps_its_inode(self, tmp_path):
+        """`vault/` is not a prefix of a preserved path, so the old prune
+        removed the whole directory — the exact case that restarted Vault."""
+        home = tmp_path / "home"
+        target = home / ".config" / "cove" / "compose"
+        (target / "vault").mkdir(parents=True)
+        (target / ".version").write_text("old-bundle-hash")
+
+        bundle = self._bundle(tmp_path)
+        deployed = target / "vault" / "vault.hcl"
+        deployed.write_bytes((bundle / "vault" / "vault.hcl").read_bytes())
+        inode = deployed.stat().st_ino
+
+        self._extract(home, bundle)
+
+        assert deployed.stat().st_ino == inode, (
+            "unchanged files inside a non-preserved subdirectory must survive "
+            "extraction untouched (Vault restart / sealed-vault regression)"
+        )
+
+    def test_identical_file_in_preserved_parent_directory_keeps_its_inode(self, tmp_path):
+        """`nginx/` is descended into for the preserved `nginx/default.conf`;
+        its other unchanged files must keep their inodes too."""
+        home = tmp_path / "home"
+        target = home / ".config" / "cove" / "compose"
+        (target / "nginx").mkdir(parents=True)
+        (target / ".version").write_text("old-bundle-hash")
+
+        bundle = self._bundle(tmp_path)
+        deployed = target / "nginx" / "landing.html"
+        deployed.write_bytes((bundle / "nginx" / "landing.html").read_bytes())
+        inode = deployed.stat().st_ino
+
+        self._extract(home, bundle)
+
+        assert deployed.stat().st_ino == inode
+
+    def test_changed_file_is_replaced_with_new_content(self, tmp_path):
+        """The counterpart: a file whose bytes really changed must be updated
+        (and is the only case that legitimately gets a new inode)."""
+        home = tmp_path / "home"
+        target = home / ".config" / "cove" / "compose"
+        (target / "vault").mkdir(parents=True)
+        (target / ".version").write_text("old-bundle-hash")
+
+        bundle = self._bundle(tmp_path)
+        deployed = target / "vault" / "vault.hcl"
+        deployed.write_text("storage \"file\" {}\n")
+        inode = deployed.stat().st_ino
+
+        self._extract(home, bundle)
+
+        assert deployed.read_text() == "storage \"raft\" {}\n"
+        assert deployed.stat().st_ino != inode, (
+            "a changed file must be rewritten (new inode), which is what "
+            "triggers the container restart"
+        )
+
+    def test_removed_bundle_file_is_pruned(self, tmp_path):
+        """Files no longer shipped by the bundle are still pruned."""
+        home = tmp_path / "home"
+        target = home / ".config" / "cove" / "compose"
+        (target / "obsolete").mkdir(parents=True)
+        (target / "obsolete" / "gone.yml").write_text("stale\n")
+        (target / ".version").write_text("old-bundle-hash")
+
+        self._extract(home, self._bundle(tmp_path))
+
+        assert not (target / "obsolete").exists()
+
+
+class TestChangedResourceFiles:
+    """`changed_resource_files` reports which bundled files extraction would
+    actually replace, so `cove up` restarts containers only for files whose
+    content changed — not for every bundled file."""
+
+    def _deployed_and_bundle(self, tmp_path):
+        home = tmp_path / "home"
+        target = home / ".config" / "cove" / "compose"
+        target.mkdir(parents=True)
+        bundle = tmp_path / "bundle"
+        (bundle / "nginx").mkdir(parents=True)
+        (bundle / "docker-compose.yml").write_text("services: fresh\n")
+        (bundle / "nginx" / "landing.html").write_text("<html>fresh</html>\n")
+        (bundle / "nginx" / "default.conf").write_text("bundled\n")
+        (bundle / ".env").write_text("BUNDLED=1\n")
+        (bundle / ".version").write_text("hash\n")
+        return home, target, bundle
+
+    def test_reports_only_files_whose_content_differs(self, tmp_path):
+        from cove.stateless import changed_resource_files
+
+        home, target, bundle = self._deployed_and_bundle(tmp_path)
+        (target / ".version").write_text("old-bundle-hash")
+        (target / "docker-compose.yml").write_text("services: fresh\n")  # identical
+        (target / "nginx").mkdir()
+        (target / "nginx" / "landing.html").write_text("<html>OLD</html>\n")  # differs
+
+        with patch("cove.stateless.Path.home", return_value=home), patch(
+            "cove.stateless._bundled_compose_root", return_value=bundle
+        ):
+            assert changed_resource_files() == frozenset({"nginx/landing.html"})
+
+    def test_reports_missing_file_as_changed(self, tmp_path):
+        from cove.stateless import changed_resource_files
+
+        home, target, bundle = self._deployed_and_bundle(tmp_path)
+        (target / ".version").write_text("old-bundle-hash")
+        (target / "docker-compose.yml").write_text("services: fresh\n")
+
+        with patch("cove.stateless.Path.home", return_value=home), patch(
+            "cove.stateless._bundled_compose_root", return_value=bundle
+        ):
+            assert changed_resource_files() == frozenset({"nginx/landing.html"})
+
+    def test_empty_when_not_installed(self, tmp_path):
+        from cove.stateless import changed_resource_files
+
+        home = tmp_path / "home"
+        home.mkdir()
+        _, _, bundle = self._deployed_and_bundle(tmp_path)
+
+        with patch("cove.stateless.Path.home", return_value=home), patch(
+            "cove.stateless._bundled_compose_root", return_value=bundle
+        ):
+            assert changed_resource_files() == frozenset()
