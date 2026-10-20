@@ -7,7 +7,8 @@ Template/rendering tests (always runnable):
   - Verify compose has dnsproxy sidecar for DoH
   - Verify inverse-assertion: missing variables cause TemplateSyntaxError
 
-Integration E2E tests (require live stack, run with `pytest -m e2e`):
+Integration E2E tests (require live stack; SKIPPED unless
+COVE_ALLOW_LIVE_TESTS=1, see live_tier_gate.py):
   - HTTP /config/* endpoints return correct Content-Types
   - DoH /dns-query POST and GET return DNS responses
   - Per-machine regex server blocks proxy correctly
@@ -15,8 +16,8 @@ Integration E2E tests (require live stack, run with `pytest -m e2e`):
   - ca.cove redirects to git.cove/config/ca
 
 Run all:    pytest cli/tests/test_e2e_dns.py
-Run unit:  pytest cli/tests/test_e2e_dns.py -m "not e2e"
-Run e2e:   pytest cli/tests/test_e2e_dns.py -m e2e
+Run unit:   pytest cli/tests/test_e2e_dns.py -m "not e2e"
+Run live:   COVE_ALLOW_LIVE_TESTS=1 pytest cli/tests/test_e2e_dns.py -m live
 """
 
 import base64
@@ -453,12 +454,17 @@ class TestInverseAssertions:
         assert "dnsproxy" not in data["services"]
 
 
+@pytest.mark.live
 @pytest.mark.e2e
 @pytest.mark.staging
 class TestE2EDNSEndpoints:
-    """Integration tests requiring a live Cove stack.
+    """Live-stack tests. Skipped unless COVE_ALLOW_LIVE_TESTS=1.
 
-    Run with: pytest -m e2e
+    These issue real HTTP/DoH requests to the live Cove ingress on
+    127.0.0.1:443 and the live DNS resolver; they read live state and are
+    gated by live_tier_gate.py.
+
+    Run with: COVE_ALLOW_LIVE_TESTS=1 pytest -m live
 
     These tests require:
       - Docker/Colima running

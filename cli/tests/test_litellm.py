@@ -1476,12 +1476,17 @@ class TestAdversarial:
         assert config.get("general_settings", {}).get("disable_mcp") is True
 
 
+@pytest.mark.live
 @pytest.mark.e2e
 @pytest.mark.staging
 class TestE2ELitellmStack:
-    """Integration tests requiring a live Cove stack with litellm profile.
+    """Container-touching tests requiring a live Cove stack with litellm profile.
 
-    Run with: pytest cli/tests/test_litellm.py -m e2e
+    Skipped unless COVE_ALLOW_LIVE_TESTS=1 (see live_tier_gate.py): it runs
+    `docker inspect` / `docker exec` against the live container and probes
+    https://127.0.0.1:443 through the live ingress.
+
+    Run with: COVE_ALLOW_LIVE_TESTS=1 pytest cli/tests/test_litellm.py -m live
 
     These tests require:
     1. Cove stack running (cove up)
