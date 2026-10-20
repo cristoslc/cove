@@ -341,6 +341,28 @@ class TestComposeConfig:
         port_str = str(ports[0])
         assert "5353" in port_str
 
+    def test_dnsmasq_publishes_udp(self):
+        data = self._load_compose()
+        ports = data["services"]["dnsmasq"]["ports"]
+        # Accept ${DNSMASQ_PORT:-5353} parameterization: assert on the
+        # protocol suffix and container port, not the host port literal.
+        udp_entries = [p for p in ports if str(p).endswith(":5353/udp")]
+        assert udp_entries, (
+            "dnsmasq must publish UDP on 5353 — DNS is UDP-first, so a "
+            f"TCP-only publish leaves the /etc/resolver/cove path dead. Got: {ports}"
+        )
+
+    def test_dnsmasq_keeps_tcp_publish(self):
+        data = self._load_compose()
+        ports = data["services"]["dnsmasq"]["ports"]
+        tcp_entries = [
+            p for p in ports if str(p).endswith(":5353") and not str(p).endswith("/udp")
+        ]
+        assert tcp_entries, (
+            "dnsmasq must keep the TCP publish on 5353 for large/truncated "
+            f"DNS responses. Got: {ports}"
+        )
+
     def test_dnsproxy_service_exists(self):
         data = self._load_compose()
         assert "dnsproxy" in data["services"]
