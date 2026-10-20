@@ -30,6 +30,7 @@ from cove.project import (
 )
 from cove.stateless import (
     resolve_compose_dir, extract_resources, ensure_init, maybe_reextract,
+    bundled_resource_files, compose_resource_dir, bundle_is_current,
 )
 from cove.state import ensure_host_vars
 
@@ -52,6 +53,54 @@ def _detect_running_optional_profiles() -> list[str]:
         if container_name in running and profile not in profiles:
             profiles.append(profile)
     return profiles
+
+
+def _running_compose_containers() -> list[str]:
+    """Names of running containers in the deployed Cove compose project."""
+    result = subprocess.run(
+        ["docker", "ps", "--format", "{{.Names}}"],
+        capture_output=True, text=True, timeout=15,
+    )
+    if result.returncode != 0:
+        return []
+    return [n for n in result.stdout.split() if n.startswith("cove-")]
+
+
+def _container_bind_sources(container: str) -> list[Path]:
+    """Host source paths of a container's bind mounts (read-only inspect)."""
+    result = subprocess.run(
+        ["docker", "inspect", container, "--format", "{{range .Mounts}}{{.Source}}\n{{end}}"],
+        capture_output=True, text=True, timeout=15,
+    )
+    if result.returncode != 0:
+        return []
+    return [Path(line) for line in result.stdout.splitlines() if line.strip()]
+
+
+def _restart_stale_bind_containers(compose_dir: Path, rebuilt: frozenset[str]) -> None:
+    """Restart running Cove containers whose bind sources extraction just
+    rewrote.
+
+    `cove up` re-extracts the bundled compose resources, which prunes and
+    re-copies every bind-mounted file, giving each a fresh inode even when its
+    bytes are unchanged. A running container keeps the old (now-deleted) inode
+    — e.g. nginx serves a stale /landing.html and 404s — until it restarts.
+    Restart ONLY the containers that actually bind a rebuilt file: a whole-stack
+    restart or an unconditional nginx restart would blip healthy services for
+    no reason.
+    """
+    if not rebuilt:
+        return
+    rebuilt_abs = {(compose_dir / rel).resolve() for rel in rebuilt}
+    for container in _running_compose_containers():
+        sources = {p.resolve() for p in _container_bind_sources(container)}
+        if not (sources & rebuilt_abs):
+            continue
+        subprocess.run(
+            ["docker", "restart", container],
+            capture_output=True, text=True, timeout=120, check=False,
+        )
+        click.echo(f"  restarted {container} (rebuilt bind-mounted files)")
 
 
 def _start_optional_services() -> None:
@@ -207,6 +256,12 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
 
         cove up --log
     """
+    # Re-extraction rewrites every bind-mounted bundled file with a fresh
+    # inode; a running container keeps the stale (deleted) inode until it
+    # restarts (e.g. nginx serves a stale /landing.html and 404s — 2026-10-19
+    # sev-2). Detect a stale bundle BEFORE the extract calls, then restart only
+    # the affected running containers after bringup.
+    resources_rebuilt = not bundle_is_current()
     if not no_upgrade:
         maybe_reextract()
     ensure_init()
@@ -299,6 +354,14 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
         subprocess.run(["cove", "creds", "batch-pull"], check=True)
 
     _run_ansible(bringup, "Bringing up containers...")
+
+    if resources_rebuilt:
+        # Re-extraction replaced bind-mounted files' inodes; restart only the
+        # running containers that bind them (bringup already restarted nginx
+        # via the 'Reload nginx' handler when IT render, which overlaps).
+        _restart_stale_bind_containers(
+            compose_resource_dir(), bundled_resource_files()
+        )
 
     if not no_provision:
         _run_ansible(compose_dir / "bootstrap_vault.yml", "Bootstrapping Vault...")

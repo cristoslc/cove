@@ -380,6 +380,52 @@ def _copy_resource(src, dst: Path, relative: Path | None = None) -> None:
         shutil.copy2(src_path, dst / src_path.name)
 
 
+def bundled_resource_files() -> frozenset[str]:
+    """Bundle-relative paths of every file extraction would (re)write.
+
+    Extraction prunes then re-copies each of these, giving it a NEW inode even
+    when its bytes are unchanged. Any running container binding one of them
+    ends up holding a stale (deleted) inode, so `cove up` restarts exactly the
+    containers whose bind sources appear here. Mirrors `_copy_resource`'s
+    exclusions (runtime-preserved files and `.version`)."""
+    root = _bundled_compose_root()
+    root_path = Path(str(root))
+    if not root_path.is_dir():
+        return frozenset()
+    files: set[str] = set()
+    for p in root_path.rglob("*"):
+        if not p.is_file():
+            continue
+        relative = p.relative_to(root_path).as_posix()
+        if relative in RUNTIME_PRESERVED_FILES or relative == ".version":
+            continue
+        files.add(relative)
+    return frozenset(files)
+
+
+def compose_resource_dir() -> Path:
+    """The deployed compose dir that extraction writes (~/.config/cove/compose).
+
+    Distinct from `resolve_compose_dir()`, which may return a dev checkout's
+    `./compose`. Bind sources of the running stack are intersected against THIS
+    dir, because it is the one extraction rewrites."""
+    return _config_compose_dir()
+
+
+def bundle_is_current() -> bool:
+    """True when there is nothing to re-extract: the deployed compose dir is
+    absent (fresh install, no running stack to reconcile), or its `.version`
+    marker matches the bundled bundle hash.
+
+    A missing `.version` is treated as "nothing to do" — the stack was never
+    extracted from this dir, so no container can hold a stale inode from it.
+    This keeps `cove up` from probing Docker when there is nothing to restart."""
+    version = _read_runtime_file(_config_compose_dir(), ".version")
+    if version is None:
+        return True
+    return version[0].decode().strip() == _bundled_content_hash()
+
+
 def ensure_init() -> Path:
     target = _config_compose_dir()
     version = _read_runtime_file(target, ".version")

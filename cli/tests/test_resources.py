@@ -515,3 +515,35 @@ class TestRuntimeResourcePreservation:
             assert stat.S_ISFIFO((target / ".version").lstat().st_mode)
         else:
             assert (target / ".version").read_text() == "old-bundle-hash"
+
+
+class TestBundledResourceFiles:
+    """`bundled_resource_files` names the bundle files extraction rewrites.
+
+    Extraction prunes then re-copies every non-preserved bundled file, giving
+    each a fresh inode even when its bytes are unchanged, so a running
+    container that bind-mounts any of them holds a stale, deleted inode and
+    must be restarted. This listing is the set `cove up` intersects against
+    running containers' bind sources."""
+
+    def test_lists_only_bundle_files_that_extraction_rewrites(self, tmp_path):
+        from cove.stateless import bundled_resource_files
+
+        bundle = tmp_path / "bundle"
+        (bundle / "nginx").mkdir(parents=True)
+        (bundle / "docker-compose.yml").write_text("services: {}\n")
+        (bundle / ".env").write_text("BUNDLED=1\n")
+        (bundle / ".version").write_text("hash\n")
+        (bundle / "nginx" / "default.conf").write_text("generated\n")
+        (bundle / "nginx" / "landing.html").write_text("<html>\n")
+
+        with patch("cove.stateless._bundled_compose_root", return_value=bundle):
+            assert bundled_resource_files() == frozenset(
+                {"docker-compose.yml", "nginx/landing.html"}
+            )
+
+    def test_empty_when_bundle_missing(self, tmp_path):
+        from cove.stateless import bundled_resource_files
+
+        with patch("cove.stateless._bundled_compose_root", return_value=tmp_path / "nope"):
+            assert bundled_resource_files() == frozenset()
