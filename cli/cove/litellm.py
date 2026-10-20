@@ -242,7 +242,8 @@ def litellm():
     """Manage the LiteLLM proxy (optional harbor service).
 
     LiteLLM is a hardened LLM proxy with Headroom compression.
-    It runs on https://litellm.cove/ and proxies to upstream providers.
+    It runs on https://litellm.cove.local/ (API root) and proxies to upstream
+    providers; the admin console is at https://litellm.cove.local/ui/.
     """
 
 
@@ -253,7 +254,7 @@ def up():
     _prepare_runtime_files()
     click.echo("Starting LiteLLM proxy...")
     subprocess.run(_compose_cmd("--profile", "litellm", "up", "-d", "--build"), check=True)
-    click.echo("LiteLLM proxy is running at https://litellm.cove/")
+    click.echo("LiteLLM proxy is running. Admin console: https://litellm.cove.local/ui/")
 
 
 @litellm.command()
