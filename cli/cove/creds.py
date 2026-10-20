@@ -16,6 +16,13 @@ OP_REFS = {
     "forgejo_admin": "op://Private/Forgejo {hostname} Admin/password",
     "vault_user": "op://Private/Vault {hostname} {username}/password",
     "minio_root": "op://Private/MinIO {hostname} Root/password",
+    # PROXY key only (the Ollama key the LiteLLM proxy holds in compose/.env).
+    # Authoritative ref supplied by thr_8esem8hrnw after the 2026-10-20
+    # rotation (item "Ollama-Cloud | API | litellm-2026-10-20"; field
+    # "credential" is the only field to read). The desktop-client keys live in
+    # a separate item ("Ollama-Cloud | Client API keys") and must never be
+    # added here.
+    "ollama": "op://Private/axk3m43b6k76hm2drteesppf64/credential",
     # Shared (non-hostname) items — ADR-017 unified Cove admin identity and the
     # Speedtest Tracker APP_KEY. These have no {hostname}/{username} placeholders,
     # so .format() is a no-op. Pulled by batch-pull so `cove speedtest up` can
