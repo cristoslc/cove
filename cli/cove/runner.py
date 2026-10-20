@@ -4,7 +4,7 @@ import subprocess
 
 import click
 
-from cove.stateless import resolve_compose_dir
+from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
 
 
 def _compose_cmd(*args: str) -> list[str]:
@@ -32,6 +32,7 @@ def runner():
 @runner.command()
 def up():
     """Start the Forgejo Actions Runner service."""
+    ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Starting Forgejo Actions Runner...")
     subprocess.run(_compose_cmd("--profile", "runner", "up", "-d"), check=True)
     click.echo("Forgejo Actions Runner is running.")
@@ -41,6 +42,7 @@ def up():
 @runner.command()
 def down():
     """Stop the Forgejo Actions Runner service (data preserved)."""
+    ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping Forgejo Actions Runner...")
     subprocess.run(_compose_cmd("stop", "forgejo-runner"), check=True)
     click.echo("Forgejo Actions Runner stopped.")

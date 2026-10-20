@@ -5,7 +5,7 @@ import subprocess
 import click
 
 from cove.constants import NGINX_HTTPS_PORT
-from cove.stateless import resolve_compose_dir
+from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
 
 
 TOOLHIVE_URL = "https://mcp.cove/"
@@ -38,6 +38,7 @@ def up():
     No credential step in phase 1 (per-server secrets are Phase 2, seeded
     from Vault via `cove creds`); the curated registry and default permission
     profile are seeded by `cove up` from bringup.yml."""
+    ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Starting ToolHive MCP gateway...")
     subprocess.run(_compose_cmd("--profile", "mcp", "up", "-d"), check=True)
     click.echo(f"ToolHive is running at {TOOLHIVE_URL}")
@@ -51,6 +52,7 @@ def down():
     sibling MCP-server workload containers keep running until stopped
     via the ToolHive API (a Phase 2 `cove mcp` hook owns that lifecycle).
     """
+    ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping ToolHive MCP gateway...")
     subprocess.run(_compose_cmd("stop", "toolhive"), check=True)
     click.echo("ToolHive MCP gateway stopped.")

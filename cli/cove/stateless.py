@@ -12,6 +12,7 @@ from importlib.resources import files
 from pathlib import Path
 
 import click
+import yaml
 
 from cove import __version__
 
@@ -22,6 +23,25 @@ from cove import __version__
 # has none). Pruning it left the file missing; Docker then auto-created it as a
 # directory and `docker restart cove-nginx` refused to start (2026-10-19 sev-2).
 RUNTIME_PRESERVED_FILES = (".env", "nginx/default.conf", "certs/rootCA.pem")
+
+# The live compose project name, hardcoded in compose/docker-compose.yml. Docker
+# Compose keys a project by (name, working directory), so a second compose dir
+# declaring the same name is what lets an unrelated checkout recreate the live
+# stack (incident 20261018-015539).
+LIVE_COMPOSE_PROJECT_NAME = "cove"
+
+# Explicit operator escape hatch for running a live-named compose source from a
+# directory that points at a different data root (see
+# require_live_project_from_canonical_dir).
+NONCANONICAL_OVERRIDE_ENV = "COVE_ALLOW_FOREIGN_DATA_ROOT"
+
+# Compose top-level project-name files, checked in Compose's own precedence.
+_COMPOSE_FILE_NAMES = (
+    "compose.yaml",
+    "compose.yml",
+    "docker-compose.yaml",
+    "docker-compose.yml",
+)
 
 
 def detect_hostname() -> str:
@@ -52,6 +72,11 @@ def detect_hostname() -> str:
 
 def _config_compose_dir() -> Path:
     return Path.home() / ".config" / "cove" / "compose"
+
+
+def canonical_data_root() -> Path:
+    """The canonical operator data root (compose/group_vars/all.yml cove_data_root)."""
+    return Path.home() / "Documents" / "cove-data"
 
 
 def _bundled_compose_root():
@@ -410,6 +435,191 @@ def resolve_compose_dir() -> Path:
     raise click.ClickException(
         "Could not find compose/inventory.yml. Run `cove init` first."
     )
+
+
+def read_env_file_value(compose_dir: Path, key: str) -> str | None:
+    """Return KEY's non-empty value from compose_dir/.env, or None.
+
+    Deliberately parses only literal `KEY=VALUE` lines (first match wins) and
+    never expands `~` or variables: Compose itself does not expand `~`, so a
+    value like the `.env.example` placeholder must be treated as-is rather than
+    silently resolved.
+    """
+    env_path = compose_dir / ".env"
+    try:
+        lines = env_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except FileNotFoundError:
+        return None
+    for line in lines:
+        if line.startswith(f"{key}="):
+            value = line.split("=", 1)[1].strip().strip("\"'")
+            if value:
+                return value
+    return None
+
+
+def effective_env_value(compose_dir: Path, key: str) -> str | None:
+    """The value Compose would interpolate for KEY: process env, then `.env`.
+
+    Process env wins only when non-empty (Compose merges the shell environment
+    over `.env`).
+    """
+    from_process = os.environ.get(key)
+    if from_process:
+        return from_process
+    return read_env_file_value(compose_dir, key)
+
+
+def effective_data_root(compose_dir: Path) -> str | None:
+    """The COVE_DATA_ROOT Compose would interpolate for this compose dir.
+
+    Returns None when neither the process environment nor `.env` provides a
+    non-empty value — the state in which `${COVE_DATA_ROOT}/x` collapses to a
+    container-absolute `/x`.
+    """
+    return effective_env_value(compose_dir, "COVE_DATA_ROOT")
+
+
+REQUIRED_DATA_ROOT_KEYS = ("COVE_DATA_ROOT", "FORGEJO_DATA_ROOT")
+
+
+def declared_compose_project_name(compose_dir: Path) -> str | None:
+    """The top-level `name:` from the compose dir's compose file, or None.
+
+    Only the top-level key counts: a nested `name:` under a service is not the
+    project name. PyYAML's SafeLoader returns the first of duplicate top-level
+    keys, matching Compose's own first-wins behavior closely enough for a guard.
+    """
+    for filename in _COMPOSE_FILE_NAMES:
+        compose_file = compose_dir / filename
+        if not compose_file.is_file():
+            continue
+        try:
+            data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise click.ClickException(
+                f"Cannot parse {compose_file} to check the compose project "
+                f"name: {exc}"
+            ) from exc
+        if not isinstance(data, dict):
+            return None
+        name = data.get("name")
+        return str(name) if name else None
+    return None
+
+
+def require_usable_data_root(compose_dir: Path, *, allow_missing_env: bool) -> None:
+    """Abort when this compose dir has no usable data-root values.
+
+    A compose invocation with an empty data root collapses every
+    `${COVE_DATA_ROOT}/x` (and `${FORGEJO_DATA_ROOT}/x`) bind to a
+    container-absolute `/x` (incident 20261018-015539). Fail loud instead,
+    naming the resolved directory and every missing key.
+
+    `allow_missing_env` covers first boot into the canonical dir, where
+    `cove up` legitimately starts with no `.env` (bringup.yml renders a complete
+    one before `docker compose up`). An `.env` that EXISTS but lacks a usable
+    data root is always an error — that is the partial-file shape left by a
+    service `up` writing one key into a dir that never had a rendered `.env`.
+    """
+    env_path = compose_dir / ".env"
+    if not env_path.exists() and allow_missing_env:
+        return
+    missing = [
+        key
+        for key in REQUIRED_DATA_ROOT_KEYS
+        if effective_env_value(compose_dir, key) is None
+    ]
+    if not missing:
+        return
+    if not env_path.exists():
+        cause = "the .env is missing"
+    else:
+        cause = (
+            "the .env (and process environment) have no non-empty value for "
+            + " / ".join(missing)
+        )
+    raise click.ClickException(
+        f"Compose dir {compose_dir} has no usable {' / '.join(missing)} "
+        f"({cause}). Refusing to run: an empty data root collapses every "
+        "${COVE_DATA_ROOT}/x bind mount to container-absolute /x and would "
+        "recreate containers against the wrong data. Fix it by running from "
+        "the canonical compose dir (~/.config/cove/compose), setting the key "
+        "in the environment, or deleting "
+        f"{env_path} so the next `cove up` re-renders a complete .env."
+    )
+
+
+def require_live_project_from_canonical_dir(compose_dir: Path) -> None:
+    """Abort when a live-named compose source points at a different data root.
+
+    `docker-compose.yml` pins `name: cove`, so a compose dir with that name and
+    a *different* data root recreates the live containers against foreign
+    storage. That is the hijack in incident 20261018-015539.
+
+    A same-name source whose data root IS the canonical one is allowed: it
+    recreates the live containers against the intended data (the dev checkout
+    shape, harmless). The canonical install dir is always allowed. Override with
+    NONCANONICAL_OVERRIDE_ENV when a deliberate foreign-root run is intended.
+    """
+    if os.environ.get(NONCANONICAL_OVERRIDE_ENV):
+        return
+    if declared_compose_project_name(compose_dir) != LIVE_COMPOSE_PROJECT_NAME:
+        return
+    try:
+        same_dir = compose_dir.resolve() == _config_compose_dir().resolve()
+    except OSError:
+        same_dir = False
+    if same_dir:
+        return
+    root = effective_data_root(compose_dir)
+    if root is not None:
+        try:
+            same_root = (
+                Path(root).expanduser().resolve() == canonical_data_root().resolve()
+            )
+        except OSError:
+            same_root = False
+        if same_root:
+            return
+    raise click.ClickException(
+        f"Compose dir {compose_dir} declares the live project name "
+        f"'{LIVE_COMPOSE_PROJECT_NAME}' but its COVE_DATA_ROOT "
+        f"({root or 'unset'}) is not the canonical one "
+        "(~/Documents/cove-data). Compose keys a project by (name, working "
+        "directory), so this would recreate the live stack against foreign "
+        "data. Run from the canonical dir (~/.config/cove/compose), point "
+        "COVE_DATA_ROOT at the canonical root, or set "
+        f"{NONCANONICAL_OVERRIDE_ENV}=1 to override deliberately."
+    )
+
+
+def ensure_compose_source_ready(compose_dir: Path) -> None:
+    """Refuse a compose source that would collapse binds or hijack the live stack.
+
+    Called by every compose entry point (`cove up`, `cove down`, and the service
+    `up` commands) before anything reaches Ansible or Docker. The canonical
+    install dir may be missing its `.env` (fresh install); any other dir must
+    carry a usable COVE_DATA_ROOT.
+    """
+    canonical = _config_compose_dir()
+    try:
+        allow_missing_env = compose_dir.resolve() == canonical.resolve()
+    except OSError:
+        allow_missing_env = False
+    require_usable_data_root(compose_dir, allow_missing_env=allow_missing_env)
+    require_live_project_from_canonical_dir(compose_dir)
+
+
+def require_compose_source_ready() -> Path:
+    """Resolve the compose dir and refuse an unsafe source; return the dir.
+
+    Convenience entry point for container-mutating commands so each call site
+    reads as one guard call rather than a resolve + check pair.
+    """
+    compose_dir = resolve_compose_dir()
+    ensure_compose_source_ready(compose_dir)
+    return compose_dir
 
 
 def extract_resources(force: bool = False) -> Path:

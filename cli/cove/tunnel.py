@@ -9,7 +9,7 @@ from dataclasses import dataclass
 
 import click
 
-from cove.stateless import resolve_compose_dir
+from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
 
 
 ZROK2_IMAGE = "openziti/zrok2:2.0.4"
@@ -394,6 +394,7 @@ def _tunnel_image() -> str:
 
 def _ensure_sidecar() -> None:
     """Start the tunnel sidecar (outbound-only, no published ports)."""
+    ensure_compose_source_ready(resolve_compose_dir())
     image = _tunnel_image()
     subprocess.run(
         _compose_cmd("--profile", "tunnel", "up", "-d"), check=True,
@@ -1133,6 +1134,7 @@ def down(name):
         _apply_share_routes({})
         shares = {}
     click.echo("Stopping tunnel sidecar...")
+    ensure_compose_source_ready(resolve_compose_dir())
     subprocess.run(_compose_cmd("stop", "tunnel"), check=True)
     click.echo("Tunnel stopped.")
 
