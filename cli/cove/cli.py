@@ -7,6 +7,7 @@ import platform
 import re
 import shutil
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -34,7 +35,7 @@ from cove.stateless import (
     ensure_compose_source_ready,
 )
 from cove.constants import VAULT_CONTAINER_NAME
-from cove.vault_unseal import ensure_unsealed
+from cove.vault_unseal import ensure_unsealed, vault_health
 from cove.state import ensure_host_vars
 
 
@@ -106,6 +107,96 @@ def _restart_stale_bind_containers(compose_dir: Path, rebuilt: frozenset[str]) -
         restarted.append(container)
         click.echo(f"  restarted {container} (rebuilt bind-mounted files)")
     return restarted
+
+
+# Bounded health probe for the post-restart Vault heal: at most this many
+# attempts, this many seconds apart, each request capped at this timeout —
+# so `cove up` can never hang waiting on a Vault that never comes up.
+_VAULT_HEALTH_ATTEMPTS = 5
+_VAULT_HEALTH_RETRY_SECONDS = 1.0
+_VAULT_HEALTH_TIMEOUT_SECONDS = 2.0
+
+
+def _vault_runtime_state() -> tuple[str, str] | None:
+    """(container Id, State.StartedAt) of the Vault container, or None when
+    it cannot be read (docker unreachable, container absent)."""
+    result = subprocess.run(
+        ["docker", "inspect", VAULT_CONTAINER_NAME,
+         "--format", "{{.Id}} {{.State.StartedAt}}"],
+        capture_output=True, text=True, timeout=15, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    parts = result.stdout.strip().split(None, 1)
+    return (parts[0], parts[1]) if len(parts) == 2 else None
+
+
+def _vault_restarted_since(before: tuple[str, str] | None) -> bool:
+    """True when the Vault container is now running under an identity that
+    differs from the pre-up snapshot: a changed Id is a compose recreate, a
+    changed StartedAt on the same Id is a restart (docker restart keeps the
+    Id). Covers recreates and restarts driven by the compose invocation
+    itself and by bringup handlers — neither is visible to the CLI's
+    stale-bind restart list. An unreadable post-up state (docker gone,
+    container removed) is left to the end-of-up status gate, which reports
+    Vault API failed."""
+    after = _vault_runtime_state()
+    if after is None:
+        return False
+    return before is None or before != after
+
+
+def _unseal_restarted_vault(*, no_provision: bool) -> None:
+    """Unseal Vault after this `cove up` (re)started its container.
+
+    A (re)started Vault comes up SEALED — whether the CLI restarted it for a
+    changed vault.hcl, the compose run recreated it for a rotated credential
+    or a bundle change, or a bringup handler restarted it. The health probe
+    is bounded (no unattended hangs). Semantics:
+    - reachable + sealed: unseal from the OS keystore via ensure_unsealed();
+      a failure raises ClickException (fail loud, same as the stale-bind
+      path this generalized).
+    - unreachable after the bounded retries: warn clearly and continue — the
+      end-of-up status gate reports Vault API failed and `up` exits 1, and
+      in the provisioned flow bootstrap_vault.yml retries health for up to
+      60s and unseals itself; failing the heal here would abort before both.
+    - not initialized: skip (bootstrap_vault.yml initializes and unseals);
+      with --no-provision warn that nothing will bootstrap it."""
+    health = None
+    for attempt in range(_VAULT_HEALTH_ATTEMPTS):
+        try:
+            health = vault_health(timeout=_VAULT_HEALTH_TIMEOUT_SECONDS)
+            break
+        # RuntimeError: vault_health's "unreachable". OSError: transport
+        # failures a request timeout surfaces directly (read timeout,
+        # SSL). ValueError: a response that is not health JSON. All mean
+        # "not answering yet" — retry within the bound.
+        except (RuntimeError, OSError, ValueError):
+            if attempt < _VAULT_HEALTH_ATTEMPTS - 1:
+                time.sleep(_VAULT_HEALTH_RETRY_SECONDS)
+    if health is None:
+        click.echo(
+            f"WARNING: {VAULT_CONTAINER_NAME} was (re)started by this `cove up` "
+            "but did not answer its health endpoint; it may still be sealed. "
+            "Check `cove status`.", err=True)
+        return
+    if not health.get("initialized", False):
+        if no_provision:
+            click.echo(
+                "WARNING: Vault is not initialized and `--no-provision` skips "
+                "bootstrap_vault.yml, so it will stay sealed. Run `cove up` "
+                "(with provisioning) to bootstrap it.", err=True)
+        return
+    if not health.get("sealed", False):
+        return
+    try:
+        ensure_unsealed()
+    except RuntimeError as exc:
+        raise click.ClickException(
+            "Vault was (re)started by this `cove up` and could not be "
+            f"unsealed automatically: {exc}"
+        ) from exc
+    click.echo("Vault unsealed from the OS keystore.")
 
 
 def _start_optional_services() -> None:
@@ -361,8 +452,15 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
         click.echo("Pulling credentials from 1Password...")
         subprocess.run(["cove", "creds", "batch-pull"], check=True)
 
+    # Snapshot Vault's runtime identity before the compose run: recreates and
+    # restarts driven by the compose invocation itself (rotated credential in
+    # the .env, bundle change, bringup handler) are invisible to the
+    # stale-bind restart list below, yet they (re)start Vault just as surely
+    # (2026-10-20/21: two `cove up` runs left Vault sealed this way).
+    vault_before = _vault_runtime_state()
     _run_ansible(bringup, "Bringing up containers...")
 
+    restarted: list[str] = []
     if changed:
         # Re-extraction replaced these files' inodes; restart only the running
         # containers that bind one (bringup's 'Reload nginx' handler covers
@@ -370,18 +468,13 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
         restarted = _restart_stale_bind_containers(
             compose_resource_dir(), changed
         )
-        if VAULT_CONTAINER_NAME in restarted:
-            # Vault reads vault.hcl only at startup, so a genuine config change
-            # requires this restart — and Vault then comes up SEALED. Heal it
-            # here, unconditionally: `cove update` converges via
-            # `cove up --no-provision`, which never runs bootstrap_vault.yml.
-            try:
-                ensure_unsealed()
-            except RuntimeError as exc:
-                raise click.ClickException(
-                    "Vault was restarted (its config changed) and could not be "
-                    f"unsealed automatically: {exc}"
-                ) from exc
+    if VAULT_CONTAINER_NAME in restarted or _vault_restarted_since(vault_before):
+        # Vault reads vault.hcl only at startup, so a genuine config change
+        # requires the CLI restart — and Vault then comes up SEALED. A
+        # compose-driven recreate seals it just the same. Heal here,
+        # unconditionally: `cove update` converges via `cove up
+        # --no-provision`, which never runs bootstrap_vault.yml.
+        _unseal_restarted_vault(no_provision=no_provision)
 
     if not no_provision:
         _run_ansible(compose_dir / "bootstrap_vault.yml", "Bootstrapping Vault...")

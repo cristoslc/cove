@@ -79,11 +79,13 @@ def _vault_post(path: str, body: Optional[dict] = None) -> tuple[int, dict]:
         raise RuntimeError(f"Vault unreachable at {_vault_addr()}: {e.reason}")
 
 
-def vault_health() -> dict:
+def vault_health(timeout: float | None = None) -> dict:
     url = f"{_vault_addr().rstrip('/')}/v1/sys/health"
     req = urllib.request.Request(url)
     try:
-        with urllib.request.urlopen(req, context=_vault_ssl_context()) as resp:
+        with urllib.request.urlopen(
+            req, context=_vault_ssl_context(), timeout=timeout
+        ) as resp:
             content = resp.read().decode()
             return json.loads(content) if content else {}
     except urllib.error.HTTPError as e:

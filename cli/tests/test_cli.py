@@ -33,18 +33,38 @@ def _fake_ansible_popen(monkeypatch):
     """_run_ansible always tees ansible output through subprocess.Popen.
     Fake it so CLI up-flow tests never invoke the real ansible-playbook."""
     class _Proc:
-        def __init__(self, returncode=0, out=()):
+        def __init__(self, args=(), returncode=0, out=()):
+            self.args = args
             self.stdout = iter(out)
             self.returncode = returncode
 
         def wait(self):
             return self.returncode
+
+        def poll(self):
+            return self.returncode
+
+        # subprocess.run() drives Popen as a context manager and calls
+        # communicate(); support both so read-only helper subprocess calls in
+        # the up flow (e.g. the Vault runtime-state snapshot) work through
+        # the same fake.
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def communicate(self, input=None, timeout=None):
+            return (b"", b"")
     holder: dict[str, list] = {"returncode": 0, "out": (), "calls": [], "envs": []}
 
     def _popen_factory(*args, **kwargs):
         holder["calls"].append(args[0])
         holder["envs"].append(kwargs.get("env"))
-        return _Proc(returncode=holder["returncode"], out=holder["out"])
+        return _Proc(
+            args[0] if args else (),
+            returncode=holder["returncode"], out=holder["out"],
+        )
     monkeypatch.setattr("cove.cli.subprocess.Popen", _popen_factory)
     # Default: passwordless sudo NOT installed, so up-flow tests exercise the
     # getpass prompt path unless a test overrides this below.
@@ -724,8 +744,18 @@ class TestCoveUpCommand:
             assert len(playbooks) == 4, (
                 f"full up must run 4 playbooks, got: {playbooks}"
             )
-            assert len(run_cmds) == 1 and "batch-pull" in run_cmds[0], (
+            assert run_cmds and "batch-pull" in run_cmds[0], (
                 "batch-pull (subprocess.run) must come first"
+            )
+            # The only other subprocess.run calls in the full up flow are the
+            # Vault runtime-state snapshots (read-only `docker inspect` of the
+            # container Id/StartedAt, taken before bringup and after the
+            # stale-bind restart step). They are not provisioning steps:
+            # batch-pull stays the only non-docker subprocess call.
+            non_docker = [c for c in run_cmds if not c.startswith("['docker'")]
+            assert non_docker == ["['cove', 'creds', 'batch-pull']"], (
+                f"batch-pull must be the only non-docker subprocess.run "
+                f"call, got: {non_docker}"
             )
 
             def _occurred(cmd_name: str) -> bool:
@@ -1602,8 +1632,21 @@ class TestUpRestartsStaleBinds:
         return isolated_compose_resources
 
     def _run_up_with(
-        self, tmp_path, restarts, *, bundle_current, changed=(), unseals=None
+        self, tmp_path, restarts, *, bundle_current, changed=(), unseals=None,
+        vault_states=None, health=None, probes=None, sleeps=None,
+        unseal_error=None,
     ):
+        """Extended scaffolding for the compose-recreate heal tests:
+
+        - vault_states: list of (container Id, State.StartedAt) tuples
+          answered by the runtime-state `docker inspect`, consumed one per
+          call (last reused). A None entry models an unreadable state (docker
+          down / container absent). None (default) models unreadable always.
+        - health: value returned by `cove.cli.vault_health` (default: Vault
+          reachable, initialized, sealed) or an Exception to raise per call.
+        - probes / sleeps: recorder lists for vault_health calls and
+          time.sleep backoffs; pass a list to assert on it.
+        - unseal_error: exception raised by the patched ensure_unsealed."""
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -1621,6 +1664,20 @@ class TestUpRestartsStaleBinds:
             r = _R()
             if cmd[:2] == ["docker", "ps"]:
                 r.stdout = "cove-nginx\ncove-vault\ncove-dnsmasq\ncove-forgejo\n"
+            elif cmd[:2] == ["docker", "inspect"] and "{{.Id}}" in cmd[-1]:
+                # Runtime-state snapshot (Id + StartedAt) of cove-vault.
+                if vault_states:
+                    state = (
+                        vault_states.pop(0)
+                        if len(vault_states) > 1 else vault_states[0]
+                    )
+                else:
+                    state = None
+                if state is None:
+                    r.returncode = 1
+                    r.stderr = "Error: No such object: cove-vault"
+                else:
+                    r.stdout = f"{state[0]} {state[1]}\n"
             elif cmd[:2] == ["docker", "inspect"]:
                 mounts = {
                     "cove-nginx": [
@@ -1637,9 +1694,23 @@ class TestUpRestartsStaleBinds:
             return r
 
         def _fake_unseal():
+            if unseal_error is not None:
+                raise unseal_error
             if unseals is not None:
                 unseals.append(True)
             return {"sealed": False}
+
+        def _fake_health(*args, **kwargs):
+            # The heal's bounded health probe. Default: Vault reachable,
+            # initialized and sealed, so a triggered heal proceeds to
+            # ensure_unsealed (which the unseals list observes).
+            if probes is not None:
+                probes.append(health)
+            if isinstance(health, Exception):
+                raise health
+            return {"initialized": True, "sealed": True} if health is None else health
+
+        _sleep_recorder = sleeps if sleeps is not None else []
 
         with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch.object(
             cove.cli.Path, "home", classmethod(lambda cls: home)
@@ -1648,6 +1719,8 @@ class TestUpRestartsStaleBinds:
         ), patch("cove.cli.bundle_is_current", return_value=bundle_current), patch(
             "cove.cli.changed_resource_files", return_value=frozenset(changed)
         ), patch("cove.cli.ensure_unsealed", side_effect=_fake_unseal), patch(
+            "cove.cli.vault_health", side_effect=_fake_health
+        ), patch("cove.cli.time.sleep", side_effect=lambda s: _sleep_recorder.append(s)), patch(
             "cove.status.check_all", return_value=[]
         ), patch("cove.cli._detect_running_optional_profiles", return_value=[]), patch(
             "cove.cli.getpass.getpass", return_value="secret"
@@ -1751,6 +1824,227 @@ class TestUpHealsSealedVault:
         self._up(tmp_path, unseals, changed={"nginx/landing.html"})
         assert unseals == [], (
             "an untouched Vault must not be probed or unsealed"
+        )
+
+
+class TestUpHealsVaultRecreatedByCompose:
+    """Regression (two live occurrences): the PR #75 heal only covers a Vault
+    the CLI itself restarted (stale changed-file bind). When the compose run
+    itself recreates `cove-vault` — a rotated credential in the compose .env,
+    a bundle-driven service re-render, a bringup handler restart — `cove up`
+    used to complete and leave Vault SEALED:
+
+    - 2026-10-20 22:23Z: `cove up --no-provision` converge recreated
+      cove-vault; status read 'Vault API: sealed' right after up.
+    - 2026-10-21 14:58Z: operator `cove up` (rotated credential) recreated
+      cove-vault; it stayed sealed, unnoticed, for hours.
+
+    Detection: a runtime snapshot (container Id + State.StartedAt) taken
+    before the bringup compose run and compared after it. A changed Id is a
+    compose recreate; a changed StartedAt on the same Id is a restart (docker
+    restart keeps the Id) — covering bringup handlers too. An untouched Vault
+    is never probed, not even with a health GET."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_installed_resources(self, isolated_compose_resources):
+        return isolated_compose_resources
+
+    def _up(self, tmp_path, **kwargs):
+        restarts: list = []
+        TestUpRestartsStaleBinds()._run_up_with(
+            tmp_path, restarts,
+            bundle_current=kwargs.pop("bundle_current", True),
+            **kwargs
+        )
+        return restarts
+
+    def test_unseals_vault_recreated_by_compose(self, tmp_path, _fake_ansible_popen):
+        """THE failing case before the fix: nothing changed in the bundle and
+        no CLI restart ran — the compose invocation itself recreated
+        cove-vault. `cove up` must still unseal it, exactly once."""
+        unseals, probes = [], []
+        restarts = self._up(
+            tmp_path,
+            unseals=unseals,
+            probes=probes,
+            vault_states=[
+                ("id-before", "2026-10-21T10:00:00Z"),
+                ("id-after", "2026-10-21T14:58:06Z"),
+            ],
+        )
+        assert restarts == [], (
+            "precondition: no CLI restart ran; the recreate came from the "
+            f"compose invocation itself, got {restarts}"
+        )
+        assert len(probes) == 1, f"exactly one health probe, got {probes}"
+        assert unseals == [True], (
+            "a compose-recreated Vault comes up sealed; cove up must unseal "
+            f"it from the keystore, got {unseals}"
+        )
+
+    def test_unseals_vault_restarted_in_place_by_bringup_handler(
+        self, tmp_path, _fake_ansible_popen
+    ):
+        """A bringup-handler restart keeps the container Id but bumps
+        State.StartedAt — still a (re)start this `up` caused, still sealed."""
+        unseals, probes = [], []
+        self._up(
+            tmp_path,
+            unseals=unseals,
+            probes=probes,
+            vault_states=[
+                ("id-same", "2026-10-21T10:00:00Z"),
+                ("id-same", "2026-10-21T14:58:06Z"),
+            ],
+        )
+        assert len(probes) == 1, f"exactly one health probe, got {probes}"
+        assert unseals == [True], (
+            "a bringup-handler-restarted Vault comes up sealed and must be "
+            f"unsealed, got {unseals}"
+        )
+
+    def test_untouched_vault_is_never_probed(self, tmp_path, _fake_ansible_popen):
+        """The PR #75 negative property, strengthened for the compose path:
+        when nothing (re)started Vault — not the CLI restart list, not the
+        snapshot — `cove up` must not so much as health-probe it."""
+        unseals, probes, sleeps = [], [], []
+        restarts = self._up(
+            tmp_path,
+            bundle_current=False,
+            changed={"nginx/landing.html"},
+            unseals=unseals,
+            probes=probes,
+            sleeps=sleeps,
+            vault_states=[
+                ("id-stable", "2026-10-21T10:00:00Z"),
+                ("id-stable", "2026-10-21T10:00:00Z"),
+            ],
+        )
+        assert {c[2] for c in restarts} == {"cove-nginx"}, (
+            "precondition: only the nginx stale bind restarted; Vault "
+            f"untouched, got {restarts}"
+        )
+        assert probes == [], "an untouched Vault must not be probed"
+        assert unseals == [], "an untouched Vault must not be unsealed"
+        assert sleeps == [], "no retry backoff may run when Vault was untouched"
+
+    def test_vault_absent_before_up_is_healed_when_compose_starts_it(
+        self, tmp_path, _fake_ansible_popen
+    ):
+        """Stack was down (or the host rebooted): the container is absent in
+        the pre-up snapshot and running after — this `up` started it, so a
+        sealed initialized Vault must be healed."""
+        unseals, probes = [], []
+        self._up(
+            tmp_path,
+            unseals=unseals,
+            probes=probes,
+            vault_states=[
+                None,
+                ("id-new", "2026-10-21T14:58:06Z"),
+            ],
+        )
+        assert len(probes) == 1, f"exactly one health probe, got {probes}"
+        assert unseals == [True], (
+            "a Vault started by this up comes up sealed and must be unsealed, "
+            f"got {unseals}"
+        )
+
+    def test_uninitialized_vault_is_left_to_bootstrap(
+        self, tmp_path, _fake_ansible_popen, capsys
+    ):
+        """First boot: the container is brand new and Vault is not
+        initialized. ensure_unsealed would fail with 'not initialized' — the
+        heal must skip it (bootstrap_vault.yml owns init+unseal) and, on
+        --no-provision, warn that bootstrap was skipped."""
+        unseals, probes = [], []
+        self._up(
+            tmp_path,
+            unseals=unseals,
+            probes=probes,
+            health={"initialized": False, "sealed": True},
+            vault_states=[None, ("id-new", "2026-10-21T14:58:06Z")],
+        )
+        assert len(probes) == 1, f"exactly one health probe, got {probes}"
+        assert unseals == [], (
+            "an uninitialized Vault must not be unsealed; bootstrap_vault.yml "
+            "initializes it"
+        )
+        assert "not initialized" in capsys.readouterr().err
+
+    def test_unreachable_vault_warns_and_is_left_to_the_status_gate(
+        self, tmp_path, _fake_ansible_popen, capsys
+    ):
+        """A recreated Vault that never answers its health endpoint must not
+        hang `up` (bounded retries, no unseal attempt, no keystore reads) and
+        must not pass silently: a clear warning is printed and the end-of-up
+        status gate reports Vault API failed (sealed/unreachable = ok=False,
+        so `up` still exits 1)."""
+        unseals, sleeps = [], []
+        self._up(
+            tmp_path,
+            unseals=unseals,
+            sleeps=sleeps,
+            health=RuntimeError("Vault unreachable at https://vault.cove.local/"),
+            vault_states=[
+                ("id-before", "2026-10-21T10:00:00Z"),
+                ("id-after", "2026-10-21T14:58:06Z"),
+            ],
+        )
+        assert unseals == [], (
+            "no unseal (and so no keystore read) may be attempted while Vault "
+            f"is unreachable, got {unseals}"
+        )
+        assert len(sleeps) == 4, (
+            f"retries must be bounded (attempt count minus one backoffs), "
+            f"got {len(sleeps)}"
+        )
+        assert "may still be sealed" in capsys.readouterr().err
+
+    def test_unseal_failure_fails_loud(self, tmp_path, _fake_ansible_popen):
+        """Same failure semantics as the PR #75 stale-bind path: a heal that
+        ran but could not unseal aborts `up` with a ClickException instead of
+        leaving a sealed Vault behind a green-looking run."""
+        unseals: list = []
+        with pytest.raises(click.ClickException, match="could not be unsealed"):
+            self._up(
+                tmp_path,
+                unseals=unseals,
+                unseal_error=RuntimeError(
+                    "Keystore read failed for cove/vault/unseal-1"
+                ),
+                vault_states=[
+                    ("id-before", "2026-10-21T10:00:00Z"),
+                    ("id-after", "2026-10-21T14:58:06Z"),
+                ],
+            )
+
+    def test_compose_recreate_and_cli_restart_heal_exactly_once(
+        self, tmp_path, _fake_ansible_popen
+    ):
+        """When both detectors fire (compose recreated the container AND a
+        changed vault.hcl triggered the CLI stale-bind restart), the heal
+        must run once, not twice."""
+        unseals, probes = [], []
+        restarts: list = []
+        TestUpRestartsStaleBinds()._run_up_with(
+            tmp_path,
+            restarts,
+            bundle_current=False,
+            changed={"vault/vault.hcl"},
+            unseals=unseals,
+            probes=probes,
+            vault_states=[
+                ("id-before", "2026-10-21T10:00:00Z"),
+                ("id-after", "2026-10-21T14:58:06Z"),
+            ],
+        )
+        assert "cove-vault" in {c[2] for c in restarts}, (
+            f"precondition: the CLI stale-bind restart ran, got {restarts}"
+        )
+        assert len(unseals) == 1 and len(probes) == 1, (
+            f"both detectors firing must heal exactly once: "
+            f"unseals={unseals}, probes={probes}"
         )
 
 
