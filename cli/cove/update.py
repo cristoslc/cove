@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -85,25 +86,61 @@ def _version_tuple(v: str):
         raise ValueError(f"not a semver: {v!r}") from exc
 
 
+_wheel_tmpdir: tempfile.TemporaryDirectory | None = None
+
+
+def _release_wheel_tmpdir() -> None:
+    """Delete the temp tree holding the wheel the update flow last installed
+    and compared. Issue #80: that wheel must outlive `_install_wheel` (the
+    post-install pin-compare reads it), so its temp dir is released by the
+    flow — `_do_update`'s finally — not by the function that built it."""
+    global _wheel_tmpdir
+    if _wheel_tmpdir is not None:
+        _wheel_tmpdir.cleanup()
+        _wheel_tmpdir = None
+
+
 def _install_wheel(tag: str) -> str:
-    """Build the wheel at `tag` in a throwaway worktree (mirrors the promote
-    flow: sync compose resources -> build -> uv tool install --force), fail
-    loud if the build does not produce one, and return the wheel path so the
-    convergence gate can inspect the NEW wheel's bundled pins (the running
-    process still holds the old code until restart)."""
-    with tempfile.TemporaryDirectory(prefix="cove-update-") as tmp:
-        worktree = Path(tmp) / "repo"
+    """Build the wheel at `tag` in a throwaway git worktree (mirrors the
+    promote flow: sync compose resources -> build -> uv tool install --force),
+    fail loud if the build does not produce one, install it, and return the
+    wheel path so the convergence gate can inspect the NEW wheel's bundled
+    pins (the running process still holds the old code until restart).
+
+    The returned path is the exact file `uv tool install` consumed, and it
+    stays readable until `_release_wheel_tmpdir()` (called by `_do_update`
+    after the pin-compare). Issue #80: the path used to live inside a
+    TemporaryDirectory that was deleted the moment this function returned,
+    so the post-install pin-compare crashed with FileNotFoundError on a
+    dangling path. The built wheel lands OUTSIDE the git worktree so
+    worktree cleanup cannot take it with it."""
+    global _wheel_tmpdir
+    _release_wheel_tmpdir()  # a previous run's wheel is dead weight now
+    tmp = tempfile.TemporaryDirectory(prefix="cove-update-")
+    _wheel_tmpdir = tmp
+    worktree = Path(tmp.name) / "repo"
+    dist = Path(tmp.name) / "dist"
+    try:
         subprocess.run(
             ["git", "worktree", "add", "--detach", str(worktree), f"v{tag}"],
             check=True, capture_output=True, text=True,
         )
         try:
+            # Promote parity: the wheel must bundle this tag's compose pins.
+            # `cli/cove/resources/compose/` is a gitignored build artifact,
+            # so a fresh worktree has to run the tag's own sync script
+            # before building — same as scripts/release.sh does.
             subprocess.run(
-                ["uv", "build", "--directory", str(worktree / "cli"),
-                 "--wheel", "--out-dir", str(worktree / "dist")],
+                [sys.executable,
+                 str(worktree / "cli" / "scripts" / "sync_compose_resources.py")],
                 check=True, capture_output=True, text=True,
             )
-            wheels = sorted((worktree / "dist").glob("cove_cli-*.whl"))
+            subprocess.run(
+                ["uv", "build", "--directory", str(worktree / "cli"),
+                 "--wheel", "--out-dir", str(dist)],
+                check=True, capture_output=True, text=True,
+            )
+            wheels = sorted(dist.glob("cove_cli-*.whl"))
             if not wheels:
                 raise click.ClickException(
                     f"wheel build produced nothing for v{tag} — cannot update."
@@ -118,6 +155,9 @@ def _install_wheel(tag: str) -> str:
                 capture_output=True, text=True, check=False,
             )
         return str(wheels[-1])
+    except BaseException:
+        _release_wheel_tmpdir()
+        raise
 
 
 def _stack_running() -> bool:
@@ -179,6 +219,13 @@ def _bundled_compose_files(wheel_path: str | None) -> dict[str, str] | None:
             return None
         return _compose_files(root)
     prefix = "cove/resources/compose/"
+    if not Path(wheel_path).is_file():
+        # Issue #80: never a raw FileNotFoundError traceback — name the
+        # wheel that is missing so the operator can re-run `cove update`.
+        raise click.ClickException(
+            f"the installed update wheel is missing ({wheel_path}) — cannot "
+            "compare bundled pins. Re-run `cove update`."
+        )
     with zipfile.ZipFile(wheel_path) as zf:
         files = {
             name[len(prefix):]: zf.read(name).decode("utf-8", errors="replace")
@@ -265,20 +312,26 @@ def _do_update(check: bool, quiet: bool) -> None:
         )
 
     wheel_path: str | None = None
-    if _version_tuple(latest) > _version_tuple(installed):
-        click.echo(f"Updating cove: {installed} -> {latest}...")
-        wheel_path = _install_wheel(latest)
-        click.echo(f"Installed cove {latest}.")
-    elif not quiet:
-        click.echo(f"cove cli is up to date ({installed}).")
+    try:
+        if _version_tuple(latest) > _version_tuple(installed):
+            click.echo(f"Updating cove: {installed} -> {latest}...")
+            wheel_path = _install_wheel(latest)
+            click.echo(f"Installed cove {latest}.")
+        elif not quiet:
+            click.echo(f"cove cli is up to date ({installed}).")
 
-    # Converge the stack to the (possibly new) wheel's pins — but only when
-    # it changes something AND the stack is running (operator decision
-    # 2026-10-13): updates never resurrect stopped services and never run
-    # bring-up on a converged stack. Quiet mode is the scheduled path: no
-    # TTY, no 1Password, no provisioning; floating tags are force-re-pulled
-    # so they actually receive upstream patches.
-    _converge(check=False, quiet=quiet, wheel_path=wheel_path)
+        # Converge the stack to the (possibly new) wheel's pins — but only when
+        # it changes something AND the stack is running (operator decision
+        # 2026-10-13): updates never resurrect stopped services and never run
+        # bring-up on a converged stack. Quiet mode is the scheduled path: no
+        # TTY, no 1Password, no provisioning; floating tags are force-re-pulled
+        # so they actually receive upstream patches.
+        _converge(check=False, quiet=quiet, wheel_path=wheel_path)
+    finally:
+        # The pin-compare has read the installed wheel (issue #80): the temp
+        # tree holding it can go. Never released mid-flow — the convergence
+        # gate needs the file until `_convergence_pending` has decided.
+        _release_wheel_tmpdir()
 
 
 def _cove_bin() -> str:

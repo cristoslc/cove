@@ -149,3 +149,19 @@ explicit way to start the stack. The new wheel's bundled pins are read from
 the wheel itself, because the process doing the comparison still runs the
 old code until restart. Fail-soft default: if the bundled tree cannot be
 read, convergence is assumed pending (converge rather than silently skip).
+
+## Addendum (2026-10-21): the compared wheel is the installed wheel
+
+Issue #80: the pin-compare crashed with FileNotFoundError because the wheel
+path `_install_wheel` returned pointed into a TemporaryDirectory deleted the
+moment the function returned — the build was fine, the path dangled. The
+rule now: the pin-compare reads the exact wheel file `uv tool install`
+consumed, and its temp tree is released by the update flow after the
+comparison (a missing wheel is a fail-loud ClickException, never a raw
+traceback). Two related corrections in the same fix: the temp-worktree build
+now runs the tag's own `sync_compose_resources.py` before `uv build`
+(`cli/cove/resources/compose/` is a gitignored build artifact, so a fresh
+worktree previously produced a wheel with no bundled pins at all), and the
+wheel is built outside the git worktree so worktree cleanup cannot take it.
+Downloading the release asset instead of rebuilding at the tag remains the
+design-pure path if a second machine ever makes asset plumbing worth it.
