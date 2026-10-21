@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:413b2bfa-adfe-4f02-8895-186f0fb6dbb6",
+  "serialNumber": "urn:uuid:c3b288ff-547a-4382-b324-20e23611c262",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-09T16:28:09+00:00",
+    "timestamp": "2026-10-21T18:51:38+00:00",
     "tools": {
       "components": [
         {
@@ -15,7 +15,7 @@
           },
           "group": "aquasecurity",
           "name": "trivy",
-          "version": "0.75.0"
+          "version": "0.76.0"
         }
       ]
     },
@@ -110,7 +110,7 @@
   },
   "components": [
     {
-      "bom-ref": "800d98a4-4cae-4a4e-9c2f-43912b573d78",
+      "bom-ref": "777bb640-dc6a-4ad0-9643-2ca61aed9c75",
       "type": "application",
       "name": "bin/forgejo-runner",
       "properties": [
@@ -125,7 +125,7 @@
       ]
     },
     {
-      "bom-ref": "b3e7dbb0-4f2d-456d-a668-70892454604d",
+      "bom-ref": "9655d6a6-0aa7-464b-b285-a77f9589f590",
       "type": "operating-system",
       "name": "alpine",
       "version": "3.22.2",
@@ -3991,13 +3991,13 @@
   ],
   "dependencies": [
     {
-      "ref": "800d98a4-4cae-4a4e-9c2f-43912b573d78",
+      "ref": "777bb640-dc6a-4ad0-9643-2ca61aed9c75",
       "dependsOn": [
         "pkg:golang/code.forgejo.org/forgejo/runner/v11@v11.3.1%2Bdirty"
       ]
     },
     {
-      "ref": "b3e7dbb0-4f2d-456d-a668-70892454604d",
+      "ref": "9655d6a6-0aa7-464b-b285-a77f9589f590",
       "dependsOn": [
         "pkg:apk/alpine/alpine-baselayout@3.7.0-r0?arch=aarch64&distro=3.22.2",
         "pkg:apk/alpine/alpine-release@3.22.2-r0?arch=aarch64&distro=3.22.2",
@@ -4676,8 +4676,8 @@
     {
       "ref": "pkg:oci/runner@sha256:287433414b987b89896399683034818db198079053d84ca473aadb06ebad8b9f?arch=arm64&repository_url=data.forgejo.org%2Fforgejo%2Frunner",
       "dependsOn": [
-        "800d98a4-4cae-4a4e-9c2f-43912b573d78",
-        "b3e7dbb0-4f2d-456d-a668-70892454604d"
+        "777bb640-dc6a-4ad0-9643-2ca61aed9c75",
+        "9655d6a6-0aa7-464b-b285-a77f9589f590"
       ]
     }
   ],

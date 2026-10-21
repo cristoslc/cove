@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:43953748-195b-4321-a12f-f183c6371335",
+  "serialNumber": "urn:uuid:d8cf1ff2-6400-419e-b0f2-605095e1c44c",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-09T16:28:27+00:00",
+    "timestamp": "2026-10-21T18:51:39+00:00",
     "tools": {
       "components": [
         {
@@ -15,15 +15,15 @@
           },
           "group": "aquasecurity",
           "name": "trivy",
-          "version": "0.75.0"
+          "version": "0.76.0"
         }
       ]
     },
     "component": {
-      "bom-ref": "pkg:oci/cove-litellm@sha256:cd0c9fa2c7caaa0843885c04581be90fb7a069aefcc81871a07defde4cf9c90b?arch=arm64&repository_url=index.docker.io%2Flibrary%2Fcove-litellm",
+      "bom-ref": "pkg:oci/cove-litellm@sha256:927ae66f10959c16570daf42ad96f08ea57bdd7ec4fc2f990af717e0f434c46d?arch=arm64&repository_url=index.docker.io%2Flibrary%2Fcove-litellm",
       "type": "container",
       "name": "cove-litellm:1.84.0",
-      "purl": "pkg:oci/cove-litellm@sha256:cd0c9fa2c7caaa0843885c04581be90fb7a069aefcc81871a07defde4cf9c90b?arch=arm64&repository_url=index.docker.io%2Flibrary%2Fcove-litellm",
+      "purl": "pkg:oci/cove-litellm@sha256:927ae66f10959c16570daf42ad96f08ea57bdd7ec4fc2f990af717e0f434c46d?arch=arm64&repository_url=index.docker.io%2Flibrary%2Fcove-litellm",
       "properties": [
         {
           "name": "aquasecurity:trivy:DiffID",
@@ -71,7 +71,7 @@
         },
         {
           "name": "aquasecurity:trivy:ImageID",
-          "value": "sha256:cd0c9fa2c7caaa0843885c04581be90fb7a069aefcc81871a07defde4cf9c90b"
+          "value": "sha256:927ae66f10959c16570daf42ad96f08ea57bdd7ec4fc2f990af717e0f434c46d"
         },
         {
           "name": "aquasecurity:trivy:Labels:com.docker.compose.project",
@@ -91,7 +91,7 @@
         },
         {
           "name": "aquasecurity:trivy:RepoDigest",
-          "value": "cove-litellm@sha256:cd0c9fa2c7caaa0843885c04581be90fb7a069aefcc81871a07defde4cf9c90b"
+          "value": "cove-litellm@sha256:927ae66f10959c16570daf42ad96f08ea57bdd7ec4fc2f990af717e0f434c46d"
         },
         {
           "name": "aquasecurity:trivy:RepoTag",
@@ -110,7 +110,7 @@
   },
   "components": [
     {
-      "bom-ref": "6e60479e-06ed-4db6-8c83-6288d2beff00",
+      "bom-ref": "1ca6c225-5f8a-45d1-ad87-45e5a1109f78",
       "type": "library",
       "name": "requests",
       "version": "2.34.2",
@@ -148,7 +148,7 @@
       ]
     },
     {
-      "bom-ref": "777079dd-c661-4c20-ae5f-0ae85a67bda7",
+      "bom-ref": "33dde917-5c81-46fa-a05b-c27e7ba324fd",
       "type": "operating-system",
       "name": "debian",
       "version": "13.6",
@@ -164,7 +164,7 @@
       ]
     },
     {
-      "bom-ref": "b5a30d5c-996e-4113-a15f-9c216bf13d2f",
+      "bom-ref": "c21e7451-6a6c-4586-9c1b-9526af2a9d3c",
       "type": "library",
       "name": "distro",
       "version": "1.9.0",
@@ -13466,11 +13466,11 @@
   ],
   "dependencies": [
     {
-      "ref": "6e60479e-06ed-4db6-8c83-6288d2beff00",
+      "ref": "1ca6c225-5f8a-45d1-ad87-45e5a1109f78",
       "dependsOn": []
     },
     {
-      "ref": "777079dd-c661-4c20-ae5f-0ae85a67bda7",
+      "ref": "33dde917-5c81-46fa-a05b-c27e7ba324fd",
       "dependsOn": [
         "pkg:deb/debian/apt@3.0.3?arch=arm64&distro=debian-13.6",
         "pkg:deb/debian/bash@5.2.37-2%2Bb9?arch=arm64&distro=debian-13.6",
@@ -13510,7 +13510,7 @@
       ]
     },
     {
-      "ref": "b5a30d5c-996e-4113-a15f-9c216bf13d2f",
+      "ref": "c21e7451-6a6c-4586-9c1b-9526af2a9d3c",
       "dependsOn": []
     },
     {
@@ -14283,11 +14283,11 @@
       "dependsOn": []
     },
     {
-      "ref": "pkg:oci/cove-litellm@sha256:cd0c9fa2c7caaa0843885c04581be90fb7a069aefcc81871a07defde4cf9c90b?arch=arm64&repository_url=index.docker.io%2Flibrary%2Fcove-litellm",
+      "ref": "pkg:oci/cove-litellm@sha256:927ae66f10959c16570daf42ad96f08ea57bdd7ec4fc2f990af717e0f434c46d?arch=arm64&repository_url=index.docker.io%2Flibrary%2Fcove-litellm",
       "dependsOn": [
-        "6e60479e-06ed-4db6-8c83-6288d2beff00",
-        "777079dd-c661-4c20-ae5f-0ae85a67bda7",
-        "b5a30d5c-996e-4113-a15f-9c216bf13d2f",
+        "1ca6c225-5f8a-45d1-ad87-45e5a1109f78",
+        "33dde917-5c81-46fa-a05b-c27e7ba324fd",
+        "c21e7451-6a6c-4586-9c1b-9526af2a9d3c",
         "pkg:npm/%40prisma/client@5.17.0",
         "pkg:npm/%40prisma/debug@5.17.0",
         "pkg:npm/%40prisma/engines-version@5.17.0-31.393aa359c9ad4a4bb28630fb5613f9c281cde053",
