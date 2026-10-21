@@ -20,6 +20,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: manual
+  - path: "cove up heals a Vault (re)started by the up itself (CLI stale-bind restart, compose recreate, bringup handler); an untouched Vault is never probed"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable
   - path: "cove down"
     blast_radius: high
     coverage:
