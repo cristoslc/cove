@@ -4,17 +4,24 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.15.0 (2026-10-21)
 
 ### Added
 - **`cove --sbom`** — print-only inventory of the pinned artifacts, parsed live from `compose/` (group_vars authoritative where it carries a pin; `python -m cove.pins --json` for the machine-readable form). Deliberately an about item, not a command with state: it prints the pin matrix and exits, and bare `cove` still shows help. Generation stays a development step: `scripts/sbom.sh` writes CycloneDX via trivy into `sbom/`, committed inside version-bump PRs so the PR diff is the SBOM delta.
 - **Stack-update runbook** — `docs/guides/stack-update-guide.md` carries the update SLA (patch merged within a day, minor within 3, major filed as a gap-analysis issue instead of a PR), the master pin inventory, the per-component upgrade procedure, the SBOM process, and the design for the Forgejo `version-audit` workflow plus the BB reviewer automation (planned; activation documented there).
 - **Compose-source guards: refuse a source that would collapse binds or hijack the live stack** — a compose dir whose `.env` (or process environment) has no non-empty `COVE_DATA_ROOT` / `FORGEJO_DATA_ROOT` now aborts loudly before Ansible or Docker run instead of interpolating empty and collapsing every `${COVE_DATA_ROOT}/x` bind to container-absolute `/x`; a compose dir that declares the live `name: cove` while pointing at a different data root is refused unless `COVE_ALLOW_FOREIGN_DATA_ROOT` is set. Covers `cove up`, `cove down`, `cove uninstall --all`, every service `up`/`down` (ade, speedtest, toolhive, runner, litellm, tunnel), plus an Ansible pre-flight assert in `bringup.yml` for a direct `ansible-playbook` run. Remediation for incident 20261018-015539.
 
+### Fixed
+- **dnsmasq publishes UDP alongside TCP on 5353** — the compose `ports:` entry was TCP-only (`0.0.0.0:${DNSMASQ_PORT:-5353}:5353`, no `/udp`), so Docker never forwarded UDP and macOS's `/etc/resolver/cove` (`nameserver 127.0.0.1`, `port 5353`) got no answer for any `*.cove` name; resolution silently survived on `/etc/hosts` aliases. Both protocols now publish (DNS is UDP-first; TCP stays for large/truncated responses). Note for other Cove machines: a host process squatting UDP 5353 still blocks delivery at the OS level — the publish is necessary but the port must also be free.
+- **Compose re-extraction preserves the inode of every unchanged bundled file, and only containers holding genuinely changed files restart** — the old prune deleted all non-preserved entries and re-copied the full bundle, giving every file a fresh inode; any container binding a bundled file then held a stale, unlinked inode after the next extraction (nginx 404'd its own landing page and configs). Pruning is now content-aware: byte- and mode-identical files keep their inode, directories recurse instead of being removed wholesale, and `cove up` restarts only containers whose bound files actually changed. The runtime root CA (`certs/rootCA.pem`) is preserved across extractions and every compose-dir file bind's source type is validated pre-flight. Remediation for incidents 20261019-155756 and 20261019-201500.
+- **`cove up` unseals Vault after any restart or recreate of its container, whatever caused it** — the heal previously fired only when the CLI itself restarted Vault for a changed `vault.hcl`, so a compose-initiated recreate (rotated credential in `.env`, bundle change, bringup handler) left Vault sealed after `up` reported success (two live occurrences, 2026-10-20/21). `cove up` now snapshots Vault's container identity (Id + StartedAt) before the compose run and unseals from the OS keystore when it changed; the health probe is bounded so unattended runs cannot hang, unseal failures fail loud, and an untouched Vault is never probed.
+- **The landing page's LiteLLM card links to the admin console (`/ui/`), not the API root.**
+
 ### Security
 - **`adguard/dnsproxy` pinned `latest` → `v0.86.0@sha256:4d65bafb…`** — the DoH sidecar was the last image in the stack floating on `:latest`, violating the documented no-latest posture; the pinned tag and current `latest` share the same image-index digest, so no runtime change occurs.
 
 ### Changed
+- **Container-touching tests are opt-in behind `COVE_ALLOW_LIVE_TESTS`** — tests marked `@pytest.mark.live` (anything touching a real container or the running stack) skip by default with a skip message naming the flag, and an autouse guard aborts on any stack-mutating `docker` command from an un-opted-in test, so an unfiltered `pytest` can no longer recreate the live stack (remediation for incident 20261018-015539). The `-m` filter selects tiers; it is not what keeps the stack safe.
 - **`scripts/release.sh` attaches the committed `sbom/*.cdx.json` snapshots to releases on both hosts** and fails loud when the snapshot directory is empty (run them with `scripts/sbom.sh` first).
 
 ## 0.14.1 (2026-10-17)

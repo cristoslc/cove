@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:728dfc6e-813a-4693-a358-74f2ad51a1f3",
+  "serialNumber": "urn:uuid:3d787216-345a-4af1-b50d-5730cf6824be",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-09T16:28:14+00:00",
+    "timestamp": "2026-10-21T18:51:39+00:00",
     "tools": {
       "components": [
         {
@@ -15,7 +15,7 @@
           },
           "group": "aquasecurity",
           "name": "trivy",
-          "version": "0.75.0"
+          "version": "0.76.0"
         }
       ]
     },
@@ -154,7 +154,7 @@
   },
   "components": [
     {
-      "bom-ref": "6cbc4d44-f9e5-4730-87e7-7e1215774757",
+      "bom-ref": "4d206904-c934-41ef-bb6a-7dab2c6e8b52",
       "type": "operating-system",
       "name": "alpine",
       "version": "3.24.1",
@@ -170,7 +170,7 @@
       ]
     },
     {
-      "bom-ref": "cfcc2284-4529-41ea-bc3f-3936a3a3cf71",
+      "bom-ref": "cc22a931-6869-4dee-b51e-187188497f77",
       "type": "application",
       "name": "app/www/vendor/composer/installed.json",
       "properties": [
@@ -12024,7 +12024,7 @@
   ],
   "dependencies": [
     {
-      "ref": "6cbc4d44-f9e5-4730-87e7-7e1215774757",
+      "ref": "4d206904-c934-41ef-bb6a-7dab2c6e8b52",
       "dependsOn": [
         "pkg:apk/alpine/alpine-baselayout@3.7.2-r1?arch=aarch64&distro=3.24.1",
         "pkg:apk/alpine/alpine-release@3.24.1-r0?arch=aarch64&distro=3.24.1",
@@ -12075,7 +12075,7 @@
       ]
     },
     {
-      "ref": "cfcc2284-4529-41ea-bc3f-3936a3a3cf71",
+      "ref": "cc22a931-6869-4dee-b51e-187188497f77",
       "dependsOn": [
         "pkg:composer/chrisullyott/php-filesize@v4.2.1",
         "pkg:composer/codewithdennis/filament-simple-alert@v4.0.5",
@@ -13956,8 +13956,8 @@
     {
       "ref": "pkg:oci/speedtest-tracker@sha256:e4732e8e9073bdd5b419959c1151b761afa591166328d2ab751adc1e3d070563?arch=arm64&repository_url=lscr.io%2Flinuxserver%2Fspeedtest-tracker",
       "dependsOn": [
-        "6cbc4d44-f9e5-4730-87e7-7e1215774757",
-        "cfcc2284-4529-41ea-bc3f-3936a3a3cf71",
+        "4d206904-c934-41ef-bb6a-7dab2c6e8b52",
+        "cc22a931-6869-4dee-b51e-187188497f77",
         "pkg:npm/swagger-php-tools@1.0.0"
       ]
     }

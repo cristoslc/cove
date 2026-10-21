@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:f43c8a61-6812-4bc6-b506-109a934429b3",
+  "serialNumber": "urn:uuid:a3495011-5591-496d-8709-a0fb04d08792",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-09T16:28:23+00:00",
+    "timestamp": "2026-10-21T18:51:39+00:00",
     "tools": {
       "components": [
         {
@@ -15,7 +15,7 @@
           },
           "group": "aquasecurity",
           "name": "trivy",
-          "version": "0.75.0"
+          "version": "0.76.0"
         }
       ]
     },
@@ -126,7 +126,7 @@
   },
   "components": [
     {
-      "bom-ref": "bd4bc2ca-a9fc-4897-9663-49b46260f3a7",
+      "bom-ref": "ca2c07f5-98ad-4e68-bbb9-27b6465da30e",
       "type": "operating-system",
       "name": "debian",
       "version": "13.5",
@@ -11997,7 +11997,7 @@
   ],
   "dependencies": [
     {
-      "ref": "bd4bc2ca-a9fc-4897-9663-49b46260f3a7",
+      "ref": "ca2c07f5-98ad-4e68-bbb9-27b6465da30e",
       "dependsOn": [
         "pkg:deb/debian/apt@3.0.3?arch=arm64&distro=debian-13.5",
         "pkg:deb/debian/bash@5.2.37-2%2Bb9?arch=arm64&distro=debian-13.5",
@@ -12768,7 +12768,7 @@
     {
       "ref": "pkg:oci/headroom@sha256:50b85d8e320cfcdf1b38919bb7ae067b93ff7a8de0a93f05b2c1246370200d1c?arch=arm64&repository_url=ghcr.io%2Fchopratejas%2Fheadroom",
       "dependsOn": [
-        "bd4bc2ca-a9fc-4897-9663-49b46260f3a7",
+        "ca2c07f5-98ad-4e68-bbb9-27b6465da30e",
         "pkg:pypi/aiohappyeyeballs@2.6.2",
         "pkg:pypi/aiohttp@3.14.1",
         "pkg:pypi/aiosignal@1.4.0",
