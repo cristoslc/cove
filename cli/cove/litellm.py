@@ -22,13 +22,6 @@ COVE_ADMIN_ITEM_TITLE = "Cove Admin"
 MASTER_KEY_OP_REF = f"op://{LITELLM_OP_VAULT}/{LITELLM_ITEM_TITLE}/master_key"
 UI_USERNAME_OP_REF = f"op://{LITELLM_OP_VAULT}/{COVE_ADMIN_ITEM_TITLE}/username"
 UI_PASSWORD_OP_REF = f"op://{LITELLM_OP_VAULT}/{COVE_ADMIN_ITEM_TITLE}/password"
-# Ollama PROXY key — the key the LiteLLM proxy holds in compose/.env — shared
-# (non-hostname) 1Password item, mirrored in cove.creds.OP_REFS ("ollama") so
-# `cove creds batch-pull` caches it. Authoritative ref supplied by
-# thr_8esem8hrnw after the 2026-10-20 rotation (item "Ollama-Cloud | API |
-# litellm-2026-10-20"; field "credential" is the only field to read). The
-# desktop-client keys are a SEPARATE item and must never be added here.
-OLLAMA_OP_REF = "op://Private/axk3m43b6k76hm2drteesppf64/credential"
 
 
 def _compose_cmd(*args: str) -> list[str]:
@@ -141,12 +134,12 @@ def _vault_get(op_ref: str):
     return result.stdout.strip()
 
 
-def _vault_put(op_ref: str, label: str = "LiteLLM master key") -> str:
+def _vault_put(op_ref: str) -> str:
     """Cache op_ref in Vault and return the resolved value."""
     result = _run_cove_creds("vault-put", op_ref)
     if result.returncode != 0:
         raise click.ClickException(
-            f"Failed to cache {label} in Vault: {result.stderr.strip()}"
+            f"Failed to cache LiteLLM master key in Vault: {result.stderr.strip()}"
         )
     return result.stdout.strip()
 
@@ -225,58 +218,6 @@ def _ensure_master_key() -> str:
     return value
 
 
-def _ensure_ollama_key() -> str:
-    """Return a usable OLLAMA_API_KEY from the per-host Ollama 1Password item.
-
-    Resolution order is STRICT: (1) an explicit OLLAMA_API_KEY env var wins,
-    (2) the Vault cache for the per-host op_ref, (3) a single fetch from
-    1Password into the Vault cache (`vault-put`). There is NO
-    generate-a-new-key fallback: unlike the master key, this key already
-    exists in 1Password, so a missing item is a configuration error —
-    generating a new one would orphan the real credential.
-
-    UNLIKE `_ensure_master_key()`, this function NEVER reads or reuses a
-    value already present in the compose .env. That reuse is precisely the
-    drift this function exists to fix: on 2026-10-20 the proxy served a
-    stale, hand-added OLLAMA_API_KEY out of .env while 1Password held the
-    current key. Here the .env line is a write-only projection of 1Password
-    state, never a source.
-
-    Fail loud: if the 1Password item is missing or empty, raise and point at
-    `cove creds batch-pull`."""
-    op_ref = OLLAMA_OP_REF
-
-    # 1. Operator explicitly set it — honor directly.
-    explicit = os.environ.get("OLLAMA_API_KEY")
-    if explicit:
-        _upsert_env("OLLAMA_API_KEY", explicit)
-        return explicit
-
-    # 2. Cached in Vault — 1Password is the source of truth, never the .env.
-    cached = _vault_get(op_ref)
-    if cached:
-        _upsert_env("OLLAMA_API_KEY", cached)
-        return cached
-
-    # 3. Not cached — fetch once from 1Password into the Vault cache.
-    try:
-        value = _vault_put(op_ref, label="Ollama API key")
-    except click.ClickException as exc:
-        raise click.ClickException(
-            f"OLLAMA_API_KEY could not be resolved from the Ollama 1Password "
-            f"item ({exc.message}). Provision the item '{op_ref}', then run "
-            "`cove creds batch-pull`."
-        ) from exc
-    if not value:
-        raise click.ClickException(
-            f"OLLAMA_API_KEY is missing: the Ollama 1Password item "
-            f"'{op_ref}' returned no credential value. Provision the item, "
-            "then run `cove creds batch-pull`."
-        )
-    _upsert_env("OLLAMA_API_KEY", value)
-    return value
-
-
 def _inject_admin_env() -> None:
     """Inject the shared admin username/password into the compose .env so a
     fresh deploy seeds the correct admin identity (IaC).
@@ -311,7 +252,6 @@ def up():
     """Start the LiteLLM proxy and Headroom sidecar."""
     ensure_compose_source_ready(resolve_compose_dir())
     _ensure_master_key()
-    _ensure_ollama_key()
     _prepare_runtime_files()
     click.echo("Starting LiteLLM proxy...")
     subprocess.run(_compose_cmd("--profile", "litellm", "up", "-d", "--build"), check=True)
