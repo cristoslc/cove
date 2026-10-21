@@ -11,6 +11,7 @@ from importlib.resources import files
 import tempfile
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -482,3 +483,171 @@ def installed_or_up_calls(calls):
         c for c in calls
         if ("tool" in c and "install" in c) or (c and c[0].endswith("cove") and "up" in c)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Issue #80: `cove update` post-install pin-compare crashed with
+# FileNotFoundError. The wheel path `_install_wheel` returned pointed into a
+# TemporaryDirectory that was deleted the moment the function returned — the
+# build itself was fine (the install consumed the wheel); the path dangled.
+# ---------------------------------------------------------------------------
+
+
+def _fake_wheel_world(calls, build_wheel):
+    """subprocess.run fake for the update flow: ls-remote answers v0.16.0,
+    git worktree / uv tool install / resource sync succeed, and the
+    `uv build` call delegates to build_wheel(cmd), which must create the
+    wheel file at the --out-dir the command names."""
+    def fake_run(cmd, *a, **kw):
+        cmd = [str(c) for c in cmd]
+        calls.append(cmd)
+        if "ls-remote" in cmd:
+            return SimpleNamespace(returncode=0, stdout=_ls_remote(["v0.16.0"]), stderr="")
+        if cmd[:2] == ["uv", "build"]:
+            if "--out-dir" in cmd:
+                build_wheel(cmd)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    return fake_run
+
+
+def _write_wheel(out_dir: Path, name: str = "cove_cli-0.16.0-py3-none-any.whl") -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    wheel = out_dir / name
+    with zipfile.ZipFile(wheel, "w") as zf:
+        zf.writestr("cove/__init__.py", "")
+    return wheel
+
+
+class TestInstallWheelLifecycle:
+    """Issue #80: the pin-compare must read the wheel that was actually
+    installed, and a missing wheel fails loud (ClickException), never a raw
+    FileNotFoundError."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_wheel_state(self):
+        import cove.update as upd
+
+        upd._release_wheel_tmpdir()
+        yield
+        upd._release_wheel_tmpdir()
+
+    def test_returned_wheel_path_survives_the_return(self, monkeypatch):
+        import cove.update as upd
+
+        calls = []
+        monkeypatch.setattr(
+            upd.subprocess, "run",
+            _fake_wheel_world(calls, lambda cmd: _write_wheel(
+                Path(cmd[cmd.index("--out-dir") + 1]))),
+        )
+        wheel = upd._install_wheel("0.16.0")
+        assert Path(wheel).is_file(), (
+            "the returned wheel path must still exist after _install_wheel "
+            "returns (issue #80: it pointed into a deleted TemporaryDirectory)"
+        )
+        with zipfile.ZipFile(wheel):
+            pass
+        install_cmd = next(c for c in calls if "tool" in c and "install" in c)
+        assert str(wheel) in [str(c) for c in install_cmd], (
+            "uv tool install must consume exactly the returned wheel"
+        )
+
+    def test_failed_build_leaves_no_wheel_state(self, monkeypatch):
+        import cove.update as upd
+
+        def fake_run(cmd, *a, **kw):
+            cmd = [str(c) for c in cmd]
+            if cmd[:2] == ["uv", "build"]:
+                raise subprocess.CalledProcessError(1, cmd)
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        with pytest.raises(subprocess.CalledProcessError):
+            upd._install_wheel("0.16.0")
+        assert upd._wheel_tmpdir is None, "a failed build must not leave temp state"
+
+    def test_missing_wheel_fails_loud_not_file_not_found(self, tmp_path):
+        import click
+
+        import cove.update as upd
+
+        missing = tmp_path / "gone" / "cove_cli-0.16.0-py3-none-any.whl"
+        with pytest.raises(click.ClickException) as excinfo:
+            upd._bundled_compose_files(str(missing))
+        assert str(missing) in str(excinfo.value), (
+            "the error must name the wheel that is missing"
+        )
+
+
+class TestUpdateFlowWheel:
+    def test_update_compares_pins_from_the_built_wheel(
+        self, deployed_compose, monkeypatch,
+    ):
+        """Full flow (issue #80): install the built wheel, then converge —
+        the pin-compare reads the wheel the flow itself produced, so an
+        identical bundled tree reads as converged and nothing crashes."""
+        import cove.update as upd
+
+        monkeypatch.setenv("COVE_REPO_GIT", "ssh://git.cove.example/cove.git")
+        monkeypatch.setattr(upd, "__version__", "0.8.0")
+        calls = []
+
+        def build_wheel_from_deployed(cmd):
+            out_dir = Path(cmd[cmd.index("--out-dir") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            wheel = out_dir / "cove_cli-0.16.0-py3-none-any.whl"
+            with zipfile.ZipFile(wheel, "w") as zf:
+                for path in sorted(deployed_compose.rglob("*")):
+                    if path.is_file():
+                        rel = path.relative_to(deployed_compose).as_posix()
+                        zf.writestr(
+                            f"cove/resources/compose/{rel}",
+                            path.read_text(encoding="utf-8", errors="replace"),
+                        )
+
+        monkeypatch.setattr(
+            upd.subprocess, "run", _fake_wheel_world(calls, build_wheel_from_deployed),
+        )
+        result = CliRunner().invoke(upd.update, [])
+        assert result.exit_code == 0, f"{result.output}\n{result.exception!r}"
+        assert not isinstance(result.exception, FileNotFoundError)
+        assert any("sync_compose_resources" in " ".join(c) for c in calls), (
+            "the temp-worktree build must run the promote flow's resource sync"
+        )
+        assert "already converged" in result.output, (
+            "bundled == deployed must read as converged (pins compared from "
+            "the real wheel, not a dangling path)"
+        )
+
+    def test_wheel_without_compose_reads_as_pending(
+        self, deployed_compose, monkeypatch,
+    ):
+        """A wheel whose bundled compose is empty cannot prove no-impact —
+        the flow must converge (fail-soft), not crash and not no-op."""
+        import cove.update as upd
+
+        monkeypatch.setenv("COVE_REPO_GIT", "ssh://git.cove.example/cove.git")
+        monkeypatch.setattr(upd, "__version__", "0.8.0")
+        calls = []
+
+        def build_empty_wheel(cmd):
+            out_dir = Path(cmd[cmd.index("--out-dir") + 1])
+            _write_wheel(out_dir)
+
+        def fake_run(cmd, *a, **kw):
+            cmd = [str(c) for c in cmd]
+            calls.append(cmd)
+            if "ps" in cmd:
+                return SimpleNamespace(
+                    returncode=0, stdout="\n".join(_COVE_STACK) + "\n", stderr="",
+                )
+            return _fake_wheel_world([], build_empty_wheel)(cmd, **kw)
+
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        result = CliRunner().invoke(upd.update, ["--quiet"])
+        assert result.exit_code == 0, f"{result.output}\n{result.exception!r}"
+        assert installed_or_up_calls(calls), (
+            "empty bundled compose cannot prove no-impact: converge"
+        )

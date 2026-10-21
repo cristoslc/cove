@@ -643,3 +643,10 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "cove update installs the tagged wheel, compares bundled pins from the wheel it actually installed (path survives _install_wheel; missing wheel fails loud ClickException; sync runs in the temp worktree), then converges gated as usual"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
