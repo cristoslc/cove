@@ -4,6 +4,12 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.15.1 (2026-10-21)
+
+### Fixed
+- **`cove update` no longer crashes in its post-install pin-compare** — the wheel path returned by the install step pointed into a temp directory that Python deleted the moment the install function returned, so the pin-compare opened a dangling path (`FileNotFoundError` on every update run; the install itself succeeded, as did `cove --version`). The wheel's temp dir is now released by the update flow after the convergence gate decides, a wheel missing at compare time raises a named `ClickException` instead of a traceback, and the built wheel lands outside the throwaway git worktree so worktree cleanup cannot take it. Fixes #80.
+- **Wheels built by `cove update` carry the bundled compose pins again** — the temp-worktree build skipped `sync_compose_resources.py`, and since `cli/cove/resources/compose/` is gitignored every wheel `cove update` built shipped with an empty bundled compose set, which would have made every update wrongly read as pending convergence. The build now runs the tag's own sync script first, mirroring the promote flow.
+
 ## 0.15.0 (2026-10-21)
 
 ### Added
