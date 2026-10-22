@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:ee0903c4-d02e-4866-b97b-2c878e459900",
+  "serialNumber": "urn:uuid:2bd1728d-e2c2-4b00-8ba1-90ee0cefc680",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T14:42:20+00:00",
+    "timestamp": "2026-10-22T14:51:28+00:00",
     "tools": {
       "components": [
         {
@@ -154,22 +154,7 @@
   },
   "components": [
     {
-      "bom-ref": "37b75005-c89e-4b3a-8115-a2d1ba499033",
-      "type": "application",
-      "name": "app/www/vendor/composer/installed.json",
-      "properties": [
-        {
-          "name": "aquasecurity:trivy:Class",
-          "value": "lang-pkgs"
-        },
-        {
-          "name": "aquasecurity:trivy:Type",
-          "value": "composer-vendor"
-        }
-      ]
-    },
-    {
-      "bom-ref": "6299b1ce-8a93-46aa-a726-3dd8fb2e3cf1",
+      "bom-ref": "242d0915-109f-400b-b2cb-72de0bd10473",
       "type": "operating-system",
       "name": "alpine",
       "version": "3.24.1",
@@ -181,6 +166,21 @@
         {
           "name": "aquasecurity:trivy:Type",
           "value": "alpine"
+        }
+      ]
+    },
+    {
+      "bom-ref": "db8dbdaf-09da-410d-8366-6daf64d0b1c9",
+      "type": "application",
+      "name": "app/www/vendor/composer/installed.json",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:Class",
+          "value": "lang-pkgs"
+        },
+        {
+          "name": "aquasecurity:trivy:Type",
+          "value": "composer-vendor"
         }
       ]
     },
@@ -12024,28 +12024,7 @@
   ],
   "dependencies": [
     {
-      "ref": "37b75005-c89e-4b3a-8115-a2d1ba499033",
-      "dependsOn": [
-        "pkg:composer/chrisullyott/php-filesize@v4.2.1",
-        "pkg:composer/codewithdennis/filament-simple-alert@v4.0.5",
-        "pkg:composer/filament/spatie-laravel-settings-plugin@v5.6.7",
-        "pkg:composer/influxdata/influxdb-client-php@3.8.0",
-        "pkg:composer/laravel-notification-channels/telegram@7.0.0",
-        "pkg:composer/laravel/framework@v13.16.1",
-        "pkg:composer/laravel/sanctum@v4.3.2",
-        "pkg:composer/lorisleiva/laravel-actions@v2.10.1",
-        "pkg:composer/maennchen/zipstream-php@2.4.0",
-        "pkg:composer/promphp/prometheus_client_php@v2.15.1",
-        "pkg:composer/secondnetwork/blade-tabler-icons@v3.44.0",
-        "pkg:composer/spatie/laravel-json-api-paginate@2.0.1",
-        "pkg:composer/spatie/laravel-query-builder@6.4.4",
-        "pkg:composer/spatie/laravel-webhook-server@3.10.0",
-        "pkg:composer/spatie/ping@1.2.2",
-        "pkg:composer/zircote/swagger-php@5.8.3"
-      ]
-    },
-    {
-      "ref": "6299b1ce-8a93-46aa-a726-3dd8fb2e3cf1",
+      "ref": "242d0915-109f-400b-b2cb-72de0bd10473",
       "dependsOn": [
         "pkg:apk/alpine/alpine-baselayout@3.7.2-r1?arch=aarch64&distro=3.24.1",
         "pkg:apk/alpine/alpine-release@3.24.1-r0?arch=aarch64&distro=3.24.1",
@@ -12093,6 +12072,27 @@
         "pkg:apk/alpine/ssl_client@1.37.0-r31?arch=aarch64&distro=3.24.1",
         "pkg:apk/alpine/ssmtp@2.64-r23?arch=aarch64&distro=3.24.1",
         "pkg:apk/alpine/tzdata@2026b-r0?arch=aarch64&distro=3.24.1"
+      ]
+    },
+    {
+      "ref": "db8dbdaf-09da-410d-8366-6daf64d0b1c9",
+      "dependsOn": [
+        "pkg:composer/chrisullyott/php-filesize@v4.2.1",
+        "pkg:composer/codewithdennis/filament-simple-alert@v4.0.5",
+        "pkg:composer/filament/spatie-laravel-settings-plugin@v5.6.7",
+        "pkg:composer/influxdata/influxdb-client-php@3.8.0",
+        "pkg:composer/laravel-notification-channels/telegram@7.0.0",
+        "pkg:composer/laravel/framework@v13.16.1",
+        "pkg:composer/laravel/sanctum@v4.3.2",
+        "pkg:composer/lorisleiva/laravel-actions@v2.10.1",
+        "pkg:composer/maennchen/zipstream-php@2.4.0",
+        "pkg:composer/promphp/prometheus_client_php@v2.15.1",
+        "pkg:composer/secondnetwork/blade-tabler-icons@v3.44.0",
+        "pkg:composer/spatie/laravel-json-api-paginate@2.0.1",
+        "pkg:composer/spatie/laravel-query-builder@6.4.4",
+        "pkg:composer/spatie/laravel-webhook-server@3.10.0",
+        "pkg:composer/spatie/ping@1.2.2",
+        "pkg:composer/zircote/swagger-php@5.8.3"
       ]
     },
     {
@@ -13956,8 +13956,8 @@
     {
       "ref": "pkg:oci/speedtest-tracker@sha256:e4732e8e9073bdd5b419959c1151b761afa591166328d2ab751adc1e3d070563?arch=arm64&repository_url=lscr.io%2Flinuxserver%2Fspeedtest-tracker",
       "dependsOn": [
-        "37b75005-c89e-4b3a-8115-a2d1ba499033",
-        "6299b1ce-8a93-46aa-a726-3dd8fb2e3cf1",
+        "242d0915-109f-400b-b2cb-72de0bd10473",
+        "db8dbdaf-09da-410d-8366-6daf64d0b1c9",
         "pkg:npm/swagger-php-tools@1.0.0"
       ]
     }
