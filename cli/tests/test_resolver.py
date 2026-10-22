@@ -65,10 +65,10 @@ class TestDriftedResolverFiles:
         rdir = tmp_path / "resolver"
         rdir.mkdir()
         body = "nameserver 127.0.0.1\nport 5354\n"
-        (rdir / "cove.MBPBK-202602").write_text(body)
+        (rdir / "cove.EXAMPLE-HOST").write_text(body)
         assert resolver.drifted_resolver_files(5354, resolver_dir=rdir) == {}
         assert resolver.drifted_resolver_files(9999, resolver_dir=rdir) == {
-            rdir / "cove.MBPBK-202602": 5354
+            rdir / "cove.EXAMPLE-HOST": 5354
         }
 
     def test_file_without_port_line_is_ignored(self, tmp_path):

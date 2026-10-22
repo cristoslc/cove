@@ -9,7 +9,7 @@ left the on-disk files pointing at the old port while dnsmasq listened on the
 new one, and the resolver path went silently dead even though the container
 publish, the ``.env``, and the rendered script all agreed (2026-10-22:
 5353 -> 5354, three ``cove up --no-provision`` runs left ``/etc/resolver/cove``
-and ``/etc/resolver/cove.MBPBK-202602`` stale).
+and ``/etc/resolver/cove.<hostname>`` stale).
 
 ``bringup.yml`` now re-points every existing ``/etc/resolver/cove*`` file at
 ``dnsmasq_port`` on each ``cove up`` (Darwin-only, become, non-fatal). This

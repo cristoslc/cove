@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.15.4 (2026-10-22)
+
+### Security
+- **Removed an operator hostname (`MBPBK-202602`) that shipped in the 0.15.3 wheel and repository** — the 0.15.3 resolver module's docstring and one test fixture embedded the real machine hostname; the repo's own no-PII gate caught it on the release tree (it had passed on the PR branch before the files were finalized). Docstring now uses a `<hostname>` placeholder and the test fixture a neutral name. The 0.15.3 release artifacts on both hosts are superseded by 0.15.4; anyone holding a 0.15.3 wheel should replace it. No other PII pattern was affected.
+
 ## 0.15.3 (2026-10-22)
 
 ### Fixed
