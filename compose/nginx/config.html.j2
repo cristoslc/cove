@@ -52,12 +52,12 @@
   <p><code>curl /config/dns/macos | sudo bash</code></p>
   <pre># Creates /etc/resolver/cove.{{ ansible_hostname }}:
 nameserver {{ ts_ip }}
-port 5353</pre>
+port {{ dnsmasq_port }}</pre>
 
   <h3>Linux</h3>
   <p><code>curl /config/dns/linux | sudo bash</code></p>
   <pre># Creates /etc/dnsmasq.d/cove-{{ ansible_hostname }}.conf:
-server=/cove.{{ ansible_hostname }}/{{ ts_ip }}#5353</pre>
+server=/cove.{{ ansible_hostname }}/{{ ts_ip }}#{{ dnsmasq_port }}</pre>
 
   <h3>Windows</h3>
   <p><code>irm /config/dns/windows | iex</code> (admin PowerShell)</p>
