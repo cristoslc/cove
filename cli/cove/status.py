@@ -7,9 +7,17 @@ import urllib3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import click
 import requests
 
 from cove.constants import NGINX_HTTP_PORT, NGINX_HTTPS_PORT
+from cove.resolver import (
+    corrective_command,
+    drifted_resolver_files,
+    expected_dnsmasq_port,
+    is_macos,
+)
+from cove.stateless import resolve_compose_dir
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logging.getLogger("urllib3").setLevel(logging.ERROR)
@@ -204,6 +212,42 @@ def _check_dns() -> CheckResult:
     )
 
 
+def _check_resolver_port() -> CheckResult | None:
+    """macOS only: fail loudly when a scoped-resolver file under /etc/resolver
+    still points at an old dnsmasq port.
+
+    `cove up` re-points every existing /etc/resolver/cove* file at
+    `dnsmasq_port` on each run when it can (Darwin task + become), so a
+    mismatch here means the write path was unavailable (a no-TTY run without
+    passwordless sudo) or was bypassed. The hint carries the exact corrective
+    one-liner. Returns None on other platforms, when there is no drift, or when
+    the expected port cannot be determined — the DNS-resolution check below
+    still covers a resolver that is broken outright.
+    """
+    if not is_macos():
+        return None
+    try:
+        compose_dir = resolve_compose_dir()
+        expected = expected_dnsmasq_port(compose_dir)
+        drifted = drifted_resolver_files(expected)
+    except (OSError, RuntimeError, ValueError, click.ClickException):
+        return None
+    if not drifted:
+        return None
+    stale = ", ".join(
+        f"{path.name} (port {found})" for path, found in sorted(drifted.items())
+    )
+    return CheckResult(
+        name="resolver port",
+        ok=False,
+        detail=f"/etc/resolver/cove* disagrees with dnsmasq_port={expected}: {stale}",
+        hints=[
+            f"Fix: {corrective_command(expected)}",
+            "Or run `cove sudo enable` then `cove up` to re-point them automatically",
+        ],
+    )
+
+
 def check_all() -> list[CheckResult]:
     results: list[CheckResult] = []
     results.extend(_check_containers())
@@ -211,11 +255,15 @@ def check_all() -> list[CheckResult]:
     results.append(_check_forgejo())
     results.append(_check_vault())
     results.append(_check_dns())
+    # Only surfaces a row when there is drift; the check stays silent when the
+    # resolver files already track dnsmasq_port (or there is none to compare).
+    resolver_port = _check_resolver_port()
+    if resolver_port is not None:
+        results.append(resolver_port)
     return results
 
 
 def print_status(results: list[CheckResult]) -> None:
-    import click
     ok_count = sum(1 for r in results if r.ok)
     total = len(results)
     click.echo(f"\n{'='*50}")

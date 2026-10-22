@@ -112,8 +112,14 @@ def _restart_stale_bind_containers(compose_dir: Path, rebuilt: frozenset[str]) -
 # Bounded health probe for the post-restart Vault heal: at most this many
 # attempts, this many seconds apart, each request capped at this timeout —
 # so `cove up` can never hang waiting on a Vault that never comes up.
-_VAULT_HEALTH_ATTEMPTS = 5
-_VAULT_HEALTH_RETRY_SECONDS = 1.0
+# The window must outlast a normal Vault boot: a freshly recreated container
+# takes tens of seconds to answer /v1/sys/health (2026-10-22: a 5x1.0s window
+# expired first and the heal warned "may still be sealed" on a Vault that was
+# simply still starting). attempts x interval now spans ~30s of coverage;
+# the loop still returns the moment Vault answers, so a healthy Vault costs
+# one probe.
+_VAULT_HEALTH_ATTEMPTS = 15
+_VAULT_HEALTH_RETRY_SECONDS = 2.0
 _VAULT_HEALTH_TIMEOUT_SECONDS = 2.0
 
 

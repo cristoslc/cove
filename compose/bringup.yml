@@ -637,6 +637,41 @@
         - android
         - unknown
 
+    # macOS scoped-resolver files (/etc/resolver/cove*) are installed out of
+    # band: the config page serves the macos.j2 installer script and `cove up`
+    # never runs it against the local host. Moving the published dnsmasq port
+    # therefore left them pointing at the old port while dnsmasq listened on
+    # the new one, and the resolver path went silently dead (2026-10-22:
+    # 5353 -> 5354, three `cove up --no-provision` runs left the files stale).
+    # Re-point every existing cove* file at the current dnsmasq_port on every
+    # up. become mirrors the /etc/hosts task: a passwordless-sudo (or
+    # already-prompted BECOME) run rewrites them, a no-TTY run without either
+    # fails the write harmlessly (failed_when: false) and `cove status` reports
+    # the drift loudly with the corrective one-liner.
+    - name: Find macOS scoped-resolver files
+      when: ansible_system == "Darwin"
+      ansible.builtin.find:
+        paths: /etc/resolver
+        patterns: "cove*"
+        file_type: file
+      register: cove_resolver_files
+      changed_when: false
+      failed_when: false
+
+    - name: Point macOS scoped-resolver files at the current dnsmasq port
+      when:
+        - ansible_system == "Darwin"
+        - cove_resolver_files.files | default([]) | length > 0
+      become: true
+      failed_when: false
+      ansible.builtin.replace:
+        path: "{{ item.path }}"
+        regexp: '^port\s+\d+\s*$'
+        replace: "port {{ dnsmasq_port }}"
+      loop: "{{ cove_resolver_files.files | default([]) }}"
+      loop_control:
+        label: "{{ item.path }}"
+
     # COMPOSE .env -----------------------------------------------------------
     - name: Render compose .env (first boot only)
       ansible.builtin.copy:
