@@ -4,6 +4,12 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.15.2 (2026-10-22)
+
+### Fixed
+- **dnsmasq's published host port moves from 5353 to 5354** — on macOS hosts a third-party process commonly squats UDP 5353 (e.g. GLKVM Helper binds `*:5353/udp`), which starves the runtime's UDP forwarder and leaves the `/etc/resolver/cove` path dead even with a correct `/udp` publish. The port is now single-sourced from `group_vars/all.yml` (`dnsmasq_port: 5354`): the compose publish default, the macOS resolver template, the Linux fleet-forwarder template, the rendered config page, and `.env.example` all derive from it, and a consistency test fails if any of them drift. Container-side port stays 5353; only the host-facing publish moves.
+- New `TestDnsmasqPortConsistency` tests guard the coupling (red-first: planting a disagreeing group var failed exactly the intended assertions).
+
 ## 0.15.1 (2026-10-21)
 
 ### Fixed

@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:949fe818-63d4-4468-b3d0-de47eebedffb",
+  "serialNumber": "urn:uuid:e0361e85-7ef4-4dcf-91ab-e9c2bd359c30",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-21T18:51:38+00:00",
+    "timestamp": "2026-10-22T12:27:40+00:00",
     "tools": {
       "components": [
         {
@@ -15,7 +15,7 @@
           },
           "group": "aquasecurity",
           "name": "trivy",
-          "version": "0.76.0"
+          "version": "0.76.1"
         }
       ]
     },
@@ -98,22 +98,7 @@
   },
   "components": [
     {
-      "bom-ref": "40f956c6-d271-43b8-be65-025d2adb046b",
-      "type": "application",
-      "name": "usr/local/bin/gosu",
-      "properties": [
-        {
-          "name": "aquasecurity:trivy:Class",
-          "value": "lang-pkgs"
-        },
-        {
-          "name": "aquasecurity:trivy:Type",
-          "value": "gobinary"
-        }
-      ]
-    },
-    {
-      "bom-ref": "b0b358e2-0e74-455a-9aa3-75385dbf0a2d",
+      "bom-ref": "32cd979a-01e4-4bbc-8de1-426077fe4de7",
       "type": "operating-system",
       "name": "alpine",
       "version": "3.24.1",
@@ -125,6 +110,21 @@
         {
           "name": "aquasecurity:trivy:Type",
           "value": "alpine"
+        }
+      ]
+    },
+    {
+      "bom-ref": "b5c17aaa-503b-4236-a5ca-48998a48e623",
+      "type": "application",
+      "name": "usr/local/bin/gosu",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:Class",
+          "value": "lang-pkgs"
+        },
+        {
+          "name": "aquasecurity:trivy:Type",
+          "value": "gobinary"
         }
       ]
     },
@@ -2498,13 +2498,7 @@
   ],
   "dependencies": [
     {
-      "ref": "40f956c6-d271-43b8-be65-025d2adb046b",
-      "dependsOn": [
-        "pkg:golang/github.com/tianon/gosu@v1.19.0"
-      ]
-    },
-    {
-      "ref": "b0b358e2-0e74-455a-9aa3-75385dbf0a2d",
+      "ref": "32cd979a-01e4-4bbc-8de1-426077fe4de7",
       "dependsOn": [
         "pkg:apk/alpine/.postgresql-rundeps@20260707.174721?arch=noarch&distro=3.24.1",
         "pkg:apk/alpine/alpine-baselayout@3.7.2-r1?arch=aarch64&distro=3.24.1",
@@ -2512,6 +2506,12 @@
         "pkg:apk/alpine/apk-tools@3.0.6-r0?arch=aarch64&distro=3.24.1",
         "pkg:apk/alpine/musl-utils@1.2.6-r2?arch=aarch64&distro=3.24.1",
         "pkg:apk/alpine/ssl_client@1.37.0-r31?arch=aarch64&distro=3.24.1"
+      ]
+    },
+    {
+      "ref": "b5c17aaa-503b-4236-a5ca-48998a48e623",
+      "dependsOn": [
+        "pkg:golang/github.com/tianon/gosu@v1.19.0"
       ]
     },
     {
@@ -2854,8 +2854,8 @@
     {
       "ref": "pkg:oci/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777?arch=arm64&repository_url=index.docker.io%2Flibrary%2Fpostgres",
       "dependsOn": [
-        "40f956c6-d271-43b8-be65-025d2adb046b",
-        "b0b358e2-0e74-455a-9aa3-75385dbf0a2d"
+        "32cd979a-01e4-4bbc-8de1-426077fe4de7",
+        "b5c17aaa-503b-4236-a5ca-48998a48e623"
       ]
     }
   ],
