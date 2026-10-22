@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:556163e6-de54-4c90-a58a-f35871969b4b",
+  "serialNumber": "urn:uuid:360a42b6-f49f-4998-acdf-26e325cc62bc",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-21T18:51:39+00:00",
+    "timestamp": "2026-10-22T12:27:40+00:00",
     "tools": {
       "components": [
         {
@@ -15,7 +15,7 @@
           },
           "group": "aquasecurity",
           "name": "trivy",
-          "version": "0.76.0"
+          "version": "0.76.1"
         }
       ]
     },
@@ -94,7 +94,7 @@
   },
   "components": [
     {
-      "bom-ref": "48f4c6fa-556e-4af1-a459-eb8b2f6a851f",
+      "bom-ref": "7953982d-781c-4d90-bb84-3f3755fb8b01",
       "type": "operating-system",
       "name": "wolfi",
       "version": "20230201",
@@ -110,7 +110,7 @@
       ]
     },
     {
-      "bom-ref": "5bb93847-dc45-4002-a786-8ef84ecae7c5",
+      "bom-ref": "bcb1f003-73f1-4295-b975-92eae037956d",
       "type": "application",
       "name": "ko-app/thv",
       "properties": [
@@ -7879,13 +7879,13 @@
   ],
   "dependencies": [
     {
-      "ref": "48f4c6fa-556e-4af1-a459-eb8b2f6a851f",
+      "ref": "7953982d-781c-4d90-bb84-3f3755fb8b01",
       "dependsOn": [
         "pkg:apk/wolfi/tzdata@2026d-r0?arch=aarch64&distro=20230201"
       ]
     },
     {
-      "ref": "5bb93847-dc45-4002-a786-8ef84ecae7c5",
+      "ref": "bcb1f003-73f1-4295-b975-92eae037956d",
       "dependsOn": [
         "pkg:golang/github.com/stacklok/toolhive@v0.51.4"
       ]
@@ -9429,8 +9429,8 @@
     {
       "ref": "pkg:oci/toolhive@sha256:5e1e253610db23188e3cab766949612f8b0c138627ec55fb754562a9610d4f9a?arch=arm64&repository_url=ghcr.io%2Fstacklok%2Ftoolhive",
       "dependsOn": [
-        "48f4c6fa-556e-4af1-a459-eb8b2f6a851f",
-        "5bb93847-dc45-4002-a786-8ef84ecae7c5"
+        "7953982d-781c-4d90-bb84-3f3755fb8b01",
+        "bcb1f003-73f1-4295-b975-92eae037956d"
       ]
     }
   ],
