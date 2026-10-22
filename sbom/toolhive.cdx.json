@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:5a4fc60c-ed45-4bbc-a38d-cbeaab520483",
+  "serialNumber": "urn:uuid:ed58dc09-b9d2-4cdb-8f42-e74b543865e8",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T14:42:20+00:00",
+    "timestamp": "2026-10-22T14:51:28+00:00",
     "tools": {
       "components": [
         {
@@ -94,7 +94,7 @@
   },
   "components": [
     {
-      "bom-ref": "16f6e2d9-5c19-406a-93d1-9d633dc3719c",
+      "bom-ref": "82918103-7b30-4e8d-a731-28a0db04bfbf",
       "type": "operating-system",
       "name": "wolfi",
       "version": "20230201",
@@ -110,7 +110,7 @@
       ]
     },
     {
-      "bom-ref": "e3f0a752-7541-4999-a862-d5dfdff04a21",
+      "bom-ref": "f4e702c3-8485-4c9f-a0f8-12e1b4e24305",
       "type": "application",
       "name": "ko-app/thv",
       "properties": [
@@ -7879,13 +7879,13 @@
   ],
   "dependencies": [
     {
-      "ref": "16f6e2d9-5c19-406a-93d1-9d633dc3719c",
+      "ref": "82918103-7b30-4e8d-a731-28a0db04bfbf",
       "dependsOn": [
         "pkg:apk/wolfi/tzdata@2026d-r0?arch=aarch64&distro=20230201"
       ]
     },
     {
-      "ref": "e3f0a752-7541-4999-a862-d5dfdff04a21",
+      "ref": "f4e702c3-8485-4c9f-a0f8-12e1b4e24305",
       "dependsOn": [
         "pkg:golang/github.com/stacklok/toolhive@v0.51.4"
       ]
@@ -9429,8 +9429,8 @@
     {
       "ref": "pkg:oci/toolhive@sha256:5e1e253610db23188e3cab766949612f8b0c138627ec55fb754562a9610d4f9a?arch=arm64&repository_url=ghcr.io%2Fstacklok%2Ftoolhive",
       "dependsOn": [
-        "16f6e2d9-5c19-406a-93d1-9d633dc3719c",
-        "e3f0a752-7541-4999-a862-d5dfdff04a21"
+        "82918103-7b30-4e8d-a731-28a0db04bfbf",
+        "f4e702c3-8485-4c9f-a0f8-12e1b4e24305"
       ]
     }
   ],

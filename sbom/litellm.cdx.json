@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:4158fadc-c4c4-483e-80ea-20e521a5e509",
+  "serialNumber": "urn:uuid:f56f2fd1-e9c5-4a15-80d3-b110f4aa0f6f",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T14:42:21+00:00",
+    "timestamp": "2026-10-22T14:51:29+00:00",
     "tools": {
       "components": [
         {
@@ -110,45 +110,7 @@
   },
   "components": [
     {
-      "bom-ref": "7fc1a1fc-8dac-4783-a11c-7a5c3a2df78a",
-      "type": "library",
-      "name": "requests",
-      "version": "2.34.2",
-      "hashes": [
-        {
-          "alg": "SHA-1",
-          "content": "abbc8d33a3bfeb767d3208566b9a0e217062f8aa"
-        }
-      ],
-      "licenses": [
-        {
-          "license": {
-            "id": "Apache-2.0"
-          }
-        }
-      ],
-      "purl": "pkg:pypi/requests@2.34.2",
-      "properties": [
-        {
-          "name": "aquasecurity:trivy:FilePath",
-          "value": "usr/local/lib/python3.13/site-packages/requests-2.34.2.dist-info/METADATA"
-        },
-        {
-          "name": "aquasecurity:trivy:LayerDiffID",
-          "value": "sha256:7c18c449ab6421a6e0c338494890f4ef5cfafccb263985e1b78467d6115c35bb"
-        },
-        {
-          "name": "aquasecurity:trivy:LayerDigest",
-          "value": "sha256:7782e472fcd3217c1eea2803e4d14d6eef2617ad66bb312f857126eae791fab2"
-        },
-        {
-          "name": "aquasecurity:trivy:PkgType",
-          "value": "python-pkg"
-        }
-      ]
-    },
-    {
-      "bom-ref": "9a751d71-114c-49b6-a206-0bd9e9b755cc",
+      "bom-ref": "87bbb715-fe37-4330-b253-abc266a69120",
       "type": "library",
       "name": "distro",
       "version": "1.9.0",
@@ -186,7 +148,45 @@
       ]
     },
     {
-      "bom-ref": "9e493c05-e42e-4f29-a3cd-a77fe94ea47b",
+      "bom-ref": "f051f9b0-f7da-4367-a0d3-3a3041faad53",
+      "type": "library",
+      "name": "requests",
+      "version": "2.34.2",
+      "hashes": [
+        {
+          "alg": "SHA-1",
+          "content": "abbc8d33a3bfeb767d3208566b9a0e217062f8aa"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "purl": "pkg:pypi/requests@2.34.2",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:FilePath",
+          "value": "usr/local/lib/python3.13/site-packages/requests-2.34.2.dist-info/METADATA"
+        },
+        {
+          "name": "aquasecurity:trivy:LayerDiffID",
+          "value": "sha256:7c18c449ab6421a6e0c338494890f4ef5cfafccb263985e1b78467d6115c35bb"
+        },
+        {
+          "name": "aquasecurity:trivy:LayerDigest",
+          "value": "sha256:7782e472fcd3217c1eea2803e4d14d6eef2617ad66bb312f857126eae791fab2"
+        },
+        {
+          "name": "aquasecurity:trivy:PkgType",
+          "value": "python-pkg"
+        }
+      ]
+    },
+    {
+      "bom-ref": "f76db352-cfbd-4751-b0e4-4ef6f4df2d59",
       "type": "operating-system",
       "name": "debian",
       "version": "13.6",
@@ -13466,15 +13466,15 @@
   ],
   "dependencies": [
     {
-      "ref": "7fc1a1fc-8dac-4783-a11c-7a5c3a2df78a",
+      "ref": "87bbb715-fe37-4330-b253-abc266a69120",
       "dependsOn": []
     },
     {
-      "ref": "9a751d71-114c-49b6-a206-0bd9e9b755cc",
+      "ref": "f051f9b0-f7da-4367-a0d3-3a3041faad53",
       "dependsOn": []
     },
     {
-      "ref": "9e493c05-e42e-4f29-a3cd-a77fe94ea47b",
+      "ref": "f76db352-cfbd-4751-b0e4-4ef6f4df2d59",
       "dependsOn": [
         "pkg:deb/debian/apt@3.0.3?arch=arm64&distro=debian-13.6",
         "pkg:deb/debian/bash@5.2.37-2%2Bb9?arch=arm64&distro=debian-13.6",
@@ -14285,9 +14285,9 @@
     {
       "ref": "pkg:oci/cove-litellm@sha256:927ae66f10959c16570daf42ad96f08ea57bdd7ec4fc2f990af717e0f434c46d?arch=arm64&repository_url=index.docker.io%2Flibrary%2Fcove-litellm",
       "dependsOn": [
-        "7fc1a1fc-8dac-4783-a11c-7a5c3a2df78a",
-        "9a751d71-114c-49b6-a206-0bd9e9b755cc",
-        "9e493c05-e42e-4f29-a3cd-a77fe94ea47b",
+        "87bbb715-fe37-4330-b253-abc266a69120",
+        "f051f9b0-f7da-4367-a0d3-3a3041faad53",
+        "f76db352-cfbd-4751-b0e4-4ef6f4df2d59",
         "pkg:npm/%40prisma/client@5.17.0",
         "pkg:npm/%40prisma/debug@5.17.0",
         "pkg:npm/%40prisma/engines-version@5.17.0-31.393aa359c9ad4a4bb28630fb5613f9c281cde053",

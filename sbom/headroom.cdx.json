@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:1c3d187c-8ba2-4805-81ee-ec393d7dd2cb",
+  "serialNumber": "urn:uuid:d3bb9221-247e-422e-adb1-709e0093fd8b",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T14:42:21+00:00",
+    "timestamp": "2026-10-22T14:51:28+00:00",
     "tools": {
       "components": [
         {
@@ -126,7 +126,7 @@
   },
   "components": [
     {
-      "bom-ref": "b8a59d6e-432e-4890-87b4-1acb108667aa",
+      "bom-ref": "5297da43-32ac-40ba-9014-de6b280190f0",
       "type": "operating-system",
       "name": "debian",
       "version": "13.5",
@@ -11997,7 +11997,7 @@
   ],
   "dependencies": [
     {
-      "ref": "b8a59d6e-432e-4890-87b4-1acb108667aa",
+      "ref": "5297da43-32ac-40ba-9014-de6b280190f0",
       "dependsOn": [
         "pkg:deb/debian/apt@3.0.3?arch=arm64&distro=debian-13.5",
         "pkg:deb/debian/bash@5.2.37-2%2Bb9?arch=arm64&distro=debian-13.5",
@@ -12768,7 +12768,7 @@
     {
       "ref": "pkg:oci/headroom@sha256:50b85d8e320cfcdf1b38919bb7ae067b93ff7a8de0a93f05b2c1246370200d1c?arch=arm64&repository_url=ghcr.io%2Fchopratejas%2Fheadroom",
       "dependsOn": [
-        "b8a59d6e-432e-4890-87b4-1acb108667aa",
+        "5297da43-32ac-40ba-9014-de6b280190f0",
         "pkg:pypi/aiohappyeyeballs@2.6.2",
         "pkg:pypi/aiohttp@3.14.1",
         "pkg:pypi/aiosignal@1.4.0",

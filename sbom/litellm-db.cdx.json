@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:bd641535-95b2-4c2f-bdc2-a7fe6cfcd529",
+  "serialNumber": "urn:uuid:d8da24dc-98a8-4034-94f5-f9b48114d6ae",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T14:42:20+00:00",
+    "timestamp": "2026-10-22T14:51:28+00:00",
     "tools": {
       "components": [
         {
@@ -98,7 +98,7 @@
   },
   "components": [
     {
-      "bom-ref": "b5e485b5-e3ec-4db5-be09-746a9e528d8d",
+      "bom-ref": "b539130e-d48d-455b-a42e-86b902a54441",
       "type": "operating-system",
       "name": "alpine",
       "version": "3.24.1",
@@ -114,7 +114,7 @@
       ]
     },
     {
-      "bom-ref": "c308873c-9768-4ac1-b42a-55f63cb1ec95",
+      "bom-ref": "cff19096-e979-4906-9f82-50d4750e1556",
       "type": "application",
       "name": "usr/local/bin/gosu",
       "properties": [
@@ -2498,7 +2498,7 @@
   ],
   "dependencies": [
     {
-      "ref": "b5e485b5-e3ec-4db5-be09-746a9e528d8d",
+      "ref": "b539130e-d48d-455b-a42e-86b902a54441",
       "dependsOn": [
         "pkg:apk/alpine/.postgresql-rundeps@20260707.174721?arch=noarch&distro=3.24.1",
         "pkg:apk/alpine/alpine-baselayout@3.7.2-r1?arch=aarch64&distro=3.24.1",
@@ -2509,7 +2509,7 @@
       ]
     },
     {
-      "ref": "c308873c-9768-4ac1-b42a-55f63cb1ec95",
+      "ref": "cff19096-e979-4906-9f82-50d4750e1556",
       "dependsOn": [
         "pkg:golang/github.com/tianon/gosu@v1.19.0"
       ]
@@ -2854,8 +2854,8 @@
     {
       "ref": "pkg:oci/postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777?arch=arm64&repository_url=index.docker.io%2Flibrary%2Fpostgres",
       "dependsOn": [
-        "b5e485b5-e3ec-4db5-be09-746a9e528d8d",
-        "c308873c-9768-4ac1-b42a-55f63cb1ec95"
+        "b539130e-d48d-455b-a42e-86b902a54441",
+        "cff19096-e979-4906-9f82-50d4750e1556"
       ]
     }
   ],

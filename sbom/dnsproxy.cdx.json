@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:6a673451-8cd5-465d-8ce8-0ab09ead6838",
+  "serialNumber": "urn:uuid:f34572a5-0d0f-4bd3-afeb-b6db41cda7c0",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T14:42:20+00:00",
+    "timestamp": "2026-10-22T14:51:27+00:00",
     "tools": {
       "components": [
         {
@@ -126,7 +126,22 @@
   },
   "components": [
     {
-      "bom-ref": "15103306-0d9b-42df-a2d3-518320ccf6e7",
+      "bom-ref": "35443b61-4490-4c13-b8b6-9afecfc25c4e",
+      "type": "application",
+      "name": "opt/dnsproxy/dnsproxy",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:Class",
+          "value": "lang-pkgs"
+        },
+        {
+          "name": "aquasecurity:trivy:Type",
+          "value": "gobinary"
+        }
+      ]
+    },
+    {
+      "bom-ref": "35b8093d-25ad-48c0-bd2a-a26042a501ed",
       "type": "operating-system",
       "name": "alpine",
       "version": "3.24.2",
@@ -138,21 +153,6 @@
         {
           "name": "aquasecurity:trivy:Type",
           "value": "alpine"
-        }
-      ]
-    },
-    {
-      "bom-ref": "647de36d-3ec7-4ed4-8018-1a5a664930b5",
-      "type": "application",
-      "name": "opt/dnsproxy/dnsproxy",
-      "properties": [
-        {
-          "name": "aquasecurity:trivy:Class",
-          "value": "lang-pkgs"
-        },
-        {
-          "name": "aquasecurity:trivy:Type",
-          "value": "gobinary"
         }
       ]
     },
@@ -1805,7 +1805,13 @@
   ],
   "dependencies": [
     {
-      "ref": "15103306-0d9b-42df-a2d3-518320ccf6e7",
+      "ref": "35443b61-4490-4c13-b8b6-9afecfc25c4e",
+      "dependsOn": [
+        "pkg:golang/github.com/adguardteam/dnsproxy"
+      ]
+    },
+    {
+      "ref": "35b8093d-25ad-48c0-bd2a-a26042a501ed",
       "dependsOn": [
         "pkg:apk/alpine/alpine-baselayout@3.7.2-r1?arch=aarch64&distro=3.24.2",
         "pkg:apk/alpine/alpine-release@3.24.2-r0?arch=aarch64&distro=3.24.2",
@@ -1815,12 +1821,6 @@
         "pkg:apk/alpine/musl-utils@1.2.6-r2?arch=aarch64&distro=3.24.2",
         "pkg:apk/alpine/ssl_client@1.37.0-r31?arch=aarch64&distro=3.24.2",
         "pkg:apk/alpine/tzdata@2026d-r0?arch=aarch64&distro=3.24.2"
-      ]
-    },
-    {
-      "ref": "647de36d-3ec7-4ed4-8018-1a5a664930b5",
-      "dependsOn": [
-        "pkg:golang/github.com/adguardteam/dnsproxy"
       ]
     },
     {
@@ -2069,8 +2069,8 @@
     {
       "ref": "pkg:oci/dnsproxy@sha256:4d65bafbf246b206a1af35d4263a86c35451d957458c7836304199f1cd2c1535?arch=arm64&repository_url=index.docker.io%2Fadguard%2Fdnsproxy",
       "dependsOn": [
-        "15103306-0d9b-42df-a2d3-518320ccf6e7",
-        "647de36d-3ec7-4ed4-8018-1a5a664930b5"
+        "35443b61-4490-4c13-b8b6-9afecfc25c4e",
+        "35b8093d-25ad-48c0-bd2a-a26042a501ed"
       ]
     }
   ],
