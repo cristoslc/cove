@@ -84,12 +84,16 @@ services:
     volumes:
       - ${COVE_DATA_ROOT}/dnsmasq/cove.conf:/etc/dnsmasq.d/cove.conf:ro
     ports:
-      # UDP and TCP are separate port spaces; both fit host port 5353.
-      # DNS is UDP-first — without the /udp publish the macOS resolver
-      # path (/etc/resolver/cove) gets no answer. TCP stays for
-      # large/truncated DNS responses.
-      - "0.0.0.0:${DNSMASQ_PORT:-5353}:5353/udp"
-      - "0.0.0.0:${DNSMASQ_PORT:-5353}:5353"
+      # Host port defaults to 5354, not 5353: macOS hosts commonly run a
+      # third-party process squatting UDP 5353 (e.g. GLKVM Helper binds
+      # 127.0.0.1:5353/udp), which leaves the UDP forwarder unable to
+      # attach and the resolver path dead. The container still listens on
+      # 5353 internally. UDP and TCP are separate port spaces; both use the
+      # same host port. DNS is UDP-first — without the /udp publish the
+      # macOS resolver path (/etc/resolver/cove) gets no answer. TCP stays
+      # for large/truncated DNS responses.
+      - "0.0.0.0:${DNSMASQ_PORT:-5354}:5353/udp"
+      - "0.0.0.0:${DNSMASQ_PORT:-5354}:5353"
     cap_add:
       - NET_BIND_SERVICE
 

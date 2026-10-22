@@ -4,10 +4,10 @@ FILE="/etc/dnsmasq.d/cove-{{ ansible_hostname }}.conf"
 FILE2="/etc/dnsmasq.d/cove-local-{{ ansible_hostname }}.conf"
 if [ "$EUID" -ne 0 ]; then exec sudo bash "$0"; fi
 cat > "$FILE" <<'EOF'
-server=/cove.{{ ansible_hostname }}/{{ ts_ip }}#5353
+server=/cove.{{ ansible_hostname }}/{{ ts_ip }}#{{ dnsmasq_port }}
 EOF
 cat > "$FILE2" <<'EOF'
-server=/cove.local.{{ ansible_hostname }}/{{ ts_ip }}#5353
+server=/cove.local.{{ ansible_hostname }}/{{ ts_ip }}#{{ dnsmasq_port }}
 EOF
 if systemctl is-active --quiet dnsmasq 2>/dev/null; then
     systemctl restart dnsmasq

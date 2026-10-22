@@ -22,6 +22,7 @@ Run live:   COVE_ALLOW_LIVE_TESTS=1 pytest cli/tests/test_e2e_dns.py -m live
 
 import base64
 import os
+import re
 import struct
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,10 +36,28 @@ COMPOSE_DIR = WORKTREE / "compose"
 NGINX_DIR = COMPOSE_DIR / "nginx"
 DNSMASQ_DIR = COMPOSE_DIR / "dnsmasq"
 
+
+def _group_var_dnsmasq_port() -> int:
+    """Read dnsmasq_port from compose/group_vars/all.yml — the single source
+    of truth for the published dnsmasq host port. Every derived surface
+    (compose default, .env, forwarder templates, config page) must agree
+    with this value; see TestDnsmasqPortConsistency."""
+    text = (COMPOSE_DIR / "group_vars" / "all.yml").read_text()
+    match = re.search(r"^dnsmasq_port:\s*(\d+)\s*$", text, re.MULTILINE)
+    if not match:
+        raise AssertionError(
+            "compose/group_vars/all.yml must define `dnsmasq_port: <int>`"
+        )
+    return int(match.group(1))
+
+
+DNSMASQ_PORT = _group_var_dnsmasq_port()
+
 MINIMAL_TEMPLATE_VARS = {
     "ansible_hostname": "testhost",
     "ts_ip": "100.64.0.1",
     "ts_status": SimpleNamespace(rc=0),
+    "dnsmasq_port": DNSMASQ_PORT,
 }
 
 FULL_TEMPLATE_VARS = {
@@ -244,7 +263,10 @@ class TestDNSScriptTemplates:
     def test_macos_template_references_dnsmasq_port(self):
         env = Environment(loader=FileSystemLoader(str(NGINX_DIR / "config" / "dns")))
         rendered = env.get_template("macos.j2").render(**FULL_TEMPLATE_VARS)
-        assert "5353" in rendered or "dns" in rendered.lower()
+        # The rendered resolver file's port must equal the group-var port
+        # exactly — the published container port and /etc/resolver/cove
+        # change together only when both derive from dnsmasq_port.
+        assert f"port {DNSMASQ_PORT}" in rendered
 
 
 class TestDnsmasqConfigRendering:
@@ -335,21 +357,33 @@ class TestComposeConfig:
         build = data["services"]["dnsmasq"].get("build", "")
         assert "dnsmasq" in str(build)
 
-    def test_dnsmasq_port_5353(self):
+    def test_dnsmasq_host_port_default_follows_group_var(self):
         data = self._load_compose()
         ports = data["services"]["dnsmasq"]["ports"]
         port_str = str(ports[0])
-        assert "5353" in port_str
+        # Host side must keep the ${DNSMASQ_PORT:-<default>} parameterized
+        # shape, with the default equal to the group var. The container side
+        # stays 5353 (dnsmasq's internal listen port).
+        match = re.search(r"\$\{DNSMASQ_PORT:-(\d+)\}:5353/udp", port_str)
+        assert match, (
+            "dnsmasq publish must be 0.0.0.0:${DNSMASQ_PORT:-<default>}:5353/udp, "
+            f"got: {port_str}"
+        )
+        assert int(match.group(1)) == DNSMASQ_PORT, (
+            f"compose default {match.group(1)} disagrees with group_vars "
+            f"dnsmasq_port={DNSMASQ_PORT}"
+        )
 
     def test_dnsmasq_publishes_udp(self):
         data = self._load_compose()
         ports = data["services"]["dnsmasq"]["ports"]
-        # Accept ${DNSMASQ_PORT:-5353} parameterization: assert on the
+        # Accept ${DNSMASQ_PORT:-<default>} parameterization: assert on the
         # protocol suffix and container port, not the host port literal.
         udp_entries = [p for p in ports if str(p).endswith(":5353/udp")]
         assert udp_entries, (
-            "dnsmasq must publish UDP on 5353 — DNS is UDP-first, so a "
-            f"TCP-only publish leaves the /etc/resolver/cove path dead. Got: {ports}"
+            "dnsmasq must publish UDP alongside the TCP publish (DNS is "
+            "UDP-first, so a TCP-only publish leaves the /etc/resolver/cove "
+            f"path dead). Got: {ports}"
         )
 
     def test_dnsmasq_keeps_tcp_publish(self):
@@ -359,8 +393,8 @@ class TestComposeConfig:
             p for p in ports if str(p).endswith(":5353") and not str(p).endswith("/udp")
         ]
         assert tcp_entries, (
-            "dnsmasq must keep the TCP publish on 5353 for large/truncated "
-            f"DNS responses. Got: {ports}"
+            "dnsmasq must keep the TCP publish alongside UDP for "
+            f"large/truncated DNS responses. Got: {ports}"
         )
 
     def test_dnsproxy_service_exists(self):
@@ -440,6 +474,80 @@ class TestComposeConfig:
         assert any("cove-pages-locations.conf" in v for v in volume_paths)
 
 
+class TestDnsmasqPortConsistency:
+    """The published dnsmasq host port has ONE source of truth: the
+    dnsmasq_port group var. The rendered /etc/resolver (or dnsmasq.d)
+    forwarder files and the published container port MUST change together —
+    that coupling only holds while every surface derives from the group
+    var. These grep-based guards fail if any surface drifts back to a
+    hardcoded literal or disagrees with the group var."""
+
+    COMPOSE_FILE = COMPOSE_DIR / "docker-compose.yml"
+    ENV_EXAMPLE = COMPOSE_DIR / ".env.example"
+    BRINGUP = COMPOSE_DIR / "bringup.yml"
+    FORWARDER_TEMPLATES = [
+        NGINX_DIR / "config" / "dns" / "macos.j2",
+        NGINX_DIR / "config" / "dns" / "linux.j2",
+    ]
+    CONFIG_HTML_TPL = NGINX_DIR / "config.html.j2"
+
+    def test_group_var_defines_port(self):
+        # _group_var_dnsmasq_port() raises (fail loud) when the var is
+        # missing or malformed, so reaching here means it parsed.
+        assert DNSMASQ_PORT > 0
+
+    def test_compose_default_matches_group_var(self):
+        text = self.COMPOSE_FILE.read_text()
+        defaults = re.findall(r"\$\{DNSMASQ_PORT:-(\d+)\}", text)
+        assert defaults, (
+            "docker-compose.yml must parameterize the dnsmasq host port as "
+            "${DNSMASQ_PORT:-<default>} on both the /udp and TCP publishes"
+        )
+        assert set(defaults) == {str(DNSMASQ_PORT)}, (
+            f"compose default(s) {sorted(set(defaults))} disagree with "
+            f"group_vars dnsmasq_port={DNSMASQ_PORT}"
+        )
+
+    def test_env_example_matches_group_var(self):
+        text = self.ENV_EXAMPLE.read_text()
+        match = re.search(r"^DNSMASQ_PORT=(\d+)$", text, re.MULTILINE)
+        assert match, ".env.example must set DNSMASQ_PORT"
+        assert int(match.group(1)) == DNSMASQ_PORT, (
+            f".env.example DNSMASQ_PORT={match.group(1)} disagrees with "
+            f"group_vars dnsmasq_port={DNSMASQ_PORT}"
+        )
+
+    def test_bringup_derives_env_and_probe_from_group_var(self):
+        text = self.BRINGUP.read_text()
+        assert "DNSMASQ_PORT={{ dnsmasq_port }}" in text, (
+            "bringup.yml must render the .env DNSMASQ_PORT from the group var"
+        )
+        assert 'port: "{{ dnsmasq_port }}"' in text, (
+            "bringup.yml wait_for probe must use the group var port"
+        )
+
+    def test_forwarder_templates_derive_from_group_var(self):
+        for tpl in self.FORWARDER_TEMPLATES:
+            text = tpl.read_text()
+            assert "{{ dnsmasq_port }}" in text, (
+                f"{tpl.name} must derive the forwarder port from the group "
+                "var — a hardcoded port here desynchronizes the rendered "
+                "resolver file from the published container port"
+            )
+
+    def test_forwarder_templates_have_no_hardcoded_port(self):
+        # Any `port <digits>` / `#<digits>` literal in these templates is
+        # drift waiting to happen; the rendered resolver config and the
+        # publish must both come from {{ dnsmasq_port }}.
+        for tpl in [*self.FORWARDER_TEMPLATES, self.CONFIG_HTML_TPL]:
+            text = tpl.read_text()
+            literals = re.findall(r"(?:port |#)\d{4,5}\b", text)
+            assert not literals, (
+                f"{tpl.name} hardcodes port literal(s) {literals} — derive "
+                "them from {{ dnsmasq_port }} instead"
+            )
+
+
 class TestInverseAssertions:
     """Failure-path tests: verify that invalid inputs produce errors."""
 
@@ -496,7 +604,7 @@ class TestE2EDNSEndpoints:
 
     COVE_HTTPS_PORT = int(os.environ.get("COVE_HTTPS_PORT", "443"))
     COVE_HTTP_PORT = int(os.environ.get("COVE_HTTP_PORT", "8080"))
-    COVE_DNS_PORT = int(os.environ.get("COVE_DNS_PORT", "5353"))
+    COVE_DNS_PORT = int(os.environ.get("COVE_DNS_PORT", "5354"))
     BASE_URL = os.environ.get("COVE_BASE_URL", "https://git.cove")
     VERIFY_SSL = os.environ.get("COVE_VERIFY_SSL", "false").lower() == "true"
 

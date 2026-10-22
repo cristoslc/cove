@@ -6,11 +6,11 @@ if [ "$EUID" -ne 0 ]; then exec sudo bash "$0"; fi
 mkdir -p /etc/resolver
 cat > "$FILE" <<'EOF'
 nameserver {{ ts_ip }}
-port 5353
+port {{ dnsmasq_port }}
 EOF
 cat > "$FILE2" <<'EOF'
 nameserver {{ ts_ip }}
-port 5353
+port {{ dnsmasq_port }}
 EOF
 echo "DNS resolver configured: $FILE"
 echo "DNS resolver configured: $FILE2"
