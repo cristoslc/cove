@@ -2,10 +2,10 @@
   "$schema": "http://cyclonedx.org/schema/bom-1.7.schema.json",
   "bomFormat": "CycloneDX",
   "specVersion": "1.7",
-  "serialNumber": "urn:uuid:d9bd2d0d-dae4-4447-85dd-83e94883f443",
+  "serialNumber": "urn:uuid:482287a7-cc84-4ff6-bcc6-2da79aeb8736",
   "version": 1,
   "metadata": {
-    "timestamp": "2026-10-22T12:27:40+00:00",
+    "timestamp": "2026-10-22T14:42:20+00:00",
     "tools": {
       "components": [
         {
@@ -110,22 +110,7 @@
   },
   "components": [
     {
-      "bom-ref": "d059c1a3-25c9-4192-8215-41f353349a56",
-      "type": "application",
-      "name": "bin/forgejo-runner",
-      "properties": [
-        {
-          "name": "aquasecurity:trivy:Class",
-          "value": "lang-pkgs"
-        },
-        {
-          "name": "aquasecurity:trivy:Type",
-          "value": "gobinary"
-        }
-      ]
-    },
-    {
-      "bom-ref": "fc27c7e1-faac-4d2c-b5e4-43a098e19876",
+      "bom-ref": "1366af46-fac5-4d2e-97f9-bc352d25ccf8",
       "type": "operating-system",
       "name": "alpine",
       "version": "3.22.2",
@@ -137,6 +122,21 @@
         {
           "name": "aquasecurity:trivy:Type",
           "value": "alpine"
+        }
+      ]
+    },
+    {
+      "bom-ref": "34f48d78-bfe5-4e91-9490-517c5860e622",
+      "type": "application",
+      "name": "bin/forgejo-runner",
+      "properties": [
+        {
+          "name": "aquasecurity:trivy:Class",
+          "value": "lang-pkgs"
+        },
+        {
+          "name": "aquasecurity:trivy:Type",
+          "value": "gobinary"
         }
       ]
     },
@@ -3991,13 +3991,7 @@
   ],
   "dependencies": [
     {
-      "ref": "d059c1a3-25c9-4192-8215-41f353349a56",
-      "dependsOn": [
-        "pkg:golang/code.forgejo.org/forgejo/runner/v11@v11.3.1%2Bdirty"
-      ]
-    },
-    {
-      "ref": "fc27c7e1-faac-4d2c-b5e4-43a098e19876",
+      "ref": "1366af46-fac5-4d2e-97f9-bc352d25ccf8",
       "dependsOn": [
         "pkg:apk/alpine/alpine-baselayout@3.7.0-r0?arch=aarch64&distro=3.22.2",
         "pkg:apk/alpine/alpine-release@3.22.2-r0?arch=aarch64&distro=3.22.2",
@@ -4007,6 +4001,12 @@
         "pkg:apk/alpine/git@2.49.1-r0?arch=aarch64&distro=3.22.2",
         "pkg:apk/alpine/musl-utils@1.2.5-r10?arch=aarch64&distro=3.22.2",
         "pkg:apk/alpine/ssl_client@1.37.0-r19?arch=aarch64&distro=3.22.2"
+      ]
+    },
+    {
+      "ref": "34f48d78-bfe5-4e91-9490-517c5860e622",
+      "dependsOn": [
+        "pkg:golang/code.forgejo.org/forgejo/runner/v11@v11.3.1%2Bdirty"
       ]
     },
     {
@@ -4676,8 +4676,8 @@
     {
       "ref": "pkg:oci/runner@sha256:287433414b987b89896399683034818db198079053d84ca473aadb06ebad8b9f?arch=arm64&repository_url=data.forgejo.org%2Fforgejo%2Frunner",
       "dependsOn": [
-        "d059c1a3-25c9-4192-8215-41f353349a56",
-        "fc27c7e1-faac-4d2c-b5e4-43a098e19876"
+        "1366af46-fac5-4d2e-97f9-bc352d25ccf8",
+        "34f48d78-bfe5-4e91-9490-517c5860e622"
       ]
     }
   ],
