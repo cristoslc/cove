@@ -21,7 +21,7 @@ Cove is a portable, offline-capable local developer platform. It runs Forgejo (G
 │                                                             │
 │  ┌─── Docker Compose ────────────────────────────────────┐  │
 │  │                                                        │  │
-│  │  nginx (:8080 → 301, :443 TLS)     dnsmasq (:5353)    │  │
+│  │  nginx (:8080 → 301, :443 TLS)     dnsmasq (:5354)    │  │
 │  │   ├─ git.cove       → forgejo:3000                    │  │
 │  │   ├─ vault.cove     → vault:8200                      │  │
 │  │   ├─ hc.cove        → health check                    │  │
@@ -197,7 +197,7 @@ All `*.cove` domains resolve via `/etc/hosts` to `127.0.0.1`. Tailscale MagicDNS
 ### Offline
 
 - `/etc/hosts` maps `cove`, `git.cove`, `vault.cove`, `hc.cove` to `127.0.0.1`.
-- `/etc/resolver/cove` routes subdomain queries to `dnsmasq:5353`, which has a wildcard rule resolving `*.cove` → `127.0.0.1`.
+- `/etc/resolver/cove` routes subdomain queries to `dnsmasq:5354`, which has a wildcard rule resolving `*.cove` → `127.0.0.1`.
 - nginx at `127.0.0.1:443` uses Cove PKI certs — valid TLS, CA-accepted, no warnings.
 
 ## Data Persistence
@@ -277,7 +277,7 @@ provision_pages.yml
 | Forgejo SSH | `0.0.0.0:2222` | `forgejo:22` | Direct, not proxied |
 | Forgejo Runner | None (outbound-only) | `forgejo:3000` | Polls Forgejo, no host port |
 | Vault | Via nginx only | `vault:8200` | No host port mapping |
-| dnsmasq | None | `127.0.0.1:5353` | Only resolves to `127.0.0.1` |
+| dnsmasq | None | `127.0.0.1:5354` | Only resolves to `127.0.0.1` |
 | Pages static files | Via nginx only | Internal volume | Read-only from nginx container |
 
 ## TLS

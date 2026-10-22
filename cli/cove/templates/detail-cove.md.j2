@@ -64,7 +64,7 @@ Vault address: `https://vault.cove.local/` (TLS via cove certs)
 | Vault | vault:8200 | https://vault.cove.local/ | via nginx proxy |
 | Nginx | — | 0.0.0.0:443 | cove certs TLS termination |
 | Forgejo SSH | 0.0.0.0:2222 | — | optional, direct |
-| dnsmasq | 0.0.0.0:5353 | — | offline wildcard DNS |
+| dnsmasq | 0.0.0.0:5354 | — | offline wildcard DNS |
 
 All HTTP traffic routes through nginx at `*.cove.local` subdomains. Ports bind on `0.0.0.0` for Colima VM port forwarding. Tailscale serve forwards tailnet traffic to nginx.
 
@@ -74,7 +74,7 @@ All HTTP traffic routes through nginx at `*.cove.local` subdomains. Ports bind o
 
 ## TLS
 
-- **Local:** Cove generates `cove` + `*.cove.local` cert in `{{ cove_data_root }}/certs/`. nginx terminates TLS. macOS resolver (`/etc/resolver/cove`) delegates `*.cove.local` DNS to dnsmasq on `127.0.0.1:5353`.
+- **Local:** Cove generates `cove` + `*.cove.local` cert in `{{ cove_data_root }}/certs/`. nginx terminates TLS. macOS resolver (`/etc/resolver/cove`) delegates `*.cove.local` DNS to dnsmasq on `127.0.0.1:5354`.
 - **Tailscale:** Tailscale cert (public FQDN) for remote access. Tailscale serve forwards `:443` → `127.0.0.1:443`.
 
 ## Git remotes

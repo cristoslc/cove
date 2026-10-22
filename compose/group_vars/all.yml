@@ -71,7 +71,15 @@ ade_port: 38886
 # --- dnsmasq ---
 dnsmasq_conf_dir: "{{ playbook_dir }}/dnsmasq"
 dnsmasq_container_name: cove-dnsmasq
-dnsmasq_port: 5353
+# Published host port — the single source of truth. The compose default
+# (${DNSMASQ_PORT:-...}), the rendered .env DNSMASQ_PORT, the bringup
+# wait_for probe, the macOS/Linux forwarder templates, and the config page
+# all derive from this var (a consistency test in cli/tests fails if any
+# drifts). Default moved off 5353 because macOS hosts commonly have a
+# third-party process squatting UDP 5353 (e.g. GLKVM Helper binds
+# 127.0.0.1:5353/udp), which leaves the UDP publish dead. The container
+# still listens on 5353 internally; only the host-side port moved.
+dnsmasq_port: 5354
 
 # --- dnsproxy ---
 dnsproxy_container_name: cove-dnsproxy
