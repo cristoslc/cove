@@ -1093,7 +1093,9 @@ class TestCoveStatusCommand:
             "cove.status._check_vault"
         ) as mock_vault, patch(
             "cove.status._check_dns"
-        ) as mock_dns:
+        ) as mock_dns, patch(
+            "cove.status._check_resolver_port", return_value=None
+        ):
             from cove.status import CheckResult
             mock_containers.return_value = [
                 CheckResult(name="Forgejo", ok=True, detail="Up 2 hours"),
@@ -1121,7 +1123,9 @@ class TestCoveStatusCommand:
             "cove.status._check_vault"
         ) as mock_vault, patch(
             "cove.status._check_dns"
-        ) as mock_dns:
+        ) as mock_dns, patch(
+            "cove.status._check_resolver_port", return_value=None
+        ):
             from cove.status import CheckResult
             mock_containers.return_value = [
                 CheckResult(name="Forgejo", ok=False, detail="Container cove-forgejo is not running",
@@ -1167,7 +1171,9 @@ class TestCoveStatusCommand:
             "cove.status._check_vault"
         ) as mock_vault, patch(
             "cove.status._check_dns"
-        ) as mock_dns:
+        ) as mock_dns, patch(
+            "cove.status._check_resolver_port", return_value=None
+        ):
             from cove.status import CheckResult
             mock_containers.return_value = [
                 CheckResult(name="Forgejo", ok=True, detail="Up"),
@@ -1203,6 +1209,52 @@ class TestCoveStatusCommand:
             results = _check_containers()
         r = [x for x in results if x.name == "Speedtest"][0]
         assert r.ok and "Up 5 hours" in r.detail
+
+    def test_resolver_port_check_silent_when_no_drift(self):
+        from cove.status import _check_resolver_port
+
+        with patch("cove.status.is_macos", return_value=True), patch(
+            "cove.status.resolve_compose_dir", return_value=Path("/tmp/compose")
+        ), patch("cove.status.expected_dnsmasq_port", return_value=5354), patch(
+            "cove.status.drifted_resolver_files", return_value={}
+        ):
+            assert _check_resolver_port() is None, (
+                "no drift must not add a status row"
+            )
+
+    def test_resolver_port_check_fails_loud_with_corrective_command(self):
+        from cove.status import _check_resolver_port
+
+        stale = Path("/etc/resolver/cove")
+        with patch("cove.status.is_macos", return_value=True), patch(
+            "cove.status.resolve_compose_dir", return_value=Path("/tmp/compose")
+        ), patch("cove.status.expected_dnsmasq_port", return_value=5354), patch(
+            "cove.status.drifted_resolver_files", return_value={stale: 5353}
+        ):
+            result = _check_resolver_port()
+        assert result is not None and not result.ok, (
+            "a stale /etc/resolver port must fail status loudly"
+        )
+        assert "5354" in result.detail
+        assert any("port 5354" in hint for hint in result.hints), (
+            f"the hint must carry the exact corrective command, got {result.hints}"
+        )
+
+    def test_resolver_port_check_skips_non_macos(self):
+        from cove.status import _check_resolver_port
+
+        with patch("cove.status.is_macos", return_value=False):
+            assert _check_resolver_port() is None
+
+    def test_resolver_port_check_silent_when_expected_port_unknown(self):
+        """Without a readable dnsmasq_port there is nothing to compare against;
+        the DNS-resolution check still covers a broken resolver."""
+        from cove.status import _check_resolver_port
+
+        with patch("cove.status.is_macos", return_value=True), patch(
+            "cove.status.resolve_compose_dir", side_effect=RuntimeError("no compose")
+        ):
+            assert _check_resolver_port() is None
 
 
 class TestCoveDownCommand:
@@ -1643,7 +1695,10 @@ class TestUpRestartsStaleBinds:
           call (last reused). A None entry models an unreadable state (docker
           down / container absent). None (default) models unreadable always.
         - health: value returned by `cove.cli.vault_health` (default: Vault
-          reachable, initialized, sealed) or an Exception to raise per call.
+          reachable, initialized, sealed), an Exception to raise per call, or
+          a list consumed one entry per probe (last entry reused) — use the
+          list form to model a Vault that answers its health endpoint only
+          after a few retries.
         - probes / sleeps: recorder lists for vault_health calls and
           time.sleep backoffs; pass a list to assert on it.
         - unseal_error: exception raised by the patched ensure_unsealed."""
@@ -1703,12 +1758,17 @@ class TestUpRestartsStaleBinds:
         def _fake_health(*args, **kwargs):
             # The heal's bounded health probe. Default: Vault reachable,
             # initialized and sealed, so a triggered heal proceeds to
-            # ensure_unsealed (which the unseals list observes).
+            # ensure_unsealed (which the unseals list observes). A list is
+            # consumed one entry per probe (last reused) to model a Vault
+            # that answers only after some retries.
+            value = health
+            if isinstance(value, list):
+                value = value.pop(0) if len(value) > 1 else value[0]
             if probes is not None:
-                probes.append(health)
-            if isinstance(health, Exception):
-                raise health
-            return {"initialized": True, "sealed": True} if health is None else health
+                probes.append(value)
+            if isinstance(value, Exception):
+                raise value
+            return {"initialized": True, "sealed": True} if value is None else value
 
         _sleep_recorder = sleeps if sleeps is not None else []
 
@@ -1995,11 +2055,60 @@ class TestUpHealsVaultRecreatedByCompose:
             "no unseal (and so no keystore read) may be attempted while Vault "
             f"is unreachable, got {unseals}"
         )
-        assert len(sleeps) == 4, (
+        assert len(sleeps) == cove.cli._VAULT_HEALTH_ATTEMPTS - 1, (
             f"retries must be bounded (attempt count minus one backoffs), "
             f"got {len(sleeps)}"
         )
         assert "may still be sealed" in capsys.readouterr().err
+
+    def test_late_health_inside_the_window_still_unseals(
+        self, tmp_path, _fake_ansible_popen
+    ):
+        """A recreated Vault that is slow to answer — health fails a few times
+        then succeeds — must still be healed, not warned about. The window must
+        swallow a normal Vault boot (2026-10-22: a 5x1.0s probe expired first
+        and reported 'may still be sealed' on a Vault that was still starting).
+        The loop returns the moment Vault answers, so the probe count is
+        exactly the failures plus one success."""
+        unseals, probes, sleeps = [], [], []
+        self._up(
+            tmp_path,
+            unseals=unseals,
+            probes=probes,
+            sleeps=sleeps,
+            health=[
+                RuntimeError("Vault unreachable at https://vault.cove.local/"),
+                RuntimeError("Vault unreachable at https://vault.cove.local/"),
+                {"initialized": True, "sealed": True},
+            ],
+            vault_states=[
+                ("id-before", "2026-10-21T10:00:00Z"),
+                ("id-after", "2026-10-21T14:58:06Z"),
+            ],
+        )
+        assert len(probes) == 3, (
+            "the probe must retry until Vault answers, then stop immediately, "
+            f"got {probes}"
+        )
+        assert len(sleeps) == 2, (
+            f"one backoff between each probe pair, got {len(sleeps)}"
+        )
+        assert unseals == [True], (
+            "a Vault that answers inside the bounded window comes up sealed "
+            f"and must be unsealed, got {unseals}"
+        )
+
+    def test_health_probe_window_covers_a_normal_vault_boot(self):
+        """Regression guard for the window width: the nominal coverage
+        (attempts x retry interval) must span at least 30s so a freshly
+        recreated Vault has time to answer, while the loop stays bounded."""
+        coverage = (
+            cove.cli._VAULT_HEALTH_ATTEMPTS * cove.cli._VAULT_HEALTH_RETRY_SECONDS
+        )
+        assert coverage >= 30.0, (
+            "the bounded Vault heal probe must cover a normal Vault boot "
+            f"(>=30s), got {coverage}s"
+        )
 
     def test_unseal_failure_fails_loud(self, tmp_path, _fake_ansible_popen):
         """Same failure semantics as the PR #75 stale-bind path: a heal that

@@ -526,6 +526,51 @@ class TestDnsmasqPortConsistency:
             "bringup.yml wait_for probe must use the group var port"
         )
 
+    def test_bringup_repoints_macos_resolver_files_to_group_var(self):
+        """The macOS /etc/resolver/cove* files are installed out of band (the
+        served macos.j2 script is never run by `cove up`), so moving the
+        published port used to leave them stale and the resolver path silently
+        dead. bringup must re-point every existing cove* file at the group-var
+        port on each up: Darwin-only, idempotent (replace), become (the same
+        privilege path as the /etc/hosts task), and non-fatal so a no-TTY run
+        without passwordless sudo cannot hang or abort."""
+        data = yaml.safe_load(self.BRINGUP.read_text())
+        task = None
+        find_task = None
+        for play in data:
+            for candidate in play.get("tasks", []):
+                if "cove_resolver_files" in str(candidate.get("loop", "")):
+                    task = candidate
+                if candidate.get("register") == "cove_resolver_files":
+                    find_task = candidate
+        assert find_task is not None, (
+            "bringup.yml must discover the existing macOS /etc/resolver files"
+        )
+        assert find_task.get("when") == 'ansible_system == "Darwin"', (
+            "the /etc/resolver scan is macOS-only"
+        )
+        assert task is not None, (
+            "bringup.yml must re-point /etc/resolver/cove* at dnsmasq_port"
+        )
+        assert task.get("become") is True, (
+            "writing /etc/resolver needs root; follow the /etc/hosts become path"
+        )
+        assert task.get("failed_when") is False, (
+            "a run without passwordless sudo must not abort `cove up`; the "
+            "drift is reported by `cove status` instead"
+        )
+        when = task.get("when")
+        when_text = " ".join(when) if isinstance(when, list) else str(when)
+        assert "Darwin" in when_text, "the resolver re-point is macOS-only"
+        replace_args = task.get("ansible.builtin.replace")
+        assert replace_args, "the resolver re-point must use the replace module"
+        assert replace_args["replace"] == "port {{ dnsmasq_port }}", (
+            "the resolver port must derive from the dnsmasq_port group var"
+        )
+        assert replace_args["regexp"] == '^port\\s+\\d+\\s*$', (
+            "the replace must target only the port line, leaving nameserver intact"
+        )
+
     def test_forwarder_templates_derive_from_group_var(self):
         for tpl in self.FORWARDER_TEMPLATES:
             text = tpl.read_text()
