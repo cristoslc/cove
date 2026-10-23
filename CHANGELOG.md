@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.15.5 (2026-10-22)
+
+### Security
+- **Speedtest Tracker pin `v1.14.5-ls162` → `v1.15.1-ls177` (PHP 8.5.8 → 8.5.12)** — the pinned image shipped PHP 8.5.8, vulnerable to the PHP2Shell unauthenticated RCE pair (CVE-2026-109618, CVE-2026-109619); the new tag ships PHP 8.5.12, the fixed release. This is a security-override patch-class bump, so the repo's 48-72h supply-chain hold did not apply. The deployed `~/.config/cove/compose/.env` `SPEEDTEST_IMAGE` override (which takes precedence over the compose default and is only rendered on first boot) was advanced to the new pin alongside this change.
+
 ## 0.15.4 (2026-10-22)
 
 ### Security
