@@ -42,7 +42,7 @@ On subsequent runs, the shared item / cached value is reused — no regeneration
 
 `speedtest.cove` is LAN/Tailscale-reachable (nginx publishes `0.0.0.0:443`), so auth is required, not cosmetic.
 
-The pinned image (`lscr.io/linuxserver/speedtest-tracker:v1.14.5-ls162`, upstream Speedtest Tracker v1.14.5) **enforces app login on first run**. The UI redirects unauthenticated visitors to a login screen; the default credentials are `admin@example.com` / `password` and **must be changed on first login** via the Users page. The admin identity is the unified Cove admin (`admin@cove.local` + word-based passphrase, see [ADR-017](adr/adr-017-unified-cove-admin-identity.md)). This is a real login gate — it is NOT an unauthenticated-by-default dashboard.
+The pinned image (`lscr.io/linuxserver/speedtest-tracker:v1.15.1-ls177`, upstream Speedtest Tracker v1.15.1) **enforces app login on first run**. The UI redirects unauthenticated visitors to a login screen; the default credentials are `admin@example.com` / `password` and **must be changed on first login** via the Users page. The admin identity is the unified Cove admin (`admin@cove.local` + word-based passphrase, see [ADR-017](adr/adr-017-unified-cove-admin-identity.md)). This is a real login gate — it is NOT an unauthenticated-by-default dashboard.
 
 **Posture:** app-login enforced (Speedtest Tracker's own authentication). No nginx basic-auth fallback is required because the pinned version enforces login. `APP_KEY` and the admin credentials are stored in a single shared 1Password item keyed to `https://speedtest.cove.local/` (reused across machines) and cached in Vault (see above) and used to encrypt stored data.
 
@@ -54,7 +54,7 @@ The pinned image (`lscr.io/linuxserver/speedtest-tracker:v1.14.5-ls162`, upstrea
 |-------|-----------|
 | **Network** | Binds to `127.0.0.1:8982` only. No `0.0.0.0` host port; reachable only through nginx. |
 | **Auth** | App login enforced on the pinned version; default `admin@example.com`/`password` must be changed. Admin identity is the unified Cove admin (`admin@cove.local` + word-based passphrase, see [ADR-017](adr/adr-017-unified-cove-admin-identity.md)); `APP_KEY` auto-generated, stored in one shared 1Password item (URL-keyed to `https://speedtest.cove.local/`, reused across machines) + Vault. |
-| **Version** | Pinned to `v1.14.5-ls162` (no `latest`). |
+| **Version** | Pinned to `v1.15.1-ls177` (no `latest`). |
 | **Database** | SQLite single container — no external DB to operate, no extra CVE surface. |
 | **Non-root** | Runs as the configured `PUID`/`PGID` user (default 1000:1000), not root. |
 | **Memory** | Memory-limited (512M default). |
