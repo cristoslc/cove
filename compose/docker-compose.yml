@@ -251,7 +251,7 @@ services:
 
   speedtest-tracker:
     profiles: ["speedtest"]
-    image: ${SPEEDTEST_IMAGE:-lscr.io/linuxserver/speedtest-tracker:v1.14.5-ls162}
+    image: ${SPEEDTEST_IMAGE:-lscr.io/linuxserver/speedtest-tracker:v1.15.1-ls177}
     container_name: ${SPEEDTEST_CONTAINER_NAME:-cove-speedtest-tracker}
     restart: unless-stopped
     ports:
