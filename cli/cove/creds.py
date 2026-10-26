@@ -60,10 +60,22 @@ def creds():
 @click.option(
     "--force-refresh",
     is_flag=True,
-    help="Bypass Vault cache and re-fetch from 1Password.",
+    help=(
+        "Accepted for backward compatibility; vault-put always re-reads "
+        "1Password, so this flag no longer changes behavior."
+    ),
 )
 def vault_put(op_ref: str, force_refresh: bool):
-    """Cache an op:// reference in Vault; never print the resolved value.
+    """Cache an op:// reference in Vault from a FRESH 1Password read; never print the resolved value.
+
+    Contract (issue #93): vault-put is sync-from-1Password into the cache.
+    It ALWAYS re-reads 1Password and overwrites the Vault and local caches
+    with the freshly read value, even when the value is already cached, so
+    it never reports success while keeping a stale value after an upstream
+    rotation. A 1Password read failure exits non-zero and leaves the caches
+    untouched. Cached-if-present short-circuiting belongs to read paths
+    (vault-get), not to this sync command. --force-refresh is still
+    accepted but is redundant.
 
     Stdout carries the batch-pull-style mask only — the resolved secret must
     never land in a terminal or agent transcript. Internal callers (tunnel,
@@ -74,7 +86,7 @@ def vault_put(op_ref: str, force_refresh: bool):
 
         cove creds vault-put 'op://Private/Forgejo MacBook Admin/password'
 
-        cove creds vault-put 'op://Private/My Secret/password' --force-refresh
+        cove creds vault-put 'op://Private/My Secret/password'
     """
     try:
         value = vault_cache.vault_put_op_ref(op_ref, force_refresh=force_refresh)
