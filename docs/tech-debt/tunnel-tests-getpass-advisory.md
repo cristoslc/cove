@@ -1,0 +1,11 @@
+# Tunnel tests: getpass fallback advisory warnings
+
+**Found:** 2026-10-26, after PR #87 (the devnull ResourceWarnings in `cli/tests/test_tunnel.py` were fixed with `io.StringIO` replacements; six warnings remain, all `GetPassWarning: Can not control echo on the terminal` from `getpass.py:62`).
+
+**Why they fire:** the onboarding tests deliberately exercise the token-prompt path where `tunnel.py` calls `getpass.getpass` for echo-off entry. Tests drive it with fake `sys.stdin` (`io.StringIO` with a faked `isatty`), so Python's getpass cannot use real terminal echo control and falls back to `fallback_getpass`, emitting one advisory per call. The behavior under test is correct production behavior; the warning is Python's environment notice about running terminal auth without a terminal.
+
+**Why not suppressed:** the operator's warnings rule forbids silencing to reduce noise. A `pytest.mark.filterwarnings("ignore::getpass.GetPassWarning")` marker or a `-W ignore` would be suppression, not a fix.
+
+**Candidate fix (not yet implemented, needs a test-semantics decision):** in the six noisy tests (`TestOnboarding::test_interactive_flow_stores_token_and_caches`, `test_empty_token_retries_then_accepts`, `test_eof_mid_onboard_aborts_loud`, `test_op_write_failure_degrades_to_env_cache_only`, `TestResetToken::test_reset_next_up_reonboards` — plus the duplicate row for the retries test), patch `getpass.getpass` with a scripted fake so onboarding logic is tested without the terminal mechanics, and ADD one small dedicated test that asserts the fallback wiring itself (that onboarding routes token entry through `getpass.getpass`). Caution: `test_eof_mid_onboard_aborts_loud` may assert abort-on-EOF semantics through the real fallback reader (`getpass` on EOF) — if patching getpass changes that test's meaning, keep that one real and let its single advisory stand, documented here.
+
+**Status:** open, accepted noise (6 warnings). Resolve during the next `test_tunnel.py` refactor or when the Bifrost implementation touches tunnel-adjacent tests. Never resolve by suppression.
