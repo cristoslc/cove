@@ -650,3 +650,24 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: manual
+  - path: "cove up provisioning: bringup, bootstrap_vault, provision_forgejo run in order; provision_vault_user.yml never runs (workstation-lane-owned playbook, reference only)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove creds vault-put never prints the resolved secret — stdout carries the batch-pull mask; tunnel/litellm/speedtest up-flows resolve in-process via vault_cache (no vault-put subprocess parses stdout)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "no-PII gate: scans every tracked file plus bundled wheel resources (compose/, docs/, CHANGELOG.md included), fires on hostname family / Vault item titles / /Users/<name> home paths / personal mailbox domains / synthetic sentinels, admits only *.example files under compose/seeds/, and keeps compose/seeds/vault-user.yaml gitignored"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip

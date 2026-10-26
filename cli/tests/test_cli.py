@@ -741,8 +741,9 @@ class TestCoveUpCommand:
             ]
             run_cmds = [str(c[0][0]) for c in mock_run.call_args_list]
 
-            assert len(playbooks) == 4, (
-                f"full up must run 4 playbooks, got: {playbooks}"
+            assert len(playbooks) == 3, (
+                "full up must run 3 playbooks — vault-user provisioning left "
+                f"cove (workstation-lane-owned), got: {playbooks}"
             )
             assert run_cmds and "batch-pull" in run_cmds[0], (
                 "batch-pull (subprocess.run) must come first"
@@ -764,17 +765,20 @@ class TestCoveUpCommand:
             order = [
                 playbooks.index(next(p for p in playbooks if "bringup.yml" in p)),
                 playbooks.index(next(p for p in playbooks if "bootstrap_vault.yml" in p)),
-                playbooks.index(next(p for p in playbooks if "provision_vault_user.yml" in p)),
                 playbooks.index(next(p for p in playbooks if "provision_forgejo.yml" in p)),
             ]
             assert order == sorted(order), (
                 f"playbook order must be bringup, bootstrap_vault, "
-                f"provision_vault_user, provision_forgejo; got: {playbooks}"
+                f"provision_forgejo; got: {playbooks}"
             )
             assert _occurred("bringup.yml")
             assert _occurred("bootstrap_vault.yml")
-            assert _occurred("provision_vault_user.yml")
             assert _occurred("provision_forgejo.yml")
+            assert not _occurred("provision_vault_user.yml"), (
+                "provision_vault_user.yml is workstation-lane-owned and must "
+                "NEVER run during cove up (per-run generated Vault UI password "
+                "created duplicate 1Password items on 2026-10-23)"
+            )
 
     def test_up_passes_running_optional_profiles_to_bringup(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up must detect running optional services and pass their compose
@@ -947,7 +951,7 @@ class TestCoveUpCommand:
             'fatal: [localhost] (item=/Users/x/cove-data/toolhive/registry.json): '
             '{"msg": "registry.json exists as a NON-EMPTY DIRECTORY. '
             'Remove it and re-run: rm -rf /Users/x/cove-data/toolhive/registry.json && cove up", "changed": false}',
-            "Origin: /Users/cove/compose/bringup.yml:439:7",
+            "Origin: /Users/x/compose/bringup.yml:439:7",
             "NO MORE HOSTS LEFT",
             "PLAY RECAP",
         ]

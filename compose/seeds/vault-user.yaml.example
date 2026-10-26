@@ -1,4 +1,10 @@
 ---
+# workstation-lane-owned reference template — NOT shipped, NOT run by `cove up`.
+# `cove up` must never render this seed or provision a per-run generated
+# password: the old flow created a new same-titled 1Password item on every run
+# (duplicate observed 2026-10-23) and drifted the Vault UI credential from the
+# credential of record. cove ships no user-specific config; rendered seeds
+# (compose/seeds/*.yaml) are gitignored and must stay untracked.
 items:
   - title: "Vault {{ ansible_hostname }} {{ admin_username }}"
     vault: {{ op_vault }}

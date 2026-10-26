@@ -106,7 +106,11 @@ class TestE2EStatelessVersion:
 class TestE2EStatelessPiiFree:
     """Phase 1 acceptance: bundled resources contain no PII."""
 
-    PII_PATTERNS = ["cristos", "operator@example.com", "<tailscale-dns-name>", "<hostname>"]
+    # Bundled resources contain no operator PII. `<hostname>` is NOT a
+    # sentinel: it is the repo's placeholder convention and legitimately
+    # appears in bringup.yml / host_vars examples (see test_no_pii.py for the
+    # full widened gate).
+    PII_PATTERNS = ["cristos", "operator@example.com", "<tailscale-dns-name>"]
 
     def test_bundled_resources_have_no_pii(self, cove_run, cove_home):
         cove_run(["init"])

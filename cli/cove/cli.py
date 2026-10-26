@@ -345,7 +345,7 @@ def _report_ansible_failure(playbook: Path, lines: list[str], logfile: Path) -> 
 
 
 @app.command()
-@click.option("--no-provision", is_flag=True, help="Skip Forgejo provisioning")
+@click.option("--no-provision", is_flag=True, help="Skip Vault bootstrap and Forgejo provisioning")
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
 @click.option("--all", "all_", is_flag=True, help="Also start all optional services (LiteLLM + Headroom, Runner, Speedtest). The tunnel is excluded: shares are created interactively with `cove tunnel up`.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
@@ -486,8 +486,12 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
         )
     if not no_provision:
         _run_ansible(compose_dir / "bootstrap_vault.yml", "Bootstrapping Vault...")
-        _run_ansible(compose_dir / "provision_vault_user.yml", "Provisioning Vault user...")
         _run_ansible(provision, "Provisioning Forgejo...")
+        # vault-user provisioning deliberately absent: it is workstation-lane-
+        # owned (compose/provision_vault_user.yml stays as reference). `cove up`
+        # must never render the vault-user seed with a per-run generated password
+        # — the old flow created a new same-titled 1Password item on every run
+        # (2026-10-23 duplicate) and drifted the Vault UI credential.
 
     if all_:
         _start_optional_services()
