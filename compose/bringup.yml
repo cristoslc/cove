@@ -311,6 +311,10 @@
           - --sans
           - litellm.cove.local
           - --sans
+          - bifrost.cove
+          - --sans
+          - bifrost.cove.local
+          - --sans
           - speedtest.cove
           - --sans
           - speedtest.cove.local
@@ -353,6 +357,7 @@
           "vault.cove" "vault.cove.local" \
           "ade.cove" "ade.cove.local" \
           "litellm.cove" "litellm.cove.local" \
+          "bifrost.cove" "bifrost.cove.local" \
           "speedtest.cove" "speedtest.cove.local" \
           "mcp.cove" "mcp.cove.local" \
           "hc.cove" "hc.cove.local" \
@@ -374,7 +379,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local speedtest.cove speedtest.cove.local mcp.cove mcp.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
+        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local bifrost.cove bifrost.cove.local speedtest.cove speedtest.cove.local mcp.cove mcp.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
         state: present
       failed_when: false
 
@@ -401,6 +406,16 @@
         - "{{ cove_data_root }}/toolhive/config"
         - "{{ cove_data_root }}/toolhive/state"
         - "{{ cove_data_root }}/toolhive/profiles"
+
+    # Bifrost (LiteLLM replacement candidate, additive phase) keeps its
+    # provider keys, admin credentials, and virtual key in env files inside
+    # this directory, so it is operator-private (0700), unlike the other
+    # service roots.
+    - name: Create the Bifrost data directory (private)
+      ansible.builtin.file:
+        path: "{{ cove_data_root }}/bifrost"
+        state: directory
+        mode: "0700"
 
     - name: Restrict LiteLLM configuration directory
       ansible.builtin.command:
@@ -501,6 +516,8 @@
         - "{{ cove_data_root }}/nginx/config.html"
         - "{{ cove_data_root }}/litellm/config.yaml"
         - "{{ cove_data_root }}/toolhive/registry.json"
+        - "{{ cove_data_root }}/bifrost/config.json"
+        - "{{ cove_data_root }}/bifrost/config.db"
       register: data_mount_targets
     - name: List contents of wedged data-root mount directories
       ansible.builtin.find:
@@ -571,6 +588,54 @@
           - "{{ cove_data_root }}/litellm/config.yaml"
       register: litellm_config_generation
       changed_when: "'updated' in litellm_config_generation.stdout"
+
+    # BIFROST ------------------------------------------------------------------
+    # LiteLLM replacement candidate, additive phase. The data root holds
+    # operator-private env files plus seeded git-tracked config; nothing
+    # here removes or converges the litellm services.
+    - name: Ensure Bifrost local provider env file exists
+      ansible.builtin.copy:
+        dest: "{{ cove_data_root }}/bifrost/local.env"
+        mode: "0600"
+        content: ""
+        force: false
+
+    - name: Seed Bifrost governance config (first boot only)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/bifrost/config.json"
+        dest: "{{ cove_data_root }}/bifrost/config.json"
+        mode: "0644"
+        # Re-copy when the path was just auto-repaired (wedge removal),
+        # otherwise first-boot only (litellm config pattern).
+        force: "{{ (cove_data_root ~ '/bifrost/config.json')
+                   in (repaired_data_mounts | default([])) }}"
+
+    - name: Seed Bifrost egress allowlist (first boot only)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/bifrost/dnsmasq.conf"
+        dest: "{{ cove_data_root }}/bifrost/dnsmasq.conf"
+        mode: "0644"
+        force: "{{ (cove_data_root ~ '/bifrost/dnsmasq.conf')
+                   in (repaired_data_mounts | default([])) }}"
+
+    - name: Pre-seed the Bifrost SQLite config store file
+      # A file-only Bifrost boot cannot carry governance (spike finding): the
+      # SQLite runtime store must pre-exist, even empty, mounted writable at
+      # /app/data/config.db. Touch-by-connect only when absent (idempotent).
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "-c"
+          - "import sqlite3, sys; sqlite3.connect(sys.argv[1]).close()"
+          - "{{ cove_data_root }}/bifrost/config.db"
+      register: bifrost_store_seed
+      when: not (cove_data_root ~ "/bifrost/config.db") is exists
+      changed_when: bifrost_store_seed.rc == 0
+
+    - name: Keep the Bifrost SQLite config store private
+      ansible.builtin.file:
+        path: "{{ cove_data_root }}/bifrost/config.db"
+        mode: "0600"
 
     # TOOLHIVE -----------------------------------------------------------------
     # IaC: the curated registry, the default permission profile, and the
@@ -713,6 +778,12 @@
           TOOLHIVE_CONTAINER_NAME={{ toolhive_container_name | default('cove-toolhive') }}
           TOOLHIVE_PORT={{ toolhive_port | default('8090') }}
           TOOLHIVE_MEM_LIMIT={{ toolhive_mem_limit | default('512M') }}
+          BIFROST_IMAGE={{ bifrost_image | default('maximhq/bifrost:v2.3.2@sha256:f5b18826349fe9e1c402c10d19f1cbb5567a3c800ad928580d07f72e69106ec7') }}
+          BIFROST_DNS_IMAGE={{ bifrost_dns_image | default('cove-bifrost-dns:0.1.0') }}
+          BIFROST_CONTAINER_NAME={{ bifrost_container_name | default('cove-bifrost') }}
+          BIFROST_DNS_CONTAINER_NAME={{ bifrost_dns_container_name | default('cove-bifrost-dns') }}
+          BIFROST_PORT={{ bifrost_port | default('4002') }}
+          BIFROST_MEM_LIMIT={{ bifrost_mem_limit | default('512M') }}
           FORGEJO_RUNNER_IMAGE={{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}
           FORGEJO_RUNNER_CONTAINER_NAME={{ forgejo_runner_container_name | default('cove-forgejo-runner') }}
           FORGEJO_RUNNER_MEM_LIMIT={{ forgejo_runner_mem_limit | default('512M') }}

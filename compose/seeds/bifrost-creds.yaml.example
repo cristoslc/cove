@@ -1,0 +1,27 @@
+# Cove Bifrost Gateway credential seed for 1Password.
+# Run: cove creds 1p-bulk-write compose/seeds/bifrost-creds.yaml --execute
+# (cove bifrost up does this automatically when no shared item exists.)
+# Copy to bifrost-creds.yaml to pin values for your host.
+#
+# This item holds the config-store encryption key, the dashboard admin
+# password, and the client-facing virtual key, keyed to the
+# https://bifrost.cove.local/ URL (NOT per-hostname). The admin USERNAME
+# comes from the SHARED 'Cove Admin' item (keyed to https://cove.local/,
+# ADR-017), the unified Cove admin identity used across all Cove services.
+# `cove bifrost up` checks for this item first and reuses it; it only
+# generates new values when no such item exists. Each field has its own
+# placeholder so the three values are always distinct. Provider API keys
+# are NOT held here: the Synthetic key lives in the Bifrost local.env and
+# the ollama-cloud key is projected by the workstation lane (ownership
+# ruling, 2026-10-26).
+
+items:
+  - title: "Bifrost Gateway"
+    vault: Private
+    category: login
+    fields:
+      encryption_key[concealed]: "{{generate:encryption_key}}"
+      admin_password[concealed]: "{{generate:admin_password}}"
+      virtual_key[concealed]: "{{generate:virtual_key}}"
+      url[text]: "https://bifrost.cove.local/"
+      purpose[text]: "Bifrost gateway credentials (admin username is the shared Cove Admin item, ADR-017)"

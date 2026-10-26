@@ -165,6 +165,35 @@ server {
     }
 }
 
+# bifrost.cove — Bifrost gateway (LiteLLM replacement candidate, additive)
+# bifrost is an optional profiled service. Using a variable for the upstream
+# host defers DNS resolution to request time, so nginx starts even when the
+# bifrost container is not running. Streaming (SSE) is the primary traffic
+# shape, so buffering stays off and the timeouts match the litellm vhost.
+# The client-facing lane (re-pointing agents) is a later, gated phase — this
+# vhost only exposes the gateway; litellm remains the agent traffic path.
+server {
+    listen 443 ssl;
+    server_name bifrost.cove bifrost.cove.local;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    resolver 127.0.0.11 valid=10s;
+    set $bifrost_upstream http://bifrost:8080;
+
+    location / {
+        proxy_pass $bifrost_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+}
+
 # speedtest.cove — Speedtest Tracker
 # speedtest-tracker is an optional profiled service. Using a variable for
 # the upstream host defers DNS resolution to request time, so nginx starts
