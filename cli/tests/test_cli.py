@@ -2110,23 +2110,31 @@ class TestUpHealsVaultRecreatedByCompose:
             f"(>=30s), got {coverage}s"
         )
 
-    def test_unseal_failure_fails_loud(self, tmp_path, _fake_ansible_popen):
-        """Same failure semantics as the PR #75 stale-bind path: a heal that
-        ran but could not unseal aborts `up` with a ClickException instead of
-        leaving a sealed Vault behind a green-looking run."""
+    def test_unseal_failure_warns_and_is_non_fatal(
+        self, tmp_path, _fake_ansible_popen, capsys
+    ):
+        """Operator decision 2026-10-22 (amends PR #79/#83 fail-loud): a heal
+        that ran but could not unseal no longer aborts `up` with a
+        ClickException. It prints a warning naming `cove vault unseal` and
+        continues; the end-of-up status gate (patched empty here) is what
+        reports a still-sealed Vault."""
         unseals: list = []
-        with pytest.raises(click.ClickException, match="could not be unsealed"):
-            self._up(
-                tmp_path,
-                unseals=unseals,
-                unseal_error=RuntimeError(
-                    "Keystore read failed for cove/vault/unseal-1"
-                ),
-                vault_states=[
-                    ("id-before", "2026-10-21T10:00:00Z"),
-                    ("id-after", "2026-10-21T14:58:06Z"),
-                ],
-            )
+        self._up(
+            tmp_path,
+            unseals=unseals,
+            unseal_error=RuntimeError(
+                "Keystore read failed for cove/vault/unseal-1"
+            ),
+            vault_states=[
+                ("id-before", "2026-10-21T10:00:00Z"),
+                ("id-after", "2026-10-21T14:58:06Z"),
+            ],
+        )
+        err = capsys.readouterr().err
+        assert "could not be unsealed automatically" in err, (
+            f"a failed unseal must warn, got stderr: {err!r}"
+        )
+        assert "cove vault unseal" in err
 
     def test_compose_recreate_and_cli_restart_heal_exactly_once(
         self, tmp_path, _fake_ansible_popen

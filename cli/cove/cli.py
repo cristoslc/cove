@@ -22,7 +22,9 @@ from cove.speedtest import speedtest
 from cove.runner import runner
 from cove.tunnel import tunnel
 from cove.toolhive import toolhive
+from cove.serve import serve
 from cove.sudoers import sudo, passwordless_sudo_ok
+from cove.vault import UNSEAL_HINT, vault
 from cove.project import (
     _inject, _strip, _container_env, _render_context, _render_guidance,
     _render_agents_block, _write_detail_cove, _write_fj_detail, _write_gh_detail,
@@ -160,8 +162,10 @@ def _unseal_restarted_vault(*, no_provision: bool) -> None:
     or a bundle change, or a bringup handler restarted it. The health probe
     is bounded (no unattended hangs). Semantics:
     - reachable + sealed: unseal from the OS keystore via ensure_unsealed();
-      a failure raises ClickException (fail loud, same as the stale-bind
-      path this generalized).
+      a failure prints a non-fatal WARNING telling the operator to run
+      `cove vault unseal` (operator decision 2026-10-22, amending the
+      PR #79/#83 fail-loud semantics: a failed unseal must not abort the rest
+      of `cove up`). The end-of-up status gate still reports Vault API failed.
     - unreachable after the bounded retries: warn clearly and continue — the
       end-of-up status gate reports Vault API failed and `up` exits 1, and
       in the provisioned flow bootstrap_vault.yml retries health for up to
@@ -198,10 +202,16 @@ def _unseal_restarted_vault(*, no_provision: bool) -> None:
     try:
         ensure_unsealed()
     except RuntimeError as exc:
-        raise click.ClickException(
-            "Vault was (re)started by this `cove up` and could not be "
-            f"unsealed automatically: {exc}"
-        ) from exc
+        # Non-fatal by operator decision 2026-10-22 (amends the PR #79/#83
+        # fail-loud semantics): a failed unseal must not end the run and skip
+        # provisioning. The status gate below still reports Vault API failed,
+        # so the failure stays visible.
+        click.echo(
+            "WARNING: Vault was (re)started by this `cove up` and could not be "
+            f"unsealed automatically: {exc}. {UNSEAL_HINT}",
+            err=True,
+        )
+        return
     click.echo("Vault unsealed from the OS keystore.")
 
 
@@ -474,14 +484,6 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
         restarted = _restart_stale_bind_containers(
             compose_resource_dir(), changed
         )
-    if VAULT_CONTAINER_NAME in restarted or _vault_restarted_since(vault_before):
-        # Vault reads vault.hcl only at startup, so a genuine config change
-        # requires the CLI restart — and Vault then comes up SEALED. A
-        # compose-driven recreate seals it just the same. Heal here,
-        # unconditionally: `cove update` converges via `cove up
-        # --no-provision`, which never runs bootstrap_vault.yml.
-        _unseal_restarted_vault(no_provision=no_provision)
-
     if not no_provision:
         _run_ansible(compose_dir / "bootstrap_vault.yml", "Bootstrapping Vault...")
         _run_ansible(compose_dir / "provision_vault_user.yml", "Provisioning Vault user...")
@@ -492,6 +494,13 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
         click.echo(
             "Tunnel not included: shares are created interactively with `cove tunnel up`."
         )
+
+    # Unseal is the LAST converge step (operator decision 2026-10-22). It runs
+    # after provisioning so a failed unseal cannot skip provisioning, and it is
+    # the only heal the `--no-provision` path (`cove update`, `cove serve run`)
+    # gets — bootstrap_vault.yml never runs there.
+    if VAULT_CONTAINER_NAME in restarted or _vault_restarted_since(vault_before):
+        _unseal_restarted_vault(no_provision=no_provision)
 
     from cove.status import check_all, print_status
     results = check_all()
@@ -568,6 +577,8 @@ app.add_command(runner)
 app.add_command(tunnel)
 app.add_command(toolhive)
 app.add_command(sudo)
+app.add_command(serve)
+app.add_command(vault)
 from cove.update import update
 
 app.add_command(update)
