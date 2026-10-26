@@ -646,7 +646,7 @@ class TestAuth:
         import cove.tunnel as t
         monkeypatch.delenv("ZROK_ACCOUNT_TOKEN", raising=False)
         monkeypatch.setattr(t, "_vault_get", lambda ref: None)
-        monkeypatch.setattr("sys.stdin", open(os.devnull))
+        monkeypatch.setattr("sys.stdin", io.StringIO(""))
         with pytest.raises(click.ClickException, match="myzrok.io"):
             t._ensure_account_token()
 
@@ -654,7 +654,7 @@ class TestAuth:
         import cove.tunnel as t
         monkeypatch.delenv("ZROK_ACCOUNT_TOKEN", raising=False)
         monkeypatch.setattr(t, "_vault_get", lambda ref: None)
-        monkeypatch.setattr("sys.stdin", open(os.devnull))
+        monkeypatch.setattr("sys.stdin", io.StringIO(""))
         with pytest.raises(click.ClickException, match="Zrok Account"):
             t._ensure_account_token()
 
@@ -697,7 +697,7 @@ class TestOnboarding:
         self, no_token_anywhere, monkeypatch
     ):
         t = no_token_anywhere
-        monkeypatch.setattr("sys.stdin", open(os.devnull))
+        monkeypatch.setattr("sys.stdin", io.StringIO(""))
         with pytest.raises(click.ClickException, match="myzrok.io"):
             t._ensure_account_token()
 
