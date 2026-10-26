@@ -108,13 +108,18 @@ def _vault_get(op_ref: str):
 
 
 def _vault_put(op_ref: str) -> str:
-    """Cache op_ref in Vault and return the resolved value."""
-    result = _run_cove_creds("vault-put", op_ref)
-    if result.returncode != 0:
+    """Cache op_ref in Vault and return the resolved value (in-process).
+
+    `cove creds vault-put` stdout is masked and never carries the secret; the
+    value comes straight from vault_cache so it can never enter a transcript.
+    """
+    from cove import vault_cache
+    try:
+        return vault_cache.vault_put_op_ref(op_ref)
+    except (ValueError, RuntimeError) as e:
         raise click.ClickException(
-            f"Failed to cache zrok2 credential in Vault: {result.stderr.strip()}"
+            f"Failed to cache zrok2 credential in Vault: {e}"
         )
-    return result.stdout.strip()
 
 
 def _op_read(op_ref: str) -> str | None:

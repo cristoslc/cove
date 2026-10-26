@@ -4,6 +4,20 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.15.6 (2026-10-26)
+
+### Security
+- **Public repo scrub completed: operator-identifying config removed from tree and history** — the public GitHub repo had carried user-specific config in tree and full git history since 2026-05-09: a rendered 1Password seed (`compose/seeds/vault-user.yaml`) embedding the operator hostname (rendered here as `<hostname>`), the operator username, and a stale Vault UI credential value. The repo was deleted, recreated at the same name, and repopulated from `git filter-repo`-rewritten history: the rendered seed is absent from all history, and the hostname, personal email address, `/Users/<name>` home paths, and a token-like fragment are replaced or removed across every blob and rewritten tag. Zero historical release assets were re-attached — fresh releases follow the normal post-merge flow. This release is the first one published from the rewritten history.
+
+### Removed
+- **`cove up` no longer provisions a Vault UI user** — the `provision_vault_user.yml` call is removed from the `cove up` chain (`bootstrap_vault.yml` + `provision_forgejo.yml` remain). The playbook and `compose/seeds/vault-user.yaml.example` stay in-tree as reference with ownership headers: vault-user provisioning is **workstation-lane-owned** from now on, and `cove up` must never render the seed with a per-run generated password — the old flow created a new same-titled 1Password item on every run (the duplicate observed 2026-10-23) and drifted the Vault UI credential from the credential of record, leaving `cove up` failing at the provision step since then. `.gitignore` explicitly pins the rendered seed path (`compose/seeds/vault-user.yaml`) and adds `cli/.pytest_cache/`.
+
+### Fixed
+- **`cove creds vault-put` never prints the resolved secret** — the command cached the op:// reference but wrote the 1Password-resolved value bare to stdout, which put a live credential value into an agent transcript during dedupe verification (2026-10-26). stdout now carries the batch-pull-style `****************` mask. The three internal consumers that parsed the value from stdout (`cove tunnel up`, `cove litellm up`, `cove speedtest up` up-flows) now resolve it in-process via `cove.vault_cache.vault_put_op_ref`, so the secret never travels through stdout at all.
+
+### Changed
+- **The no-PII gate is widened to the whole repo and un-blinded** — `cli/tests/test_no_pii.py` now scans every git-tracked file (pytest previously ran from `cli/`, so its repo-root `docs/` exclusion never matched and docs were never scanned), `compose/`, `CHANGELOG.md`, and the bundled wheel resources (`cli/cove/resources/compose/`); `docs/troves/` (third-party web snapshots) and `sbom/` (generated SBOMs carrying upstream authors' emails) are excluded as third-party content. The gate's own pattern list no longer embeds real operator values: the hostname sentinel is a machine-model + 6-digit-tail regex, bare-username matching became context rules (`Vault <machine> <user>` 1Password item titles, `/Users/<name>` home paths, personal mailbox domains), and a structural rule admits only `*.example` files under `compose/seeds/`. Synthetic placeholders like `<hostname>` are legitimate repo content and no longer act as false-positive sentinels (the gate had been red in-tree since the placeholder convention reached `cove/resolver.py`'s docstring); it is green on the 0.15.6 tree.
+
 ## 0.15.5 (2026-10-22)
 
 ### Security

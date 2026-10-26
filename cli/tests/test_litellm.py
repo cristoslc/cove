@@ -1152,7 +1152,8 @@ class TestMasterKeyAutoGen:
         env_file = self._patch_env(monkeypatch, tmp_path)
         monkeypatch.setattr(ll, "_vault_get", lambda op_ref: "sk-FROMVAULT")
         runner = CliRunner()
-        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run) as mock_run, \
+             patch("cove.vault_cache.vault_put_op_ref") as mock_vp:
             result = runner.invoke(up)
 
         assert result.exit_code == 0, result.output
@@ -1163,7 +1164,7 @@ class TestMasterKeyAutoGen:
         assert not any("1p-bulk-write" in args for args in calls), (
             "must NOT write to 1Password when the shared item already exists"
         )
-        assert not any("vault-put" in args for args in calls), (
+        assert mock_vp.call_count == 0, (
             "must NOT re-cache in Vault when the shared item already exists"
         )
         assert "LITELLM_MASTER_KEY=sk-FROMVAULT" in env_file.read_text(), (
@@ -1179,7 +1180,8 @@ class TestMasterKeyAutoGen:
 
         env_file = self._patch_env(monkeypatch, tmp_path)
         runner = CliRunner()
-        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run) as mock_run, \
+             patch("cove.vault_cache.vault_put_op_ref", return_value="sk-TESTKEY") as mock_vp:
             result = runner.invoke(up)
 
         assert result.exit_code == 0, result.output
@@ -1190,8 +1192,14 @@ class TestMasterKeyAutoGen:
         assert any("1p-bulk-write" in args and "--execute" in args for args in calls), (
             "expected cove creds 1p-bulk-write --execute to create the shared item"
         )
-        assert any("vault-put" in args for args in calls), (
-            "expected cove creds vault-put call"
+        assert mock_vp.call_count == 1, (
+            "expected the Vault cache write to happen in-process "
+            "(vault_put_op_ref): `cove creds vault-put` stdout is masked and "
+            "never carries the secret"
+        )
+        assert not any("vault-put" in args for args in calls), (
+            "no vault-put subprocess may run: its stdout is masked and cannot "
+            "carry the value to `up`"
         )
         assert env_file.exists(), ".env must be written"
         content = env_file.read_text()
@@ -1240,7 +1248,8 @@ class TestMasterKeyAutoGen:
         env_file = self._patch_env(monkeypatch, tmp_path)
         monkeypatch.setattr(ll, "_vault_get", lambda op_ref: None)
         runner = CliRunner()
-        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run):
+        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run), \
+             patch("cove.vault_cache.vault_put_op_ref", return_value="sk-TESTKEY"):
             result = runner.invoke(up)
 
         assert result.exit_code != 0, (
@@ -1259,7 +1268,8 @@ class TestMasterKeyAutoGen:
         env_file = self._patch_env(monkeypatch, tmp_path)
         env_file.write_text("LITELLM_MASTER_KEY=sk-EXISTING\n")
         runner = CliRunner()
-        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+        with patch("cove.litellm.subprocess.run", side_effect=_fake_provision_run) as mock_run, \
+             patch("cove.vault_cache.vault_put_op_ref") as mock_vp:
             result = runner.invoke(up)
 
         assert result.exit_code == 0, result.output
@@ -1270,7 +1280,7 @@ class TestMasterKeyAutoGen:
         assert not any("1p-bulk-write" in args for args in calls), (
             "must not write to 1Password when key is cached"
         )
-        assert not any("vault-put" in args for args in calls), (
+        assert mock_vp.call_count == 0, (
             "must not re-cache in Vault when key is cached"
         )
         content = env_file.read_text()

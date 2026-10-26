@@ -49,6 +49,12 @@ gcm-diagnose.log
 # User-specific credential seeds
 /compose/seeds/*.yaml
 !/compose/seeds/*.example
+# Explicit: the rendered vault-user seed must never be re-tracked, even if the
+# glob above ever loosens (incident 20261026-145212 — its 1Password credential
+# value shipped in public repo history).
+/compose/seeds/vault-user.yaml
+# Pytest cache under cli/ (project-local; the root-level glob does not cover it)
+cli/.pytest_cache/
 
 # Worktrees
 /.worktrees/

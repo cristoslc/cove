@@ -63,7 +63,12 @@ def creds():
     help="Bypass Vault cache and re-fetch from 1Password.",
 )
 def vault_put(op_ref: str, force_refresh: bool):
-    """Cache an op:// reference in Vault and emit the resolved value.
+    """Cache an op:// reference in Vault; never print the resolved value.
+
+    Stdout carries the batch-pull-style mask only — the resolved secret must
+    never land in a terminal or agent transcript. Internal callers (tunnel,
+    litellm, speedtest up-flows) resolve the value in-process via
+    ``cove.vault_cache.vault_put_op_ref`` instead of parsing stdout.
 
     Examples:
 
@@ -75,7 +80,7 @@ def vault_put(op_ref: str, force_refresh: bool):
         value = vault_cache.vault_put_op_ref(op_ref, force_refresh=force_refresh)
     except (ValueError, RuntimeError) as e:
         raise click.ClickException(str(e))
-    sys.stdout.write(value)
+    click.echo(f"  {op_ref}: {'*' * 16}")
 
 
 @creds.command("vault-get")

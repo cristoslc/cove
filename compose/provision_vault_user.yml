@@ -1,4 +1,12 @@
 - name: Provision a userpass user in Vault for UI login
+  # workstation-lane-owned — NOT run by `cove up` (removed 2026-10-26, 0.15.6).
+  # This playbook rendered the vault-user seed with a per-run GENERATED
+  # password, and `cove creds 1p-bulk-write` only ever CREATES 1Password items,
+  # so every run minted a new same-titled item (duplicate observed 2026-10-23)
+  # and drifted the Vault UI credential from the credential of record.
+  # If the workstation lane needs it, run it manually and never per-`cove-up`;
+  # reuse the existing 1Password item instead of generating a new password per
+  # run. cove ships no user-specific config — rendered seeds stay gitignored.
   hosts: localhost
   gather_facts: true
   vars:
