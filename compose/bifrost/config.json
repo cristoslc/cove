@@ -1,0 +1,309 @@
+{
+  "$schema": "https://www.getbifrost.ai/schema",
+  "source_of_truth": "config.json",
+  "encryption_key": "env.BIFROST_ENCRYPTION_KEY",
+  "client": {
+    "enable_logging": false,
+    "disable_content_logging": true,
+    "allow_per_request_content_storage_override": false,
+    "enforce_auth_on_inference": true
+  },
+  "config_store": {
+    "enabled": true,
+    "type": "sqlite",
+    "config": {
+      "path": "config.db"
+    }
+  },
+  "logs_store": {
+    "enabled": false
+  },
+  "providers": {
+    "syn-subscription": {
+      "keys": [
+        {
+          "name": "syn-subscription",
+          "value": "env.SYNTHETIC_API_KEY",
+          "models": ["*"],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.synthetic.new/openai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 1
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "list_models": false,
+          "text_completion": false,
+          "text_completion_stream": false,
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "responses": false,
+          "responses_stream": false,
+          "embedding": false,
+          "speech": false,
+          "speech_stream": false,
+          "transcription": false,
+          "transcription_stream": false
+        }
+      }
+    },
+    "ollama-cloud": {
+      "keys": [
+        {
+          "name": "ollama-cloud",
+          "value": "env.OLLAMA_API_KEY",
+          "models": ["*"],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://ollama.com",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 1
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "list_models": false,
+          "text_completion": false,
+          "text_completion_stream": false,
+          "chat_completion": true,
+          "chat_completion_stream": true,
+          "responses": false,
+          "responses_stream": false,
+          "embedding": false,
+          "speech": false,
+          "speech_stream": false,
+          "transcription": false,
+          "transcription_stream": false
+        }
+      }
+    },
+    "syn-infinite-backstop": {
+      "keys": [
+        {
+          "name": "syn-infinite-backstop",
+          "value": "env.SYNTHETIC_API_KEY",
+          "models": ["*"],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://api.synthetic.new/openai",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 1
+      },
+      "custom_provider_config": {
+        "base_provider_type": "openai",
+        "allowed_requests": {
+          "list_models": false,
+          "text_completion": false,
+          "text_completion_stream": false,
+          "chat_completion": false,
+          "chat_completion_stream": true,
+          "responses": false,
+          "responses_stream": false,
+          "embedding": false,
+          "speech": false,
+          "speech_stream": false,
+          "transcription": false,
+          "transcription_stream": false
+        }
+      }
+    }
+  },
+  "governance": {
+    "auth_config": {
+      "is_enabled": true,
+      "admin_username": "env.BIFROST_ADMIN_USERNAME",
+      "admin_password": "env.BIFROST_ADMIN_PASSWORD",
+      "disable_auth_on_inference": false
+    },
+    "virtual_keys": [
+      {
+        "id": "vk-cove",
+        "name": "cove-agents",
+        "value": "env.BIFROST_VIRTUAL_KEY",
+        "is_active": true,
+        "provider_configs": [
+          {
+            "provider": "syn-subscription",
+            "allowed_models": ["*"],
+            "key_ids": ["*"],
+            "weight": 1
+          },
+          {
+            "provider": "ollama-cloud",
+            "allowed_models": ["*"],
+            "key_ids": ["*"],
+            "weight": 1
+          },
+          {
+            "provider": "syn-infinite-backstop",
+            "allowed_models": ["*"],
+            "key_ids": ["*"],
+            "weight": 1
+          }
+        ]
+      }
+    ],
+    "routing_rules": [
+      {
+        "id": "rr-text-light",
+        "name": "Text light tier",
+        "cel_expression": "model == 'text:light'",
+        "targets": [
+          {
+            "provider": "syn-subscription",
+            "model": "hf:zai-org/GLM-4.7-Flash",
+            "weight": 1.0
+          }
+        ],
+        "fallbacks": [
+          "ollama-cloud/gpt-oss:120b",
+          "syn-infinite-backstop/infinite:small:vision"
+        ],
+        "priority": 1,
+        "enabled": true
+      },
+      {
+        "id": "rr-text-standard",
+        "name": "Text standard tier",
+        "cel_expression": "model == 'text:standard'",
+        "targets": [
+          {
+            "provider": "syn-subscription",
+            "model": "hf:deepseek-ai/DeepSeek-V4.1-Flash",
+            "weight": 1.0
+          }
+        ],
+        "fallbacks": [
+          "ollama-cloud/deepseek-v4.1-flash",
+          "syn-infinite-backstop/infinite:small:vision"
+        ],
+        "priority": 2,
+        "enabled": true
+      },
+      {
+        "id": "rr-text-ultra-heavy",
+        "name": "Text ultra-heavy tier",
+        "cel_expression": "model == 'text:ultra-heavy'",
+        "targets": [
+          {
+            "provider": "syn-subscription",
+            "model": "hf:zai-org/GLM-5.3",
+            "weight": 1.0
+          }
+        ],
+        "fallbacks": [
+          "ollama-cloud/glm-5.3",
+          "syn-infinite-backstop/infinite:small:vision"
+        ],
+        "priority": 3,
+        "enabled": true
+      },
+      {
+        "id": "rr-vision-heavy",
+        "name": "Vision heavy tier",
+        "cel_expression": "model == 'vision:heavy'",
+        "targets": [
+          {
+            "provider": "syn-subscription",
+            "model": "hf:zai-org/GLM-5.3-Flash",
+            "weight": 1.0
+          }
+        ],
+        "fallbacks": [
+          "ollama-cloud/glm-5.3-flash",
+          "syn-infinite-backstop/infinite:small:vision"
+        ],
+        "priority": 4,
+        "enabled": true
+      },
+      {
+        "id": "rr-vision-super-ultra-heavy",
+        "name": "Vision super-ultra-heavy tier",
+        "cel_expression": "model == 'vision:super-ultra-heavy'",
+        "targets": [
+          {
+            "provider": "syn-subscription",
+            "model": "hf:moonshotai/Kimi-K3",
+            "weight": 1.0
+          }
+        ],
+        "fallbacks": [
+          "ollama-cloud/kimi-k3",
+          "syn-infinite-backstop/infinite:small:vision"
+        ],
+        "priority": 5,
+        "enabled": true
+      },
+      {
+        "id": "rr-nonstreaming-text-light",
+        "name": "Non-streaming text light tier",
+        "cel_expression": "model == 'nonstreaming:text:light'",
+        "targets": [
+          {
+            "provider": "syn-subscription",
+            "model": "hf:zai-org/GLM-4.7-Flash",
+            "weight": 1.0
+          }
+        ],
+        "fallbacks": [
+          "ollama-cloud/gpt-oss:120b"
+        ],
+        "priority": 6,
+        "enabled": true
+      },
+      {
+        "id": "rr-nonstreaming-text-standard",
+        "name": "Non-streaming text standard tier",
+        "cel_expression": "model == 'nonstreaming:text:standard'",
+        "targets": [
+          {
+            "provider": "syn-subscription",
+            "model": "hf:deepseek-ai/DeepSeek-V4.1-Flash",
+            "weight": 1.0
+          }
+        ],
+        "fallbacks": [
+          "ollama-cloud/deepseek-v4.1-flash"
+        ],
+        "priority": 7,
+        "enabled": true
+      },
+      {
+        "id": "rr-syn-large-text",
+        "name": "Synthetic subscription passthrough",
+        "cel_expression": "model == 'syn:large:text'",
+        "targets": [
+          {
+            "provider": "syn-subscription",
+            "model": "syn:large:text",
+            "weight": 1.0
+          }
+        ],
+        "priority": 8,
+        "enabled": true
+      },
+      {
+        "id": "rr-infinite-small-vision",
+        "name": "Streaming-only infinite backstop",
+        "cel_expression": "model == 'infinite:small:vision'",
+        "targets": [
+          {
+            "provider": "syn-infinite-backstop",
+            "model": "infinite:small:vision",
+            "weight": 1.0
+          }
+        ],
+        "priority": 9,
+        "enabled": true
+      }
+    ]
+  }
+}

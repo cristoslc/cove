@@ -105,6 +105,7 @@ if docker info >/dev/null 2>&1; then
             --profile ade
             --profile mcp
             --profile litellm
+            --profile bifrost
             --profile runner
             --profile speedtest
             --profile tunnel

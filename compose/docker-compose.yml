@@ -399,3 +399,117 @@ services:
       resources:
         limits:
           memory: ${TUNNEL_MEM_LIMIT:-1G}
+
+  # BIFROST ------------------------------------------------------------------
+  # LiteLLM replacement candidate, ADDITIVE phase (no cutover): lives entirely
+  # on the "bifrost" profile alongside the live litellm services. See
+  # docs/musings/litellm-exit.md and docs/services/bifrost.md.
+  #
+  # bifrost-dns is the egress allowlist choke point: a fail-closed dnsmasq
+  # sink that NXDOMAINs every hostname except the allowlisted inference
+  # providers (compose/bifrost/dnsmasq.conf). The gateway's `dns:` pin makes
+  # this sink its ONLY resolver, so name resolution is enforcement, not a
+  # verification. Publishes no ports; reached by static IP because compose's
+  # per-service `dns:` accepts IPs only.
+  bifrost-dns:
+    profiles: ["bifrost"]
+    build:
+      context: ./bifrost
+      dockerfile: Dockerfile
+    image: ${BIFROST_DNS_IMAGE:-cove-bifrost-dns:0.1.0}
+    container_name: ${BIFROST_DNS_CONTAINER_NAME:-cove-bifrost-dns}
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+    # Allowlisted DNS upstreams are the only egress this sink needs; the
+    # static IP is how the gateway pins its resolver.
+    networks:
+      bifrost-egress:
+        ipv4_address: 172.43.0.10
+    command: ["dnsmasq", "-k", "-C", "/etc/dnsmasq.d/bifrost.conf"]
+    cap_add:
+      - NET_BIND_SERVICE
+    cap_drop:
+      - ALL
+    volumes:
+      - ${COVE_DATA_ROOT}/bifrost/dnsmasq.conf:/etc/dnsmasq.d/bifrost.conf:ro
+    healthcheck:
+      # An allowlisted name must resolve; unlisted names must fail.
+      test: ["CMD-SHELL", "nslookup ollama.com 127.0.0.1 >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      start_period: 10s
+      retries: 5
+
+  bifrost:
+    # Digest-pinned upstream image: maximhq/bifrost v2.3.2 (2026-10-20
+    # release), multi-arch manifest digest verified on Docker Hub. Upstream
+    # publishes NO cosign signatures or provenance attestations (checked
+    # release-pipeline.yml 2026-10-26) — the pinned digest plus the vendor
+    # update hold period are the verification anchors; see
+    # docs/services/bifrost.md for the finding.
+    profiles: ["bifrost"]
+    image: ${BIFROST_IMAGE:-maximhq/bifrost:v2.3.2@sha256:f5b18826349fe9e1c402c10d19f1cbb5567a3c800ad928580d07f72e69106ec7}
+    container_name: ${BIFROST_CONTAINER_NAME:-cove-bifrost}
+    restart: unless-stopped
+    tmpfs:
+      - /tmp
+    ports:
+      # Loopback-only like every cove optional service; nginx is the ingress.
+      - "127.0.0.1:${BIFROST_PORT:-4002}:8080"
+    depends_on:
+      bifrost-dns:
+        condition: service_started
+    volumes:
+      # Governance config is file-seeded (git-tracked, read-only) AND carried
+      # in the pre-seeded SQLite runtime store: source_of_truth stays
+      # "config.json", but a file-only boot cannot carry governance (spike
+      # finding), so the store file must pre-exist (bringup seeds it).
+      - ${COVE_DATA_ROOT}/bifrost/config.json:/app/data/config.json:ro
+      - ${COVE_DATA_ROOT}/bifrost/config.db:/app/data/config.db
+    env_file:
+      # Provider keys (e.g. SYNTHETIC_API_KEY); same pattern as litellm's
+      # local.env. Secrets never live in the repo.
+      - ${COVE_DATA_ROOT}/bifrost/local.env
+    environment:
+      APP_PORT: "8080"
+      APP_HOST: "0.0.0.0"
+      # Governance/encryption secrets are injected via the compose .env
+      # (cove bifrost up provisions them into 1Password + .env).
+      BIFROST_ENCRYPTION_KEY: ${BIFROST_ENCRYPTION_KEY:-}
+      BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-}
+      BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
+      BIFROST_VIRTUAL_KEY: ${BIFROST_VIRTUAL_KEY:-}
+      # Workstation-lane key ownership (2026-10-26 ruling): cove holds no new
+      # custody of the ollama-cloud key — the workstation's SOPS role projects
+      # it into the deployed compose .env and this line passes it through,
+      # exactly as the litellm services receive it today.
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+    networks:
+      - default
+      - bifrost-egress
+    dns:
+      # The ONLY resolver inside the gateway: the profile-local sinkhole.
+      # Everything outside compose/bifrost/dnsmasq.conf's allowlist is
+      # NXDOMAIN-sunk (Direct-IP egress caveat: docs/services/bifrost.md).
+      - 172.43.0.10
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/health || exit 1"]
+      interval: 15s
+      start_period: 30s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${BIFROST_MEM_LIMIT:-512M}
+
+networks:
+  # Dedicated subnet for the bifrost egress boundary (only the two bifrost
+  # profile services join it). 172.43.0.0/24 sits outside every compose
+  # default pool (172.17-172.31/16 and 192.168.0.0/16). Only created when a
+  # bifrost-profile service actually starts.
+  bifrost-egress:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.43.0.0/24

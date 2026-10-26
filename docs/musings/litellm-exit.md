@@ -158,3 +158,26 @@ Rollback shape: the exit lands as a normal release; the prior release's wheel re
 3. **Key rotation timing** (ownership is settled — the 2026-10-26 ruling assigns the ollama-cloud keys to the workstation lane; only timing remains open): rotate the Synthetic and ollama-cloud keys at cutover, or after the rollback window closes?
 4. **1Password "LiteLLM Proxy" item**: delete at teardown, or keep one release for the rollback path?
 5. **Drain window length** before service removal: one week proposed — acceptable, given the workstation lane controls the client re-point timing?
+
+## Implementation findings (additive build, 2026-10-26)
+
+The additive build is on a WIP draft PR: `cove bifrost` verb group, the
+`bifrost` compose profile (digest-pinned v2.3.2 + a DNS-choke egress sink),
+the nine-tier ladder as CEL routing rules with ordered fallback chains, the
+pre-seeded SQLite config store, and the service doc
+[docs/services/bifrost.md](../services/bifrost.md) — which now owns the
+cutover checklist and the four pending operator decisions above. Findings
+recorded at implementation:
+
+- **File-seeded virtual key: spike finding resolved.** On transports v2.3.2
+  the file-seeded VK authenticates (live-smoke proved 401-for-no-key and
+  200-for-file-seeded-key on the same governance config). The `config.json`
+  + pre-seeded store shape from the spike is adopted unchanged.
+- **Signature/provenance: nothing to verify.** Upstream publishes no cosign
+  signatures, no attestations, no image SBOM (release-pipeline.yml read
+  2026-10-26). Anchors are the pinned digest + the 48-72h hold; recorded in
+  the service doc, nothing wired into bringup verification.
+- **Streaming-only gate: structural, verified.** The backstop instance's
+  `allowed_requests` leaves only `chat_completion_stream` enabled; the live
+  smoke shows a non-streaming request to the gated tier never reaches any
+  upstream. The improvement over LiteLLM holds at runtime.

@@ -132,6 +132,104 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: manual
+  - path: "cove bifrost up"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
+  - path: "cove bifrost down"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: skip
+      edge: skip
+      corner: skip
+  - path: "cove bifrost status (credential names never values)"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "Bifrost config.json ladder: 9 tier rules with ordered fallback chains and backstop excluded from non-streaming tiers"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable
+  - path: "Bifrost custom providers: base_urls without /v1, env-only keys, chat-only allowed_requests, streaming-only backstop gate"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable
+  - path: "Bifrost governance posture: auth enforced, request logging off, logs_store disabled, no literal secrets"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable
+  - path: "Bifrost compose surface: digest-pinned image, loopback port, file mounts, ollama pass-through, egress sink wiring (dns pin, subnet, hardened dnsmasq)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "Bifrost egress allowlist covers exactly the two inference providers"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "nginx config rendering for bifrost.cove + landing card"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: skip
+      edge: skip
+      corner: executable
+  - path: "bringup seeds bifrost runtime files (private dir, local.env 0600, config seeds first-boot) and pre-seeds the SQLite config store"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "Bifrost CLI: registration, compose-source guard, runtime-file preservation, seed rendering with distinct values, idempotent env upsert"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "Bifrost live smoke (opt-in): missing VK 401, file-seeded VK authenticates, ordered fallback serves primary failure (stream + non-stream), structural refusal of non-streaming on the gated instance"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "TLS cert SANs include bifrost.cove"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: skip
+      corner: skip
+  - path: "bringup.yml hosts entry includes bifrost.cove"
+    blast_radius: low
+    coverage:
+      happy: executable
+      sad: executable
+      edge: skip
+      corner: skip
   - path: "cove litellm up"
     blast_radius: high
     coverage:

@@ -430,7 +430,7 @@ class TestServiceCommandGuards:
     """
 
     def test_service_modules_import_and_call_the_guard(self):
-        for module_name in ("ade", "speedtest", "toolhive", "runner", "litellm", "tunnel"):
+        for module_name in ("ade", "speedtest", "toolhive", "runner", "litellm", "bifrost", "tunnel"):
             source = (
                 Path(__file__).resolve().parent.parent / "cove" / f"{module_name}.py"
             ).read_text()

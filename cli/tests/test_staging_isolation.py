@@ -87,6 +87,8 @@ LIVE_CONTAINER_NAMES = {
     "cove-speedtest-tracker",
     "cove-forgejo-runner",
     "cove-tunnel",
+    "cove-bifrost",
+    "cove-bifrost-dns",
 }
 
 # Live host ports observed on this machine (docker ps; nginx
@@ -99,7 +101,7 @@ LIVE_HOST_PORTS = {"443", "80", "8080", "5354", "2222", "4000", "4001", "8982"}
 # The live stack's data root (never mounted, never written by staging).
 LIVE_DATA_ROOT = Path("~/Documents/cove-data").expanduser()
 
-ALL_PROFILES = ["ade", "litellm", "speedtest", "runner", "tunnel"]
+ALL_PROFILES = ["ade", "litellm", "bifrost", "speedtest", "runner", "tunnel"]
 
 pytestmark = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker compose CLI not available"
@@ -127,6 +129,10 @@ def _render(*, profiles: list[str] | None = None, with_override: bool = True,
     litellm_dir = fake_staging_root / "litellm"
     litellm_dir.mkdir(parents=True, exist_ok=True)
     (litellm_dir / "local.env").touch(mode=0o600, exist_ok=True)
+    # Bifrost's env_file is validated at compose config time too.
+    bifrost_dir = fake_staging_root / "bifrost"
+    bifrost_dir.mkdir(parents=True, exist_ok=True)
+    (bifrost_dir / "local.env").touch(mode=0o600, exist_ok=True)
     env["COVE_DATA_ROOT"] = str(fake_staging_root)
     env["FORGEJO_DATA_ROOT"] = str(fake_staging_root)
     proc = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=120)

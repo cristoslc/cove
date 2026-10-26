@@ -100,5 +100,15 @@ services:
     # posture only), so no sibling containers are ever spawned here.
     ports: !override []
 
+  bifrost:
+    container_name: cove-staging-bifrost
+    # Loopback-only in base; dropped entirely in staging. Not started by the
+    # staging E2E (profile bifrost is only enabled by the isolated teardown),
+    # but the name stays override-renamed for the full-stack collision check.
+    ports: !override []
+
+  bifrost-dns:
+    container_name: cove-staging-bifrost-dns
+
   tunnel:
     container_name: cove-staging-tunnel

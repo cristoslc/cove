@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+- **Bifrost gateway (LiteLLM replacement candidate, additive phase)** — a new `bifrost` compose profile running Bifrost transports v2.3.2 (digest-pinned, multi-arch manifest verified) alongside the live LiteLLM services: no removal, no cutover, no client re-point. The nine tier aliases re-express as CEL routing rules with ordered fallback chains (Synthetic subscription → ollama-cloud metered → a streaming-only "infinite" backstop instance gating non-streaming traffic structurally). Governance (single virtual key, auth-by-default, `enforce_auth_on_inference`) lives in a file-seeded `config.json` (`source_of_truth: "config.json"`) plus a pre-seeded SQLite config store (a file-only boot cannot carry governance). New `cove bifrost` verb group (up/down/status/logs; never auto-started by `cove up`), `bifrost.cove`/`bifrost.cove.local` nginx vhost + landing card, cert SANs, hosts entry, bringup seeding (private `0700` data dir, first-boot config/dnsmasq seeds, private env files), and a DNS-choke egress allowlist: the gateway's resolver pins a hardened dnsmasq sink (read-only, caps-dropped, no ports) serving exactly `api.synthetic.new` and `ollama.com`. The ollama-cloud key stays projected by the workstation lane (pass-through, no new custody). Upstream publishes no image signatures/provenance (finding recorded in docs/services/bifrost.md), so the digest pin plus the 48-72h vendor hold are the anchors. The file-seeded virtual key authenticates on v2.3.2 (spike finding resolved; live-smoke proved). Cutover remains gated on four pending operator decisions (pgdata disposal, key-rotation timing, 1Password item retention, drain window). See [docs/services/bifrost.md](docs/services/bifrost.md) and [the exit musing](docs/musings/litellm-exit.md).
+
 ## 0.15.6 (2026-10-26)
 
 ### Security

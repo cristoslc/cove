@@ -18,6 +18,7 @@ from cove.certs import ca_path, ensure_ca, root_ca_pem, sign_cert
 from cove.creds import creds
 from cove.ade import ade
 from cove.litellm import litellm
+from cove.bifrost import bifrost
 from cove.speedtest import speedtest
 from cove.runner import runner
 from cove.tunnel import tunnel
@@ -224,7 +225,11 @@ def _start_optional_services() -> None:
     credential step in phase 1 and joins the bringup profiles).
 
     A failure on one service is reported but does not abort `cove up` —
-    optional services stay optional (same contract as `cove status`)."""
+    optional services stay optional (same contract as `cove status`).
+
+    Bifrost is deliberately absent from this loop (additive phase): it starts
+    only via an explicit `cove bifrost up`, never as a side effect of
+    `cove up` / `cove up --all`, until the LiteLLM cutover is decided."""
     for group, label in ((litellm, "litellm"), (speedtest, "speedtest")):
         cmd = group.commands.get("up")
         if cmd is None or cmd.callback is None:
@@ -576,6 +581,7 @@ def sign(sans, key_file, cert_file):
 app.add_command(creds)
 app.add_command(ade)
 app.add_command(litellm)
+app.add_command(bifrost)
 app.add_command(speedtest)
 app.add_command(runner)
 app.add_command(tunnel)
