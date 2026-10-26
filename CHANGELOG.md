@@ -4,6 +4,11 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.15.8 (2026-10-26)
+
+### Fixed
+- **`cove creds vault-put` never silently skips a re-read** ([#93](../../issues/93), [#94](../../pulls/94)) — the cached-skip fast path and a silent `except RuntimeError: pass` are removed: a bare `vault-put` now ALWAYS re-reads the referenced 1Password item into the cache, so post-rotation cache refreshes actually happen and a failed 1Password read exits non-zero instead of keeping a stale value under rc 0. `--force-refresh` stays accepted (redundant). `vault-get` read caching is unchanged, and the previously-hermetic-violating speedtest tests now mock the 1Password/Vault boundary.
+
 ## 0.15.7 (2026-10-26)
 
 ### Added
