@@ -72,36 +72,53 @@ class TestVaultPutOpRef:
             mock_local_get.assert_not_called()
             mock_vault_get.assert_not_called()
 
-    def test_put_returns_local_cached_value_without_op_call(self):
+    def test_put_always_rereads_op_when_local_cache_is_stale(self):
+        """RED (cove issue #93): after a downstream 1Password rotation a bare
+        vault-put must flow the freshly read value through the read path into
+        both caches, never return the locally cached stale value with rc 0."""
         op_ref = "op://Private/Test Item/host"
-        cached_value = "pre-cached-host"
+        stale_local = "stale-local-value-a"
+        fresh_from_op = "fresh-1password-value-b"
 
-        with patch("cove.vault_cache.local_cache.get", return_value=cached_value), \
-             patch("cove.vault_cache._op_read") as mock_op_read, \
-             patch("cove.vault_cache._vault_write") as mock_vault_write:
+        with patch("cove.vault_cache.local_cache.get", return_value=stale_local), \
+             patch("cove.vault_cache._op_read", return_value=fresh_from_op) as mock_op_read, \
+             patch("cove.vault_cache._vault_write") as mock_vault_write, \
+             patch("cove.vault_cache.local_cache.put") as mock_local_put:
 
             result = vault_cache.vault_put_op_ref(op_ref, force_refresh=False)
 
-            mock_op_read.assert_not_called()
-            mock_vault_write.assert_not_called()
-            assert result == cached_value
+            mock_op_read.assert_called_once_with(op_ref)
+            mock_vault_write.assert_called_once_with(op_ref, fresh_from_op)
+            mock_local_put.assert_called_once_with(op_ref, fresh_from_op)
+            assert result == fresh_from_op
+            assert result != stale_local, (
+                "vault-put reported success while the cache kept the stale value"
+            )
 
-    def test_put_falls_back_to_vault_cache_before_op(self):
+    def test_put_always_rereads_op_when_vault_cache_is_stale(self):
+        """RED (cove issue #93): a Vault-cache hit must not short-circuit the
+        1Password read either; the freshly read value must overwrite it."""
         op_ref = "op://Private/Test Item/username"
-        vault_value = "vault-cached-user"
+        stale_vault = "stale-vault-value-a"
+        fresh_from_op = "fresh-1password-value-b"
 
         with patch("cove.vault_cache.local_cache.get", return_value=None), \
-             patch("cove.vault_cache.vault_get_cached", return_value=vault_value) as mock_vault_get, \
-             patch("cove.vault_cache._op_read") as mock_op_read, \
+             patch("cove.vault_cache.vault_get_cached", return_value=stale_vault) as mock_vault_get, \
+             patch("cove.vault_cache._op_read", return_value=fresh_from_op) as mock_op_read, \
              patch("cove.vault_cache._vault_write") as mock_vault_write, \
-             patch("cove.vault_cache.local_cache.put"):
+             patch("cove.vault_cache.local_cache.put") as mock_local_put:
 
             result = vault_cache.vault_put_op_ref(op_ref, force_refresh=False)
 
-            mock_vault_get.assert_called_once_with(op_ref)
-            mock_op_read.assert_not_called()
-            mock_vault_write.assert_not_called()
-            assert result == vault_value
+            mock_op_read.assert_called_once_with(op_ref)
+            mock_vault_write.assert_called_once_with(op_ref, fresh_from_op)
+            mock_local_put.assert_called_once_with(op_ref, fresh_from_op)
+            assert result == fresh_from_op, (
+                "vault-put returned the Vault-cached stale value instead of "
+                "re-reading 1Password"
+            )
+            # No cached-skip path may exist: vault-put is sync-from-1Password.
+            mock_vault_get.assert_not_called()
 
     def test_put_raises_on_op_read_failure(self):
         op_ref = "op://Private/Bad Vault/missing-field"
@@ -112,6 +129,25 @@ class TestVaultPutOpRef:
 
             with pytest.raises(RuntimeError, match="op failed"):
                 vault_cache.vault_put_op_ref(op_ref, force_refresh=False)
+
+    def test_put_cached_value_with_op_failure_raises_and_leaves_cache_intact(self):
+        """RED (cove issue #93, inverse edge): a 1Password read FAILURE during
+        vault-put must raise (non-zero at the CLI), never silently fall back to
+        reporting the cached value as success, and leave both caches intact."""
+        op_ref = "op://Private/Test Item/token"
+        cached_value = "cached-value-before-rotation"
+
+        with patch("cove.vault_cache.local_cache.get", return_value=cached_value), \
+             patch("cove.vault_cache._op_read", side_effect=RuntimeError("op read failed")) as mock_op_read, \
+             patch("cove.vault_cache._vault_write") as mock_vault_write, \
+             patch("cove.vault_cache.local_cache.put") as mock_local_put:
+
+            with pytest.raises(RuntimeError, match="op read failed"):
+                vault_cache.vault_put_op_ref(op_ref, force_refresh=False)
+
+            mock_op_read.assert_called_once_with(op_ref)
+            mock_vault_write.assert_not_called()
+            mock_local_put.assert_not_called()
 
 
 class TestVaultTLSContext:

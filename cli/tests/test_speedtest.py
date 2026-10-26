@@ -399,7 +399,8 @@ class TestCLI:
         monkeypatch.setattr(st, "_seed_example_path", lambda: seed)
 
         runner = CliRunner()
-        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run, \
+             patch("cove.vault_cache.vault_put_op_ref", return_value="base64:TESTKEY") as mock_vp:
             result = runner.invoke(up)
 
         assert result.exit_code == 0, result.output
@@ -408,6 +409,10 @@ class TestCLI:
             if isinstance(c.args[0], list)
         ]
         assert any("--profile" in args and "speedtest" in args for args in compose_calls)
+        assert mock_vp.call_count == 1, (
+            "the generate path must cache the APP_KEY via the in-process "
+            "vault_cache call (vault-put stdout is masked and never parsed)"
+        )
 
 
 SHARED_SPEEDTEST_SEED = (
@@ -599,7 +604,8 @@ class TestAppKeyAutoGen:
         # Simulate the Cove Admin item being absent (vault-get returns None).
         monkeypatch.setattr(st, "_vault_get", lambda op_ref: None)
         runner = CliRunner()
-        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run):
+        with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run), \
+             patch("cove.vault_cache.vault_put_op_ref", return_value="base64:TESTKEY"):
             result = runner.invoke(up)
 
         assert result.exit_code != 0, (
@@ -806,7 +812,8 @@ class TestSeedRendering:
                 assert Path(seed_arg).exists(), "seed arg must exist at call time"
             return _fake_provision_run(*args, **kwargs)
 
-        with patch("cove.speedtest.subprocess.run", side_effect=capture_run):
+        with patch("cove.speedtest.subprocess.run", side_effect=capture_run), \
+             patch("cove.vault_cache.vault_put_op_ref", return_value="base64:TESTKEY"):
             st._ensure_app_key()
 
         assert seen_paths, "expected a 1p-bulk-write call with a seed path"

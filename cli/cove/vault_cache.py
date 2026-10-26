@@ -174,17 +174,16 @@ def _op_read(op_ref: str) -> str:
 
 
 def vault_put_op_ref(op_ref: str, force_refresh: bool = False) -> str:
-    if not force_refresh:
-        local = local_cache.get(op_ref)
-        if local is not None:
-            return local
-        try:
-            cached = vault_get_cached(op_ref)
-            if cached is not None:
-                local_cache.put(op_ref, cached)
-                return cached
-        except RuntimeError:
-            pass
+    """Sync the referenced 1Password value into the cove caches.
+
+    Contract (cove issue #93): ALWAYS re-reads 1Password, then writes the
+    freshly read value to Vault and the local cache. Never consults the
+    caches on the way in; a cached value must not short-circuit the sync,
+    which is how a stale value survived upstream rotations with rc 0.
+    ``force_refresh`` is accepted for backward compatibility and is now
+    redundant: there is no cached-skip path left to bypass. Skip-if-cached
+    semantics belong on read paths (``vault_get_cached``) only.
+    """
     value = _op_read(op_ref)
     _vault_write(op_ref, value)
     local_cache.put(op_ref, value)
