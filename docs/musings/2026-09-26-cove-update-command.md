@@ -180,8 +180,14 @@ falls back to `sys.argv[0]`, which under launchd is the plist's absolute
 plist through the same helpers, since its login agent re-execs `cove` too.
 
 Scheduled failures surface only in `~/Library/Logs/cove-update.log`. Nothing
-pushes them to the operator, `cove status` does not report update-job health,
-and a converge subprocess that exits non-zero does not fail `cove update`
-(its output lands in the same log). `cove update --check` is the on-demand
-view. The log is the failure surface, not a convenience: the operator has to
-know it exists and read it after a run that should have changed something.
+pushes them to the operator, and `cove status` does not report update-job
+health. `cove update --check` is the on-demand view. The log is the failure
+surface, not a convenience: the operator has to know it exists and read it
+after a run that should have changed something.
+
+Exit-code contract (added the same day): a converge that exits non-zero now
+fails `cove update` with exit 1 and a one-line message naming the command, its
+exit code, and the log, because success over a stack that did not converge is
+worse than failure. An install failure carries its own message and does not
+pretend the converge ran; the two halves are reported separately because the
+operator's next action differs.
