@@ -485,11 +485,13 @@ services:
       APP_PORT: "8080"
       APP_HOST: "0.0.0.0"
       # Governance/encryption secrets are injected via the compose .env
-      # (cove bifrost up provisions them into 1Password + .env).
+      # (cove bifrost up provisions them into 1Password + .env). The client
+      # virtual key is NOT passed here: Bifrost v2.3.x generates its own
+      # virtual-key token, which `cove bifrost up` fetches from the admin
+      # API and projects into the .env as BIFROST_CLIENT_VIRTUAL_KEY.
       BIFROST_ENCRYPTION_KEY: ${BIFROST_ENCRYPTION_KEY:-}
       BIFROST_ADMIN_USERNAME: ${BIFROST_ADMIN_USERNAME:-}
       BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
-      BIFROST_VIRTUAL_KEY: ${BIFROST_VIRTUAL_KEY:-}
       # Workstation-lane key ownership (2026-10-26 ruling): cove holds no new
       # custody of the ollama-cloud key — the workstation's SOPS role projects
       # it into the deployed compose .env and this line passes it through,

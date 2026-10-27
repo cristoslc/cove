@@ -4,6 +4,16 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+- **Bifrost egress sink additionally allows `getbifrost.ai`** — Bifrost loads its pricing catalog from that host at startup and exits when unreachable (crash-looping behind the fail-closed DNS sink; observed in the 2026-10-26 converge). The sink now allows exactly three documented vendor contacts: the two inference providers plus the pricing-catalog fetch. Vendoring a pricing snapshot was rejected (stale snapshots mean wrong cost numbers); rationale recorded in `compose/bifrost/dnsmasq.conf` and docs/services/bifrost.md, and the allowlist test pins the exact three-name list.
+
+### Fixed
+- **`cove bifrost up` projects the provider keys and the generated client secret** — `SYNTHETIC_API_KEY` is projected into the bifrost `local.env` from the LiteLLM `local.env` (the deployed source of record; copied in-process, never printed, explicit env honored first, existing entries never overwritten, missing everywhere fails loudly naming the source). `OLLAMA_API_KEY` keeps its pass-through posture (no new custody): `up` warns loudly when the workstation lane's SOPS projection has not landed it in the deployed compose `.env` (the ollama-cloud hop degrades to upstream 401s; the gateway itself is unaffected). The CLIENT virtual key: Bifrost v2.3.x generates virtual-key tokens itself and ignores seed-provided values (the spike's file-seeded-VK finding, mechanism established 2026-10-27 on the live gateway); the config's VK declaration now carries policy only, and `up` fetches the generated token from the gateway's admin API post-boot and projects it into the `.env` as `BIFROST_CLIENT_VIRTUAL_KEY` (never printed; the dashboard `virtual_key`/seed item field is superseded).
+- **The Bifrost SQLite config store is durable** — `config.json` pins `config_store.config.path` ABSOLUTE (`/app/data/config.db`): the documented relative default resolves against the image WORKDIR (`/app`), not the APP_DIR bind, so the store (the generated virtual key, governance state, the pricing cache) reset on every container recreation (observed 2026-10-27). The mounted bind now genuinely receives the store; the pre-seeded empty file is replaced by the gateway on first boot and preserved thereafter (hash-matched re-seeds keep the generated token).
+- **`cove bifrost status` no longer reports an auth answer as an outage** — `/health` probes classifying as 401/403 (LiteLLM's master-key behavior; Bifrost with governance enabled) count REACHABLE ("auth-gated"); only a failed probe or an unhealthy answer (4xx-other/5xx) is UNREACHABLE. Status reads also target the deployed stack: the canonical install dir's `.env` and its `COVE_DATA_ROOT`, so a run from a source checkout reads runtime credentials instead of an empty checkout file. The egress sink itself is unchanged in posture: exactly three documented vendor contacts (the two inference providers plus Bifrost's startup pricing-catalog fetch at `getbifrost.ai`), everything else NXDOMAIN-sunk.
+
 ## 0.15.9 (2026-10-26)
 
 ### Added

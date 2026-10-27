@@ -6,19 +6,26 @@ litellm services — nothing is removed and no client is re-pointed by this
 module (the client-facing re-point is a later, workstation-lane-gated phase).
 """
 
+import base64
 import json
 import os
 import secrets
 import sqlite3
-import string
 import subprocess
 import tempfile
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import click
 
 from cove.constants import NGINX_HTTPS_PORT
-from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
+from cove.stateless import (
+    resolve_compose_dir,
+    ensure_compose_source_ready,
+    _config_compose_dir,
+)
 # Shared 4-word passphrase helper (speedtest's admin password generator);
 # importing keeps a single source of truth for the wordlist.
 from cove.speedtest import _passphrase as _friendly_passphrase
@@ -28,14 +35,18 @@ BIFROST_URL = "https://bifrost.cove.local/"
 BIFROST_OP_VAULT = "Private"
 BIFROST_ITEM_TITLE = "Bifrost Gateway"
 # The shared Cove admin identity (ADR-017) lives in a cove.local-keyed item,
-# NOT a per-service item. Encryption key / dashboard password / virtual key
-# live in the Bifrost Gateway item; the admin username comes from the shared
-# Cove Admin item.
+# NOT a per-service item. Encryption key and dashboard password live in the
+# Bifrost Gateway item; the admin username comes from the shared Cove Admin
+# item. The CLIENT virtual key is NOT a cove-generated credential: Bifrost
+# v2.3.x generates virtual-key tokens itself (sk-bf-...) and ignores any
+# value provided at seed time, so `cove bifrost up` FETCHES the generated
+# token from the gateway's admin API after boot and projects it into the
+# compose .env as BIFROST_CLIENT_VIRTUAL_KEY.
 COVE_ADMIN_ITEM_TITLE = "Cove Admin"
 ENCRYPTION_KEY_OP_REF = f"op://{BIFROST_OP_VAULT}/{BIFROST_ITEM_TITLE}/encryption_key"
 ADMIN_PASSWORD_OP_REF = f"op://{BIFROST_OP_VAULT}/{BIFROST_ITEM_TITLE}/admin_password"
-VIRTUAL_KEY_OP_REF = f"op://{BIFROST_OP_VAULT}/{BIFROST_ITEM_TITLE}/virtual_key"
 ADMIN_USERNAME_OP_REF = f"op://{BIFROST_OP_VAULT}/{COVE_ADMIN_ITEM_TITLE}/username"
+CLIENT_VIRTUAL_KEY_ENV = "BIFROST_CLIENT_VIRTUAL_KEY"
 
 
 def _compose_cmd(*args: str) -> list[str]:
@@ -71,12 +82,6 @@ def _generate_encryption_key() -> str:
     return secrets.token_hex(32)
 
 
-def _generate_virtual_key() -> str:
-    alphabet = string.ascii_letters + string.digits
-    body = "".join(secrets.choice(alphabet) for _ in range(32))
-    return f"bf-{body}"
-
-
 def _seed_example_path():
     return resolve_compose_dir() / "seeds" / "bifrost-creds.yaml.example"
 
@@ -86,17 +91,20 @@ def _render_seed() -> str:
     item (title 'Bifrost Gateway' keyed to `https://bifrost.cove.local/`),
     so the same credentials work on all the operator's machines.
 
-    The item holds the config-store encryption key, the dashboard admin
-    password, and the client-facing virtual key. The admin USERNAME comes
-    from the shared 'Cove Admin' item (https://cove.local/, ADR-017).
+    The item holds the config-store encryption key and the dashboard admin
+    password. The admin USERNAME comes from the shared 'Cove Admin' item
+    (https://cove.local/, ADR-017). The CLIENT virtual key is not held here:
+    Bifrost v2.3.x generates virtual-key tokens itself and ignores any value
+    provided at seed time, so `cove bifrost up` fetches the generated token
+    from the gateway's admin API after boot and projects it into the compose
+    .env (BIFROST_CLIENT_VIRTUAL_KEY).
 
-    Each field carries its own placeholder so the three values are always
+    Each field carries its own placeholder so the values are always
     distinct:"""
     template = _seed_example_path().read_text()
     rendered = template
     rendered = rendered.replace("{{generate:encryption_key}}", _generate_encryption_key())
     rendered = rendered.replace("{{generate:admin_password}}", _friendly_passphrase())
-    rendered = rendered.replace("{{generate:virtual_key}}", _generate_virtual_key())
     return rendered
 
 
@@ -202,9 +210,11 @@ def _ensure_secret(
 
 
 def _ensure_secrets() -> None:
-    """Provision the three Bifrost credentials into the compose .env, reusing
-    the shared 1Password items across machines. Also injects the shared Cove
-    Admin username (dashboard identity). Never prints a secret value."""
+    """Provision the Bifrost dashboard credentials into the compose .env,
+    reusing the shared 1Password items across machines. Also injects the
+    shared Cove Admin username (dashboard identity). Never prints a secret
+    value. The client virtual key is NOT provisioned here: Bifrost
+    generates it (see CLIENT_VIRTUAL_KEY_ENV)."""
     _ensure_secret(
         "BIFROST_ENCRYPTION_KEY",
         ENCRYPTION_KEY_OP_REF,
@@ -214,11 +224,6 @@ def _ensure_secrets() -> None:
         "BIFROST_ADMIN_PASSWORD",
         ADMIN_PASSWORD_OP_REF,
         _friendly_passphrase,
-    )
-    _ensure_secret(
-        "BIFROST_VIRTUAL_KEY",
-        VIRTUAL_KEY_OP_REF,
-        _generate_virtual_key,
     )
 
     # Shared Cove Admin username (ADR-017) — the dashboard identity. Fail
@@ -238,8 +243,9 @@ def _ensure_runtime_files() -> None:
     """Seed the data-root runtime files for the bifrost profile.
 
     - bifrost/ dir: operator-private (0700) — it holds provider key env files.
-    - local.env: 0600, left EMPTY (keys come from litellm's local.env pattern
-      or operator edits); never overwritten.
+    - local.env: 0600; provider keys are projected in later (see
+      _ensure_synthetic_key), operator edits preserved; never overwritten
+      wholesale.
     - config.json / dnsmasq.conf: seeded from the compose source, first boot
       only (operator edits preserved).
     - config.db: the SQLite config store file must pre-exist before first
@@ -284,10 +290,45 @@ def _ensure_runtime_files() -> None:
     store.chmod(0o600)
 
 
+def _runtime_env_path() -> Path:
+    """The compose .env of the DEPLOYED stack: the authoritative runtime
+    credential context (status reads, provider-key pass-through checks).
+
+    Status commands may run before provisioning and from a source checkout
+    or worktree, whose compose dir carries no runtime credentials. The
+    canonical install dir is where the wheel deploys compose resources and
+    where the workstation lane projects SOPS entries, so reads prefer it.
+    An explicit COVE_COMPOSE_DIR (tests, sandbox) always wins."""
+    explicit = os.environ.get("COVE_COMPOSE_DIR")
+    if explicit:
+        return Path(explicit) / ".env"
+    installed = _config_compose_dir()
+    if (installed / "inventory.yml").exists():
+        return installed / ".env"
+    return resolve_compose_dir() / ".env"
+
+
+def _runtime_data_root() -> Path:
+    """Data root of the DEPLOYED stack: explicit COVE_DATA_ROOT wins (same
+    precedence as _cove_data_root), then the deployed compose .env, then the
+    canonical default."""
+    explicit = os.environ.get("COVE_DATA_ROOT")
+    if explicit:
+        return Path(explicit).expanduser()
+    env_path = _runtime_env_path()
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("COVE_DATA_ROOT="):
+                value = line.split("=", 1)[1].strip().strip("\"'")
+                if value:
+                    return Path(value).expanduser()
+    return Path.home() / "Documents" / "cove-data"
+
+
 def _env_flag_set(env_key: str) -> bool:
-    """TRUE when a compose .env line exists with a non-empty value. Values
-    are never echoed."""
-    env_path = _compose_env_path()
+    """TRUE when the DEPLOYED compose .env has KEY=<non-empty>. Values are
+    never echoed."""
+    env_path = _runtime_env_path()
     if not env_path.exists():
         return False
     for line in env_path.read_text().splitlines():
@@ -298,13 +339,183 @@ def _env_flag_set(env_key: str) -> bool:
 
 def _local_env_flag_set(name: str) -> bool:
     """TRUE when the bifrost local.env carries NAME=<non-empty>."""
-    env_file = _cove_data_root() / "bifrost" / "local.env"
+    env_file = _runtime_data_root() / "bifrost" / "local.env"
     if not env_file.exists():
         return False
     for line in env_file.read_text().splitlines():
         if line.startswith(f"{name}="):
             return bool(line.split("=", 1)[1].strip())
     return False
+
+
+def _read_file_var(env_file: Path, name: str) -> str | None:
+    """In-process single read of NAME= from an env file. Never prints."""
+    if not env_file.exists():
+        return None
+    for line in env_file.read_text().splitlines():
+        if line.startswith(f"{name}="):
+            value = line.split("=", 1)[1].strip()
+            return value or None
+    return None
+
+
+def _upsert_local_env(name: str, value: str) -> None:
+    """Set NAME=VALUE in the bifrost local.env idempotently (no duplicate
+    lines). Values are never echoed, mode stays 0600."""
+    env_file = _cove_data_root() / "bifrost" / "local.env"
+    env_file.parent.mkdir(parents=True, exist_ok=True)
+    lines = []
+    if env_file.exists():
+        for existing in env_file.read_text().splitlines():
+            if existing.startswith(f"{name}="):
+                continue
+            lines.append(existing)
+    lines.append(f"{name}={value}")
+    env_file.write_text("\n".join(lines) + "\n")
+    env_file.chmod(0o600)
+
+
+def _ensure_synthetic_key() -> None:
+    """Project the Synthetic provider key into the bifrost local.env.
+
+    One key, one source of record: the LiteLLM local.env is the deployed
+    env LiteLLM's own provider config already runs on, so the projection
+    copies from there in-process (same 1Password-sourced value, zero new
+    custody artifacts). Precedence: explicit SYNTHETIC_API_KEY env >
+    an existing bifrost local.env entry > the litellm local.env projection.
+    Fail loud when no source exists; the key is the subscription hop's
+    credential, the gateway is degraded without it. Never prints."""
+    explicit = os.environ.get("SYNTHETIC_API_KEY")
+    if explicit:
+        _upsert_local_env("SYNTHETIC_API_KEY", explicit)
+        return
+
+    if _local_env_flag_set("SYNTHETIC_API_KEY"):
+        return
+
+    litellm_env = _cove_data_root() / "litellm" / "local.env"
+    projected = _read_file_var(litellm_env, "SYNTHETIC_API_KEY")
+    if projected:
+        _upsert_local_env("SYNTHETIC_API_KEY", projected)
+        click.echo(
+            "Projected SYNTHETIC_API_KEY from the LiteLLM local.env "
+            "(same source of record, value never printed)."
+        )
+        return
+
+    raise click.ClickException(
+        "SYNTHETIC_API_KEY is missing. The deployed LiteLLM local.env "
+        f"({litellm_env}) is the source of record for the Synthetic "
+        "subscription key. Copy the key into that file (or set "
+        "SYNTHETIC_API_KEY in the environment) and re-run `cove bifrost up`."
+    )
+
+
+def _check_ollama_passthrough() -> None:
+    """Warn loudly when the workstation lane's SOPS projection has not
+    landed OLLAMA_API_KEY in the compose .env. Non-fatal by design: cove
+    holds no custody of this key (2026-10-26 ruling) and the ollama-cloud
+    hop degrades to upstream 401s, it does not break the gateway."""
+    if not _env_flag_set("OLLAMA_API_KEY"):
+        click.echo(
+            "WARNING: OLLAMA_API_KEY is absent from the deployed compose "
+            ".env — the workstation lane projects it there (SOPS). The "
+            "ollama-cloud ladder hop will fail upstream until it lands; "
+            "continuing."
+        )
+
+
+def _gateway_port() -> int:
+    """The container port Bifrost listens on, from the deployed .env
+    (default 4002, the compose default)."""
+    raw = _read_file_var(_runtime_env_path(), "BIFROST_PORT")
+    try:
+        return int(raw or "4002")
+    except ValueError:
+        return 4002
+
+
+def _wait_for_gateway_health(port: int, timeout_s: int = 90) -> bool:
+    """Poll http://127.0.0.1:<port>/health (direct loopback container port,
+    no nginx or TLS in the way) until it answers 200."""
+    deadline = time.monotonic() + timeout_s
+    url = f"http://127.0.0.1:{port}/health"
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                if resp.status == 200:
+                    return True
+        except (urllib.error.URLError, TimeoutError, OSError):
+            pass
+        time.sleep(2)
+    return False
+
+
+def _fetch_client_virtual_key(port: int, username: str, password: str) -> dict:
+    """GET /api/governance/virtual-keys over the direct loopback port with
+    the dashboard Basic credentials. Returns the vk-cove row (the secret
+    travels in-process only). Raises ClickException on any failure."""
+    url = f"http://127.0.0.1:{port}/api/governance/virtual-keys"
+    req = urllib.request.Request(url, headers={
+        "Authorization": "Basic " + base64.b64encode(
+            f"{username}:{password}".encode()).decode(),
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        raise click.ClickException(
+            f"Failed to fetch the generated client virtual key from the "
+            f"gateway admin API (HTTP {e.code})."
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as e:
+        raise click.ClickException(
+            f"Failed to reach the gateway admin API at {url}: {e}"
+        )
+    rows = [row for row in data.get("virtual_keys", []) if row.get("id") == "vk-cove"]
+    value = rows[0].get("value") if rows else None
+    if not value:
+        raise click.ClickException(
+            "The generated client virtual key (vk-cove) was not found in "
+            "the gateway's governance store; `cove bifrost up` seeds it on "
+            "first boot — re-run `cove bifrost up`."
+        )
+    return rows[0]
+
+
+def _ensure_client_virtual_key() -> str:
+    """Fetch Bifrost's generated client token and project it into the
+    compose .env. Bifrost v2.3.x generates virtual-key tokens itself
+    (ignoring any seed-provided value), so the ONLY honest source is the
+    gateway's own admin API. Idempotent: the store is durable (mounted
+    config.db), so the token is stable across restarts and recreations;
+    an operator rotation via the dashboard is picked up on the next
+    `cove bifrost up`. Never prints the value."""
+    env_path = _runtime_env_path()
+    # The stored token must exist on the durable store; fetch + project.
+    username = _read_file_var(env_path, "BIFROST_ADMIN_USERNAME")
+    password = _read_file_var(env_path, "BIFROST_ADMIN_PASSWORD")
+    if not username or not password:
+        raise click.ClickException(
+            "BIFROST_ADMIN_USERNAME / BIFROST_ADMIN_PASSWORD are missing "
+            "from the compose .env; run `cove bifrost up` (provisioning "
+            "happens before the gateway starts)."
+        )
+    port = _gateway_port()
+    if not _wait_for_gateway_health(port):
+        raise click.ClickException(
+            "The Bifrost gateway did not pass /health within 90s; check "
+            "`cove bifrost logs`."
+        )
+    row = _fetch_client_virtual_key(port, username, password)
+    _upsert_env(CLIENT_VIRTUAL_KEY_ENV, row["value"])
+    click.echo(
+        "Client virtual key projected into the compose .env "
+        f"({CLIENT_VIRTUAL_KEY_ENV}; Bifrost-generated sk-bf- token, "
+        "value never printed). Rotate via the dashboard or the governance "
+        "API; the projection refreshes on the next `cove bifrost up`."
+    )
+    return row["value"]
 
 
 def _neutral_endpoint_upstream() -> str | None:
@@ -328,21 +539,61 @@ def _neutral_endpoint_upstream() -> str | None:
     return None
 
 
-def _probe_health_hosts(hosts: tuple[str, ...]) -> bool:
-    """True when /health answers through nginx on any of the given
-    hostnames (SNI-free curl with an explicit Host header)."""
+def _probe_health_code(host: str) -> int | None:
+    """HTTP status of GET /health through nginx for one hostname (SNI-free
+    curl with an explicit Host header), or None when the probe itself
+    failed (timeout, connection refused, TLS/hostname dead)."""
+    try:
+        health = subprocess.run(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+             "-H", f"Host: {host}",
+             f"https://127.0.0.1:{NGINX_HTTPS_PORT}/health"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except subprocess.TimeoutExpired:
+        return None
+    if health.returncode != 0:
+        return None
+    try:
+        return int(health.stdout.strip())
+    except ValueError:
+        return None
+
+
+def _classify_health(code: int | None) -> str:
+    """Classify a /health probe result: "ok" (2xx/3xx), "auth-gated"
+    (401/403 — the service answered and requires a credential; auth is a
+    separate question from reachability), or "unreachable" (probe failed,
+    4xx-other, or 5xx). LiteLLM answers /health with 401 when its master
+    key is absent from the probe; Bifrost with governance enabled can do
+    the same — neither is an outage."""
+    if code is None:
+        return "unreachable"
+    if code in (401, 403):
+        return "auth-gated"
+    if 200 <= code < 400:
+        return "ok"
+    return "unreachable"
+
+
+_HEALTH_LABELS = {"ok": "OK", "auth-gated": "OK (auth-gated)",
+                  "unreachable": "UNREACHABLE"}
+
+
+def _probe_health_hosts(hosts: tuple[str, ...]) -> tuple[int | None, str]:
+    """Probe /health across the given hostnames (nginx vhosts), returning
+    the best (code, classification): any 2xx/3xx wins over an auth-gated
+    answer, which wins over unreachable."""
+    best_code: int | None = None
+    best = "unreachable"
     for host in hosts:
-        try:
-            health = subprocess.run(
-                ["curl", "-sf", "-H", f"Host: {host}",
-                 f"https://127.0.0.1:{NGINX_HTTPS_PORT}/health"],
-                capture_output=True, text=True, timeout=10,
-            )
-        except subprocess.TimeoutExpired:
-            continue
-        if health.returncode == 0:
-            return True
-    return False
+        code = _probe_health_code(host)
+        verdict = _classify_health(code)
+        if verdict == "ok":
+            return code, verdict
+        if verdict == "auth-gated":
+            best_code, best = code, verdict
+    return best_code, best
 
 
 @click.group()
@@ -362,8 +613,11 @@ def up():
     ensure_compose_source_ready(resolve_compose_dir())
     _ensure_secrets()
     _ensure_runtime_files()
+    _ensure_synthetic_key()
+    _check_ollama_passthrough()
     click.echo("Starting Bifrost gateway (profile: bifrost)...")
     subprocess.run(_compose_cmd("--profile", "bifrost", "up", "-d", "--build"), check=True)
+    _ensure_client_virtual_key()
     click.echo(f"Bifrost gateway is running. Gateway: {BIFROST_URL}")
 
 
@@ -399,10 +653,11 @@ def status():
         + ("SET" if _env_flag_set("OLLAMA_API_KEY") else "missing")
     )
     for key in ("BIFROST_ENCRYPTION_KEY", "BIFROST_ADMIN_USERNAME",
-                "BIFROST_ADMIN_PASSWORD", "BIFROST_VIRTUAL_KEY"):
-        click.echo(
-            f"  {key}: " + ("SET" if _env_flag_set(key) else "missing")
-        )
+                "BIFROST_ADMIN_PASSWORD", CLIENT_VIRTUAL_KEY_ENV):
+        state = "SET" if _env_flag_set(key) else "missing"
+        suffix = " (Bifrost-generated, dashboard/API rotates it)" \
+            if key == CLIENT_VIRTUAL_KEY_ENV else ""
+        click.echo(f"  {key}: {state}{suffix}")
 
     click.echo("Checking /health through nginx...")
     surfaces = (
@@ -412,9 +667,10 @@ def status():
     )
     all_ok = True
     for label, hosts in surfaces:
-        reachable = _probe_health_hosts(hosts)
-        click.echo(f"  {label}: " + ("OK" if reachable else "UNREACHABLE"))
-        all_ok = all_ok and reachable
+        code, verdict = _probe_health_hosts(hosts)
+        suffix = f" (HTTP {code})" if verdict not in ("ok",) and code is not None else ""
+        click.echo(f"  {label}: " + _HEALTH_LABELS[verdict] + suffix)
+        all_ok = all_ok and verdict in ("ok", "auth-gated")
     upstream = _neutral_endpoint_upstream()
     if upstream:
         click.echo(f"  llmproxy.cove upstream: {upstream}")
