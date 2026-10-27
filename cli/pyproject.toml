@@ -45,4 +45,8 @@ markers = [
 [dependency-groups]
 dev = [
     "pytest",
+    # ansible-core supplies `ansible-playbook`, which the playbook behavior
+    # tests execute (cli/tests/test_forgejo.py). Dev group only, never the
+    # runtime dependencies: the released wheel must not carry Ansible.
+    "ansible-core>=2.16",
 ]
