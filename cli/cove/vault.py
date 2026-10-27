@@ -20,6 +20,7 @@ import time
 import click
 
 from cove.stateless import ensure_compose_source_ready, resolve_compose_dir
+from cove.credential_env import scrubbed_environment
 from cove.vault_unseal import ensure_unsealed, vault_health
 
 VAULT_SERVICE = "vault"
@@ -61,7 +62,7 @@ def _compose_up_vault() -> None:
         "up", "-d", VAULT_SERVICE,
     ]
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(cmd, check=True, env=scrubbed_environment(compose_dir))
     except FileNotFoundError as exc:
         raise click.ClickException(
             f"docker is not installed or not on PATH: {exc}"

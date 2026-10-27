@@ -693,13 +693,14 @@ class TestBifrostCli:
         assert "marker" in names
 
     def test_explicit_env_secrets_skip_1password(self, tmp_path, monkeypatch):
-        """Explicit env vars are honored first; no 1Password subprocess may
-        run and no secret is printed."""
+        """With the explicit ambient-credential opt-in, env vars are honored
+        first; no 1Password subprocess may run and no secret is printed."""
         from cove import bifrost as bf
         compose_dir = tmp_path / "compose"
         compose_dir.mkdir()
         (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
         monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
+        monkeypatch.setenv("COVE_ALLOW_AMBIENT_CREDENTIALS", "1")
 
         def _boom(*a, **k):
             raise AssertionError("1Password/Vault must not run when env vars are explicit")
@@ -957,6 +958,7 @@ class TestBifrostFollowups:
         local = tmp_path / "bifrost" / "local.env"
         monkeypatch.setenv("COVE_DATA_ROOT", str(tmp_path))
         monkeypatch.setenv("SYNTHETIC_API_KEY", "explicit-provider-key-value")
+        monkeypatch.setenv("COVE_ALLOW_AMBIENT_CREDENTIALS", "1")
 
         def _boom(*a, **k):
             raise AssertionError("no projection source runs when explicit")
