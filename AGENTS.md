@@ -42,6 +42,7 @@ The repo's `compose/` at the root is the **dev-time source** that gets synced IN
 The `cove` CLI is installed as a **uv tool** (`~/.local/bin/cove`) from a wheel built out of `cli/`. The stable tool MUST always reflect the last good **released** state, never a branch under test.
 
 - Dev/test loop (no reinstall): `uv run --directory cli cove ...`
+- **The live project converges from exactly one compose dir.** `cove up` and every container-mutating service `up` refuse a non-canonical compose source for project `cove`: each service's config hash embeds that dir's absolute paths (relative bind sources, `build.context`, `NGINX_CONF_DIR`/`DNSMASQ_CONF_DIR`), so flipping sources recreates litellm/nginx (and vault/ade) on every converge and every recreate is a 1-2 minute 502 window for LLM clients. Run the live stack from `~/.config/cove/compose`; set `COVE_ALLOW_NONCANONICAL_LIVE_SOURCE=1` only when you deliberately want that recreate. A converge with nothing to change is a no-op: identical containers, no restart.
 - Test gate before any promote: `uv run --directory cli pytest -x -q -m "not e2e and not staging"`
 - **Promote** (MUST be post-merge to `main`, only after the test gate is green):
   ```

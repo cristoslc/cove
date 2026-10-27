@@ -257,8 +257,23 @@
       ansible.builtin.set_fact:
         root_ca_b64: "{{ (root_ca_slurp.content | b64decode | regex_replace('-----BEGIN CERTIFICATE-----\\n?', '') | regex_replace('-----END CERTIFICATE-----\\n?', '') | regex_replace('\\n', '') | trim) }}"
 
-    - name: Generate UUIDs for iOS profile
-      ansible.builtin.shell: python3 -c "import uuid; print(uuid.uuid4()); print(uuid.uuid4()); print(uuid.uuid4())"
+    - name: Derive stable UUIDs for the iOS profile
+      # Deterministic on purpose: the .mobileconfig identifiers only need to be
+      # unique per profile, not unique per converge. The old per-run random
+      # generator rewrote the iOS DNS installer script on every `cove up`,
+      # which broke the "a no-op converge changes nothing" contract (mtime
+      # churn, spurious diffs) and made every converge look changed.
+      ansible.builtin.command:
+        argv:
+          - "{{ ansible_playbook_python }}"
+          - "-c"
+          - |
+            import sys, uuid
+            namespace = uuid.uuid5(uuid.NAMESPACE_URL, sys.argv[1])
+            for label in ("ca", "dns", "profile"):
+                print(uuid.uuid5(namespace, sys.argv[2] + ":" + label))
+          - "{{ root_ca_b64 | default('') }}"
+          - "{{ ansible_hostname }}"
       register: uuids
       changed_when: false
 
@@ -811,6 +826,24 @@
       loop:
         - { key: "ADE_PORT", value: "{{ ade_port }}" }
         - { key: "ADE_CONTAINER_NAME", value: "{{ ade_container_name }}" }
+
+    # NGINX_CONF_DIR / DNSMASQ_CONF_DIR are absolute paths derived from
+    # playbook_dir, and Compose folds them into the nginx/dnsmasq config
+    # hashes. "Render compose .env (first boot only)" captures whichever dir
+    # converged first, so a dir whose first converge happened before (or after)
+    # another source can carry a stale path and recreate nginx on a converge
+    # that changed nothing (2026-10-26 litellm/nginx churn). Re-sync them on
+    # every up, like ADE_PORT, so the dir being converged always describes
+    # itself and a no-op converge leaves nginx untouched.
+    - name: Ensure compose-dir path env matches the Ansible vars (nginx / dnsmasq)
+      ansible.builtin.lineinfile:
+        path: "{{ compose_dir }}/.env"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+        mode: "0600"
+      loop:
+        - { key: "NGINX_CONF_DIR", value: "{{ nginx_conf_dir }}" }
+        - { key: "DNSMASQ_CONF_DIR", value: "{{ dnsmasq_conf_dir }}" }
 
     # Socket-mounting services (forgejo-runner, toolhive) must join the
     # docker daemon's group inside the engine VM, which differs per engine

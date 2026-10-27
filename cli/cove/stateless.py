@@ -35,6 +35,13 @@ LIVE_COMPOSE_PROJECT_NAME = "cove"
 # require_live_project_from_canonical_dir).
 NONCANONICAL_OVERRIDE_ENV = "COVE_ALLOW_FOREIGN_DATA_ROOT"
 
+# Explicit operator escape hatch for converging the live project from a
+# NON-canonical compose dir that shares the canonical data root. Without it,
+# the live stack only converges from ~/.config/cove/compose, so a no-op
+# converge cannot flip absolute config-hash inputs (bind sources, build
+# contexts, NGINX_CONF_DIR) and recreate litellm/nginx.
+LIVE_SOURCE_OVERRIDE_ENV = "COVE_ALLOW_NONCANONICAL_LIVE_SOURCE"
+
 # Compose top-level project-name files, checked in Compose's own precedence.
 _COMPOSE_FILE_NAMES = (
     "compose.yaml",
@@ -551,19 +558,28 @@ def require_usable_data_root(compose_dir: Path, *, allow_missing_env: bool) -> N
 
 
 def require_live_project_from_canonical_dir(compose_dir: Path) -> None:
-    """Abort when a live-named compose source points at a different data root.
+    """Abort unless the live project converges from its canonical source dir.
 
-    `docker-compose.yml` pins `name: cove`, so a compose dir with that name and
-    a *different* data root recreates the live containers against foreign
-    storage. That is the hijack in incident 20261018-015539.
+    `docker-compose.yml` pins `name: cove`, and Compose keys a project by
+    (name, working directory). Two hazards follow.
 
-    A same-name source whose data root IS the canonical one is allowed: it
-    recreates the live containers against the intended data (the dev checkout
-    shape, harmless). The canonical install dir is always allowed. Override with
-    NONCANONICAL_OVERRIDE_ENV when a deliberate foreign-root run is intended.
+    Hijack: a compose dir with the live name and a *different* data root
+    recreates the live containers against foreign storage (incident
+    20261018-015539). Refused unless NONCANONICAL_OVERRIDE_ENV is set.
+
+    Churn: a compose dir with the live name and the *canonical* data root is
+    not harmless, because every service's config hash embeds absolute paths
+    resolved from the compose directory: relative bind sources
+    (`./vault/vault.hcl`, `./certs/rootCA.pem`), `build.context: ./litellm`,
+    and the `NGINX_CONF_DIR` / `DNSMASQ_CONF_DIR` values in `.env`. Converging
+    the live stack from two different dirs (the install dir and a checkout, or
+    two checkouts) therefore changes the hash of litellm, nginx, vault, and ade
+    on every flip and recreates them even when nothing changed. Each recreate
+    drops the LLM proxy for one to two minutes (2026-10-26 incident). Refused
+    unless LIVE_SOURCE_OVERRIDE_ENV is set.
+
+    Only the canonical install dir passes with no opt-in.
     """
-    if os.environ.get(NONCANONICAL_OVERRIDE_ENV):
-        return
     if declared_compose_project_name(compose_dir) != LIVE_COMPOSE_PROJECT_NAME:
         return
     try:
@@ -572,7 +588,9 @@ def require_live_project_from_canonical_dir(compose_dir: Path) -> None:
         same_dir = False
     if same_dir:
         return
+
     root = effective_data_root(compose_dir)
+    same_root = False
     if root is not None:
         try:
             same_root = (
@@ -580,17 +598,37 @@ def require_live_project_from_canonical_dir(compose_dir: Path) -> None:
             )
         except OSError:
             same_root = False
-        if same_root:
+
+    if not same_root:
+        if os.environ.get(NONCANONICAL_OVERRIDE_ENV):
             return
+        raise click.ClickException(
+            f"Compose dir {compose_dir} declares the live project name "
+            f"'{LIVE_COMPOSE_PROJECT_NAME}' but its COVE_DATA_ROOT "
+            f"({root or 'unset'}) is not the canonical one "
+            "(~/Documents/cove-data). Compose keys a project by (name, working "
+            "directory), so this would recreate the live stack against foreign "
+            "data. Run from the canonical dir (~/.config/cove/compose), point "
+            "COVE_DATA_ROOT at the canonical root, or set "
+            f"{NONCANONICAL_OVERRIDE_ENV}=1 to override deliberately."
+        )
+
+    if os.environ.get(LIVE_SOURCE_OVERRIDE_ENV):
+        return
     raise click.ClickException(
         f"Compose dir {compose_dir} declares the live project name "
-        f"'{LIVE_COMPOSE_PROJECT_NAME}' but its COVE_DATA_ROOT "
-        f"({root or 'unset'}) is not the canonical one "
-        "(~/Documents/cove-data). Compose keys a project by (name, working "
-        "directory), so this would recreate the live stack against foreign "
-        "data. Run from the canonical dir (~/.config/cove/compose), point "
-        "COVE_DATA_ROOT at the canonical root, or set "
-        f"{NONCANONICAL_OVERRIDE_ENV}=1 to override deliberately."
+        f"'{LIVE_COMPOSE_PROJECT_NAME}' but is not the canonical compose dir "
+        "(~/.config/cove/compose). Compose keys a project by (name, working "
+        "directory) and every service's config hash embeds absolute paths "
+        "resolved from that directory (relative bind sources such as "
+        "./vault/vault.hcl and ./certs/rootCA.pem, build contexts such as "
+        "./litellm, and the NGINX_CONF_DIR / DNSMASQ_CONF_DIR values in .env). "
+        "Converging the live stack from two different dirs recreates litellm, "
+        "nginx, vault, and ade on every flip even when nothing changed, and "
+        "each recreate drops the LLM proxy for one to two minutes. Run the "
+        "live stack from the canonical dir, or set "
+        f"{LIVE_SOURCE_OVERRIDE_ENV}=1 to converge from this source "
+        "deliberately (the recreate is expected)."
     )
 
 
