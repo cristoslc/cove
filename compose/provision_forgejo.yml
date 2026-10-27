@@ -42,6 +42,7 @@
     # (e.g. `cove serve` running `cove up` on a reboot while 1Password is
     # locked). A miss still puts, and a 1Password read failure fails loud.
     - name: Check 1P forgejo admin item cached
+      tags: [creds]
       ansible.builtin.command:
         argv:
           - cove
@@ -54,6 +55,7 @@
       no_log: true
 
     - name: Seed 1P with Forgejo creds (renders + executes bulk-write)
+      tags: [creds]
       ansible.builtin.command:
         argv:
           - cove
@@ -64,6 +66,7 @@
       when: pwd_check.rc != 0
 
     - name: Report cache hit (skip the 1Password sync entirely)
+      tags: [creds]
       ansible.builtin.debug:
         msg: >-
           Forgejo admin password already cached; skipping `cove creds vault-put`
@@ -71,6 +74,7 @@
       when: pwd_check.rc == 0
 
     - name: Cache admin password in Vault (cache miss only; re-reads 1Password)
+      tags: [creds]
       ansible.builtin.command:
         argv:
           - cove
@@ -84,6 +88,7 @@
     # Read the value back through the read path, so the fact is the real secret
     # on both branches. (`vault-put` stdout is a mask, never the value.)
     - name: Read admin password from the Vault cache
+      tags: [creds]
       ansible.builtin.command:
         argv:
           - cove
@@ -95,6 +100,7 @@
       no_log: true
 
     - name: Set admin password fact
+      tags: [creds]
       ansible.builtin.set_fact:
         admin_password: "{{ admin_pw_resolve.stdout }}"
       no_log: true

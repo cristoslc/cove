@@ -1,6 +1,11 @@
 """Tests for Forgejo webhook allowlist: compose env, bringup .env render,
 group_vars default, and adversarial wildcard/empty-value attempts.
 
+Also pins the cache-first admin-password provisioning in
+`compose/provision_forgejo.yml` (`TestProvisionCredentialCacheFirst`, plus a
+behavior check that executes the `creds`-tagged tasks with a fake `cove` when
+`ansible-playbook` is on PATH).
+
 Implements issue #44 — Forgejo's upstream default webhook.ALLOWED_HOST_LIST
 is `external`, which blocks webhook delivery to loopback/private targets.
 Cove overrides it with an explicit, configurable allowlist defaulting to
@@ -23,6 +28,11 @@ Run unit:  pytest cli/tests/test_forgejo.py -m "not e2e and not staging"
 
 from pathlib import Path
 
+import os
+import shutil
+import subprocess
+
+import pytest
 import yaml
 
 def _project_root() -> Path:
@@ -177,6 +187,107 @@ def _argv(task: dict) -> list[str]:
     if isinstance(cmd, str):
         return cmd.split()
     return []
+
+
+# --- Behavior harness -------------------------------------------------------
+# The repo does not ship ansible as a Python dependency (`cli/pyproject.toml`
+# has no ansible, and `import ansible` fails inside the test venv), so a
+# playbook-execution test can only run where the operator's own
+# `ansible-playbook` is on PATH; it skips everywhere else. The credential tasks
+# carry `tags: [creds]`, so `--tags creds` executes exactly that block against
+# localhost with a fake `cove` on PATH, and the fake records what ansible
+# actually ran. That is a real behavior check, not a re-read of the YAML.
+
+ANSIBLE_PLAYBOOK = shutil.which("ansible-playbook")
+
+_FAKE_COVE = """#!/bin/bash
+# Fake `cove`: records every invocation, models the Vault cache in {marker}.
+echo "$*" >> {log}
+if [ "$1 $2" = "creds vault-get" ]; then
+  if [ -f {marker} ]; then printf 'secret-value'; exit 0; fi
+  exit 1
+fi
+if [ "$1 $2" = "creds vault-put" ]; then
+  if [ {put_rc} -ne 0 ]; then exit {put_rc}; fi
+  touch {marker}
+  exit 0
+fi
+exit 0
+"""
+
+
+def _run_creds_block(tmp_path: Path, *, warm: bool, put_rc: int = 0):
+    """Run the playbook's `creds`-tagged tasks; return (rc, recorded calls)."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "argv.log"
+    marker = tmp_path / "cached"
+    shim = bin_dir / "cove"
+    shim.write_text(
+        _FAKE_COVE.format(log=log, marker=marker, put_rc=put_rc)
+    )
+    shim.chmod(0o755)
+    if warm:
+        marker.touch()
+    proc = subprocess.run(
+        [
+            "ansible-playbook",
+            "-i",
+            str(COMPOSE_DIR / "inventory.yml"),
+            "--tags",
+            "creds",
+            str(COMPOSE_DIR / "provision_forgejo.yml"),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(COMPOSE_DIR),
+        env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+        timeout=300,
+        check=False,
+    )
+    calls = []
+    if log.exists():
+        calls = [line.split()[:2] for line in log.read_text().splitlines()]
+    return proc, calls
+
+
+@pytest.mark.skipif(
+    ANSIBLE_PLAYBOOK is None,
+    reason="ansible-playbook not on PATH (not a Python dependency of this project)",
+)
+class TestProvisionCredentialCacheFirstBehavior:
+    """Execute the playbook's credential block and check what it actually ran."""
+
+    def test_warm_cache_never_invokes_vault_put(self, tmp_path):
+        proc, calls = _run_creds_block(tmp_path, warm=True)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert ["creds", "vault-put"] not in calls, (
+            "a warm converge must not call vault-put (that re-reads 1Password "
+            f"and prompts); recorded calls: {calls}"
+        )
+        assert calls.count(["creds", "vault-get"]) == 2, (
+            "a warm converge must read the cache twice: the guard and the "
+            f"read-back. recorded calls: {calls}"
+        )
+
+    def test_cold_cache_syncs_once_then_reads_back(self, tmp_path):
+        proc, calls = _run_creds_block(tmp_path, warm=False)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert calls.count(["creds", "vault-put"]) == 1, (
+            f"a cache miss must sync exactly once; recorded calls: {calls}"
+        )
+        assert calls[-1] == ["creds", "vault-get"], (
+            "the last call must be the read-back that feeds admin_password; "
+            f"recorded calls: {calls}"
+        )
+
+    def test_failed_one_password_read_fails_the_play(self, tmp_path):
+        proc, calls = _run_creds_block(tmp_path, warm=False, put_rc=1)
+        assert proc.returncode != 0, (
+            "a failed vault-put (1Password unavailable or locked) must fail the "
+            "converge loudly, never continue with an uncached value"
+        )
+        assert ["creds", "vault-put"] in calls
 
 
 class TestProvisionCredentialCacheFirst:
