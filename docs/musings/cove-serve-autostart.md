@@ -175,6 +175,14 @@ All three questions were ruled on 2026-10-22 (see the Decision section at the to
 
 **Parked, not blocking (not implemented in this cut):** a converge lock for the `cove serve` + `cove update` overlap (see 3c); ntfy push on autostart failure (per the ntfy spoke); whether `cove serve start` should trigger one immediate converge so enabling it heals the *current* sealed state without waiting for a reboot; per-host versus global scope for the preference (ties into `cove-config-command.md`).
 
+## Addendum: `cove vault up` converges the vault (2026-10-26)
+
+The verbs above leave a gap the operator hit in practice: a converge abort left Vault sealed, so the dashboard login failed until a second command (`cove vault unseal`) was run. A verb named `up` should leave its subject usable.
+
+`cove vault up` now does the whole vault-specific converge: ensure the `vault` service is up (compose), wait a bounded time for the API to answer, then unseal only when sealed. It is idempotent (an already-unsealed Vault is left alone) and fail-loud at every step, naming `cove vault unseal` when the keystore read or unseal POST fails. `cove vault status` reports `initialized, sealed` or `initialized, unsealed` and exits non-zero unless unsealed.
+
+`cove up` keeps its different contract unchanged: the unseal remains the last step and its failure stays non-fatal, because a boot race or locked keychain must not abort the whole converge.
+
 ## Related
 
 - `2026-09-26-cove-update-command.md` — the launchd pattern this reuses (`app.cove.update`, plist, log, `--off`), and the "the opt-in is the approval" contract.

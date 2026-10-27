@@ -27,6 +27,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: executable
+  - path: "cove vault up: starts the vault service, waits bounded for the API, unseals only when sealed (idempotent), and fails loud on timeout, uninitialized state, or unseal error; cove vault status prints initialized + sealed/unsealed"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
   - path: "cove down"
     blast_radius: high
     coverage:
