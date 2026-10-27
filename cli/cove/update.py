@@ -427,11 +427,38 @@ def _plist_path(cove_bin: str) -> str:
     return os.pathsep.join(dirs)
 
 
-def _bootout() -> None:
+def _bootout(label: str = LAUNCHD_LABEL) -> None:
+    """Best-effort unload of a user agent. An absent service is not an error.
+
+    Targets the SERVICE (`gui/<uid>/<label>`), not `<domain> <label>`:
+    `launchctl bootout gui/<uid> <label>` reads the second positional as a
+    service PATH, rejects it, and leaves the job loaded. `bootstrap` then
+    exits 5 on the duplicate label, which is exactly how re-registering a
+    fixed plist failed on 2026-10-27.
+    """
     subprocess.run(
-        ["launchctl", "bootout", f"gui/{os.getuid()}", LAUNCHD_LABEL],
+        ["launchctl", "bootout", f"gui/{os.getuid()}/{label}"],
         capture_output=True, text=True, check=False,
     )
+
+
+def _bootstrap(label: str, plist: Path) -> None:
+    """Load `plist` into the user session, raising a readable error on failure.
+
+    `launchctl bootstrap` is not idempotent (exit 5 on an already-loaded
+    label), so every caller boots out first. This helper also keeps a
+    registration failure from surfacing as a raw CalledProcessError.
+    """
+    result = subprocess.run(
+        ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        suffix = f": {detail}" if detail else "."
+        raise click.ClickException(
+            f"launchctl bootstrap {label} failed (exit {result.returncode}){suffix}"
+        )
 
 
 def _render_plist(hour: int, minute: int) -> str:
@@ -513,8 +540,5 @@ def auto(off_: bool, at: str):
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(_render_plist(hour, minute))
     _bootout()
-    subprocess.run(
-        ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(PLIST_PATH)],
-        check=True, capture_output=True, text=True,
-    )
+    _bootstrap(LAUNCHD_LABEL, PLIST_PATH)
     click.echo(f"Daily cove update scheduled at {hour:02d}:{minute:02d} ({PLIST_PATH}).")

@@ -24,7 +24,7 @@ from shutil import which
 
 import click
 
-from cove.update import _cove_bin, _plist_path
+from cove.update import _bootstrap, _bootout, _cove_bin, _plist_path
 from cove.vault import unseal_or_warn
 
 LAUNCHD_LABEL = "app.cove.serve"
@@ -48,9 +48,16 @@ def _launchctl(*args: str, check: bool) -> subprocess.CompletedProcess:
     )
 
 
-def _bootout() -> None:
-    """Best-effort unload: booting out an unloaded label is not an error."""
-    _launchctl("bootout", f"gui/{os.getuid()}", LAUNCHD_LABEL, check=False)
+def _agent_loaded() -> bool:
+    """True when launchd has this label loaded, which is the actual state.
+
+    Asked of launchd (`print <service target>`), never inferred from the plist
+    file: the two disagree exactly when a registration half-failed, and that
+    disagreement made `cove serve stop` report "not installed" while the agent
+    was running (2026-10-27).
+    """
+    result = _launchctl("print", f"gui/{os.getuid()}/{LAUNCHD_LABEL}", check=False)
+    return result.returncode == 0
 
 
 def _render_plist() -> str:
@@ -100,8 +107,8 @@ def serve_start() -> None:
     """
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     PLIST_PATH.write_text(_render_plist())
-    _bootout()
-    _launchctl("bootstrap", f"gui/{os.getuid()}", str(PLIST_PATH), check=True)
+    _bootout(LAUNCHD_LABEL)
+    _bootstrap(LAUNCHD_LABEL, PLIST_PATH)
     click.echo(f"Login autostart enabled ({PLIST_PATH}).")
 
 
@@ -118,10 +125,14 @@ def serve_stop(off_: bool) -> None:
         cove serve stop --off
     """
     _ = off_  # `--off` is an accepted alias; removal is the same either way
-    _bootout()
-    if PLIST_PATH.exists():
+    installed = PLIST_PATH.exists()
+    loaded = _agent_loaded()
+    _bootout(LAUNCHD_LABEL)
+    if installed:
         PLIST_PATH.unlink()
-        click.echo(f"Login autostart disabled (removed {PLIST_PATH}).")
+    if installed or loaded:
+        plist_state = "removed the plist" if installed else "the plist was already absent"
+        click.echo(f"Login autostart disabled ({plist_state}; agent unloaded).")
     else:
         click.echo("Login autostart was not installed; nothing to do.")
 
@@ -135,7 +146,7 @@ def serve_status() -> None:
         cove serve status
     """
     installed = PLIST_PATH.exists()
-    loaded = LAUNCHD_LABEL in _launchctl("list", check=False).stdout
+    loaded = _agent_loaded()
     click.echo(f"plist:   {'installed' if installed else 'absent'} ({PLIST_PATH})")
     click.echo(f"agent:   {'loaded' if loaded else 'not loaded'}")
     if installed and not loaded:

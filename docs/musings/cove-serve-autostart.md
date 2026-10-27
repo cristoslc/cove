@@ -183,6 +183,16 @@ The verbs above leave a gap the operator hit in practice: a converge abort left 
 
 `cove up` keeps its different contract unchanged: the unseal remains the last step and its failure stays non-fatal, because a boot race or locked keychain must not abort the whole converge.
 
+## Addendum (2026-10-27): re-registration unloads the service target first
+
+`launchctl bootstrap` is not idempotent: a loaded label makes it exit 5. Both
+agents now bootout first, targeting the service (`gui/<uid>/<label>`), because
+`launchctl bootout gui/<uid> <label>` reads the label as a service path,
+rejects it, and silently leaves the job loaded. `cove serve stop` and
+`cove serve status` ask launchd (`launchctl print`) instead of trusting the
+plist file, so a half-failed registration cannot make stop claim "not
+installed" while the agent is running.
+
 ## Related
 
 - `2026-09-26-cove-update-command.md` — the launchd pattern this reuses (`app.cove.update`, plist, log, `--off`), and the "the opt-in is the approval" contract.
