@@ -372,7 +372,9 @@ class TestBifrostComposeSurface:
         assert "ALL" in sink["cap_drop"]
         assert "NET_BIND_SERVICE" in sink["cap_add"]
         assert "ports" not in sink, "the DNS sink must publish no ports"
-        assert sink["command"] == ["dnsmasq", "-k", "-C", "/etc/dnsmasq.d/bifrost.conf"]
+        assert sink["command"] == [
+            "dnsmasq", "-k", "-C", "/etc/dnsmasq.d/bifrost.conf", "--pid-file="
+        ]
         volumes = sink["volumes"]
         assert "${COVE_DATA_ROOT}/bifrost/dnsmasq.conf:/etc/dnsmasq.d/bifrost.conf:ro" in volumes
 
@@ -406,6 +408,49 @@ class TestBifrostComposeSurface:
             "the allowlist is exactly the two inference providers — no new "
             "upstream without a test update"
         )
+
+    def test_sink_command_writes_no_pidfile(self):
+        """The read-only rootfs has no writable /run, and dnsmasq's default
+        pidfile path is /run/dnsmasq.pid. Without this flag the sink
+        crash-loops (incident: Restarting (3), pidfile EROFS)."""
+        svc = _load_compose()["services"]["bifrost-dns"]
+        assert "--pid-file=" in svc["command"], (
+            "dnsmasq must not write its pidfile to the read-only /run; an "
+            "empty --pid-file path is the documented no-pidfile form"
+        )
+
+    def test_sink_can_drop_privileges_after_binding_the_port(self):
+        """dnsmasq binds :53 as root, then setgid/setuid's to the dnsmasq
+        user. cap_drop ALL stripped SETUID/SETGID, so the drop failed with
+        'Operation not permitted' (latent behind the pidfile crash)."""
+        svc = _load_compose()["services"]["bifrost-dns"]
+        caps = set(svc["cap_add"])
+        assert {"NET_BIND_SERVICE", "SETUID", "SETGID"} <= caps, (
+            "the privilege drop needs SETUID/SETGID; NET_BIND_SERVICE binds 53"
+        )
+        assert svc["cap_drop"] == ["ALL"], (
+            "everything else stays dropped"
+        )
+
+    def test_sink_keeps_read_only_rootfs_and_no_run_tmpfs(self):
+        """The fix must not trade hardening for a writable mount: rootfs
+        stays read-only and no /run tmpfs is added (least writable surface;
+        no pidfile is written at all)."""
+        svc = _load_compose()["services"]["bifrost-dns"]
+        assert svc["read_only"] is True
+        tmpfs = [str(m) for m in svc.get("tmpfs", [])]
+        assert not any(m.rstrip("/") == "/run" for m in tmpfs), (
+            "a writable /run would be surface the sink does not need"
+        )
+
+    def test_dockerfile_default_command_carries_the_pidfile_flag(self):
+        """The compose command overrides CMD; keep the image default in
+        step so dropping the override cannot reintroduce the crash."""
+        content = (BIFROST_DIR / "Dockerfile").read_text()
+        cmd_line = next(
+            l for l in content.splitlines() if l.strip().startswith("CMD")
+        )
+        assert "--pid-file=" in cmd_line
 
 
 class TestBifrostNginxSurface:
