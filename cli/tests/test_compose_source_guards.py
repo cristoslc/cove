@@ -21,8 +21,14 @@ Two independent hazards, two guards:
   project by (name, working directory), so another compose dir that declares
   the live name and a *different* data root would recreate the live containers
   against foreign storage. Such a dir is refused unless the operator sets an
-  explicit override, or its effective data root is the canonical one (a
-  same-data recreation is harmless, which is why the dev checkout still works).
+  explicit override.
+
+  Guard 2b: the churn. A live-name source with the canonical data root is safe
+  for data but still changes every service's config hash, because the hash
+  embeds absolute paths resolved from the compose dir (relative binds, build
+  contexts, NGINX_CONF_DIR/DNSMASQ_CONF_DIR). Alternating `cove up` between two
+  dirs therefore recreates litellm/nginx on every converge (2026-10-26), so only
+  the canonical install dir passes without an explicit opt-in.
 
 These tests are hermetic: they drive the guard helpers directly and the
 `cove up` / `cove down` callbacks with `Path.cwd` and `Path.home` patched, so
@@ -39,6 +45,7 @@ import pytest
 
 import cove.cli
 from cove.stateless import (
+    LIVE_SOURCE_OVERRIDE_ENV,
     NONCANONICAL_OVERRIDE_ENV,
     declared_compose_project_name,
     effective_data_root,
@@ -138,7 +145,12 @@ def _write_compose_dir(
 
 
 def _clear_data_root_env(monkeypatch) -> None:
-    for key in ("COVE_DATA_ROOT", "FORGEJO_DATA_ROOT", NONCANONICAL_OVERRIDE_ENV):
+    for key in (
+        "COVE_DATA_ROOT",
+        "FORGEJO_DATA_ROOT",
+        NONCANONICAL_OVERRIDE_ENV,
+        LIVE_SOURCE_OVERRIDE_ENV,
+    ):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -287,11 +299,14 @@ class TestRequireLiveProjectFromCanonicalDir:
         assert "cove" in message
         assert NONCANONICAL_OVERRIDE_ENV in message
 
-    def test_allows_live_name_when_data_root_is_canonical(
+    def test_allows_live_name_when_data_root_is_canonical_but_refuses_churn(
         self, tmp_path, monkeypatch, monkeypatch_home
     ):
-        # The dev checkout shape: real .env pointing at the canonical data root
-        # makes a live-name recreation harmless.
+        # The dev checkout shape: a real .env pointing at the canonical data
+        # root is safe for DATA, but it is not harmless: converging the live
+        # project from a second compose dir changes the absolute inputs to
+        # every service's config hash and recreates litellm/nginx on each flip
+        # (2026-10-26 churn). Refused unless explicitly opted in.
         canonical_root = monkeypatch_home / "Documents" / "cove-data"
         compose_dir = _write_compose_dir(
             tmp_path,
@@ -299,6 +314,25 @@ class TestRequireLiveProjectFromCanonicalDir:
             project_name="cove",
         )
         _clear_data_root_env(monkeypatch)
+        with pytest.raises(click.ClickException) as exc:
+            require_live_project_from_canonical_dir(compose_dir)
+        message = str(exc.value)
+        assert str(compose_dir) in message
+        assert LIVE_SOURCE_OVERRIDE_ENV in message
+        assert "config hash" in message
+        assert NONCANONICAL_OVERRIDE_ENV not in message
+
+    def test_allows_canonical_root_source_with_explicit_churn_override(
+        self, tmp_path, monkeypatch, monkeypatch_home
+    ):
+        canonical_root = monkeypatch_home / "Documents" / "cove-data"
+        compose_dir = _write_compose_dir(
+            tmp_path,
+            env=f"COVE_DATA_ROOT={canonical_root}\nFORGEJO_DATA_ROOT={canonical_root}\n",
+            project_name="cove",
+        )
+        _clear_data_root_env(monkeypatch)
+        monkeypatch.setenv(LIVE_SOURCE_OVERRIDE_ENV, "1")
         require_live_project_from_canonical_dir(compose_dir)
 
     def test_allows_live_name_from_the_canonical_dir_itself(
