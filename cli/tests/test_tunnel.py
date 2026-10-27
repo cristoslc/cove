@@ -661,7 +661,19 @@ class TestAuth:
     def test_env_token_used_directly(self, fake_compose_env, monkeypatch):
         import cove.tunnel as t
         monkeypatch.setenv("ZROK_ACCOUNT_TOKEN", "tok123")
+        monkeypatch.setenv("COVE_ALLOW_AMBIENT_CREDENTIALS", "1")
         assert t._ensure_account_token() == "tok123"
+
+    def test_env_token_ignored_without_opt_in(self, fake_compose_env, monkeypatch):
+        """Ambient credentials are not custody: without the opt-in the compose
+        .env wins and the divergence is reported."""
+        import cove.tunnel as t
+        env = fake_compose_env / ".env"
+        env.write_text("ZROK_ACCOUNT_TOKEN=envtoken\n")
+        monkeypatch.setenv("ZROK_ACCOUNT_TOKEN", "ambienttoken")
+        monkeypatch.delenv("COVE_ALLOW_AMBIENT_CREDENTIALS", raising=False)
+        assert t._ensure_account_token() == "envtoken"
+        assert "ambienttoken" not in env.read_text()
 
     def test_compose_env_token_reused(self, fake_compose_env):
         env = fake_compose_env / ".env"

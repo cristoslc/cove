@@ -14,9 +14,16 @@ playbook-level non-determinisms remained, and they are pinned here:
      into the nginx/dnsmasq config hash, so a stale value recreates nginx on a
      converge that changed nothing.
 
-Both are checked structurally against `compose/bringup.yml`, plus one executed
-check of the UUID snippet: the task's own inline Python is run twice and the
-outputs must be byte-identical. No Ansible run, no Docker, no live stack.
+  3. Ambient credential variables were interpolated ahead of the compose
+     `.env`, so two shells with different exports changed the litellm/bifrost
+     config hashes (2026-10-27). `cove.credential_env` now scrubs them from the
+     child environment; the differently-equipped-shell equality is pinned in
+     `test_credential_env.py`.
+
+Both pre-existing items are checked structurally against `compose/bringup.yml`,
+plus one executed check of the UUID snippet: the task's own inline Python is run
+twice and the outputs must be byte-identical. No Ansible run, no Docker, no live
+stack.
 """
 
 from __future__ import annotations

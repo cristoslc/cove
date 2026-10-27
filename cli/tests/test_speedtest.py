@@ -679,13 +679,15 @@ class TestAppKeyAutoGen:
         )
 
     def test_up_respects_operator_env_override(self, monkeypatch, tmp_path):
-        """An operator-set SPEEDTEST_APP_KEY env var is honored and written to
-        .env without touching 1Password/Vault."""
+        """An operator-set SPEEDTEST_APP_KEY env var is honored (with the
+        explicit ambient-credential opt-in) and written to .env without
+        touching 1Password/Vault."""
         from click.testing import CliRunner
         from cove.speedtest import up
 
         env_file = self._patch_env(monkeypatch, tmp_path)
         monkeypatch.setenv("SPEEDTEST_APP_KEY", "base64:OPERATOR")
+        monkeypatch.setenv("COVE_ALLOW_AMBIENT_CREDENTIALS", "1")
         runner = CliRunner()
         with patch("cove.speedtest.subprocess.run", side_effect=_fake_provision_run) as mock_run:
             result = runner.invoke(up)

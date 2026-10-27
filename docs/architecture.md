@@ -232,6 +232,10 @@ All persistent state lives under `~/Documents/cove-data/`:
 
 Files are backed up by existing tools (Time Machine, Syncthing, restic) that already capture `~/Documents/`.
 
+## Credential Sourcing
+
+Credentials come from the files of record only: the compose `.env` for `${NAME}` interpolation and each service's declared `env_file` (for example `litellm/local.env`). `docker compose` would otherwise interpolate the invoking shell ahead of the `.env`, so `cove up` strips every credential name from the environment it hands to compose and Ansible, and a converge that would have used an ambient credential says so loudly with fingerprints (never values). Set `COVE_ALLOW_AMBIENT_CREDENTIALS=1` to override deliberately.
+
 ## Provisioning Pipeline
 
 Provisioning is Ansible-driven and sequential:

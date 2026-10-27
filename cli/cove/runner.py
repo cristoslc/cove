@@ -5,6 +5,7 @@ import subprocess
 import click
 
 from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
+from cove.credential_env import scrubbed_environment
 
 
 def _compose_cmd(*args: str) -> list[str]:
@@ -34,7 +35,11 @@ def up():
     """Start the Forgejo Actions Runner service."""
     ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Starting Forgejo Actions Runner...")
-    subprocess.run(_compose_cmd("--profile", "runner", "up", "-d"), check=True)
+    subprocess.run(
+        _compose_cmd("--profile", "runner", "up", "-d"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir()),
+    )
     click.echo("Forgejo Actions Runner is running.")
     click.echo("Registration is IaC: re-run `cove up` (with runner profile) to register.")
 
@@ -44,7 +49,11 @@ def down():
     """Stop the Forgejo Actions Runner service (data preserved)."""
     ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping Forgejo Actions Runner...")
-    subprocess.run(_compose_cmd("stop", "forgejo-runner"), check=True)
+    subprocess.run(
+        _compose_cmd("stop", "forgejo-runner"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
+    )
     click.echo("Forgejo Actions Runner stopped.")
 
 
@@ -54,6 +63,7 @@ def status():
     result = subprocess.run(
         _compose_cmd("ps", "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}", "forgejo-runner"),
         capture_output=True, text=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )
     click.echo(result.stdout)
     if result.returncode != 0:
@@ -68,4 +78,6 @@ def logs(lines, follow):
     cmd = _compose_cmd("logs", "--tail", str(lines), "forgejo-runner")
     if follow:
         cmd.append("--follow")
-    subprocess.run(cmd, check=True)
+    subprocess.run(
+        cmd, check=True, env=scrubbed_environment(resolve_compose_dir(), warn=False)
+    )

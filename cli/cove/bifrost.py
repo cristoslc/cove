@@ -26,6 +26,11 @@ from cove.stateless import (
     ensure_compose_source_ready,
     _config_compose_dir,
 )
+from cove.credential_env import (
+    credential_from_ambient,
+    resolve_data_root,
+    scrubbed_environment,
+)
 # Shared 4-word passphrase helper (speedtest's admin password generator);
 # importing keeps a single source of truth for the wordlist.
 from cove.speedtest import _passphrase as _friendly_passphrase
@@ -63,17 +68,7 @@ def _compose_env_path():
 
 
 def _cove_data_root() -> Path:
-    explicit = os.environ.get("COVE_DATA_ROOT")
-    if explicit:
-        return Path(explicit).expanduser()
-    env_path = _compose_env_path()
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            if line.startswith("COVE_DATA_ROOT="):
-                value = line.split("=", 1)[1].strip().strip("\"'")
-                if value:
-                    return Path(value).expanduser()
-    return Path.home() / "Documents" / "cove-data"
+    return resolve_data_root(_compose_env_path())
 
 
 def _generate_encryption_key() -> str:
@@ -171,8 +166,10 @@ def _ensure_secret(
 ) -> str:
     """One secret, in the litellm/speedtest order: explicit env → compose
     .env reuse → shared 1Password item reuse → generate + 1P item + Vault."""
-    # 1. Operator explicitly set it — honor directly.
-    explicit = os.environ.get(env_key)
+    # 1. Operator explicitly opted into the ambient value — honor directly.
+    #    Without COVE_ALLOW_AMBIENT_CREDENTIALS the files of record are the only
+    #    inputs (a divergent ambient value is reported, never silently kept).
+    explicit = credential_from_ambient(env_key, _compose_env_path().parent)
     if explicit:
         _upsert_env(env_key, explicit)
         return explicit
@@ -312,17 +309,7 @@ def _runtime_data_root() -> Path:
     """Data root of the DEPLOYED stack: explicit COVE_DATA_ROOT wins (same
     precedence as _cove_data_root), then the deployed compose .env, then the
     canonical default."""
-    explicit = os.environ.get("COVE_DATA_ROOT")
-    if explicit:
-        return Path(explicit).expanduser()
-    env_path = _runtime_env_path()
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            if line.startswith("COVE_DATA_ROOT="):
-                value = line.split("=", 1)[1].strip().strip("\"'")
-                if value:
-                    return Path(value).expanduser()
-    return Path.home() / "Documents" / "cove-data"
+    return resolve_data_root(_runtime_env_path())
 
 
 def _env_flag_set(env_key: str) -> bool:
@@ -385,7 +372,9 @@ def _ensure_synthetic_key() -> None:
     an existing bifrost local.env entry > the litellm local.env projection.
     Fail loud when no source exists; the key is the subscription hop's
     credential, the gateway is degraded without it. Never prints."""
-    explicit = os.environ.get("SYNTHETIC_API_KEY")
+    explicit = credential_from_ambient(
+        "SYNTHETIC_API_KEY", _compose_env_path().parent
+    )
     if explicit:
         _upsert_local_env("SYNTHETIC_API_KEY", explicit)
         return
@@ -407,7 +396,8 @@ def _ensure_synthetic_key() -> None:
         "SYNTHETIC_API_KEY is missing. The deployed LiteLLM local.env "
         f"({litellm_env}) is the source of record for the Synthetic "
         "subscription key. Copy the key into that file (or set "
-        "SYNTHETIC_API_KEY in the environment) and re-run `cove bifrost up`."
+        "SYNTHETIC_API_KEY together with COVE_ALLOW_AMBIENT_CREDENTIALS=1 to "
+        "opt into the ambient environment) and re-run `cove bifrost up`."
     )
 
 
@@ -616,7 +606,11 @@ def up():
     _ensure_synthetic_key()
     _check_ollama_passthrough()
     click.echo("Starting Bifrost gateway (profile: bifrost)...")
-    subprocess.run(_compose_cmd("--profile", "bifrost", "up", "-d", "--build"), check=True)
+    subprocess.run(
+        _compose_cmd("--profile", "bifrost", "up", "-d", "--build"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir()),
+    )
     _ensure_client_virtual_key()
     click.echo(f"Bifrost gateway is running. Gateway: {BIFROST_URL}")
 
@@ -626,7 +620,11 @@ def down():
     """Stop the Bifrost gateway and its egress sinkhole."""
     ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping Bifrost gateway...")
-    subprocess.run(_compose_cmd("stop", "bifrost", "bifrost-dns"), check=True)
+    subprocess.run(
+        _compose_cmd("stop", "bifrost", "bifrost-dns"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
+    )
     click.echo("Bifrost gateway stopped.")
 
 
@@ -636,6 +634,7 @@ def status():
     result = subprocess.run(
         _compose_cmd("ps", "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}"),
         capture_output=True, text=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )
     click.echo(result.stdout)
     if result.returncode != 0:
@@ -690,4 +689,6 @@ def logs(lines, follow):
     cmd = _compose_cmd("logs", "--tail", str(lines))
     if follow:
         cmd.append("--follow")
-    subprocess.run(cmd, check=True)
+    subprocess.run(
+        cmd, check=True, env=scrubbed_environment(resolve_compose_dir(), warn=False)
+    )

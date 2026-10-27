@@ -10,6 +10,11 @@ import click
 
 from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
+from cove.credential_env import (
+    credential_from_ambient,
+    resolve_data_root,
+    scrubbed_environment,
+)
 
 
 LITELLM_URL = "https://litellm.cove.local/"
@@ -38,17 +43,7 @@ def _compose_env_path():
 
 
 def _cove_data_root() -> Path:
-    explicit = os.environ.get("COVE_DATA_ROOT")
-    if explicit:
-        return Path(explicit).expanduser()
-    env_path = _compose_env_path()
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            if line.startswith("COVE_DATA_ROOT="):
-                value = line.split("=", 1)[1].strip().strip("\"'")
-                if value:
-                    return Path(value).expanduser()
-    return Path.home() / "Documents" / "cove-data"
+    return resolve_data_root(_compose_env_path())
 
 
 def _prepare_runtime_files() -> None:
@@ -179,8 +174,12 @@ def _ensure_master_key() -> str:
     IaC: the UI username/password are also injected into the compose .env
     (LITELLM_UI_USERNAME / LITELLM_UI_PASSWORD) so a fresh deploy seeds the
     correct admin identity — never a weak default master key."""
-    # 1. Operator explicitly set it — honor directly.
-    explicit = os.environ.get("LITELLM_MASTER_KEY")
+    # 1. Operator explicitly opted into the ambient value — honor directly.
+    #    Without COVE_ALLOW_AMBIENT_CREDENTIALS the files of record are the only
+    #    inputs (a divergent ambient value is reported, never silently kept).
+    explicit = credential_from_ambient(
+        "LITELLM_MASTER_KEY", _compose_env_path().parent
+    )
     if explicit:
         _upsert_env("LITELLM_MASTER_KEY", explicit)
         _inject_admin_env()
@@ -259,7 +258,11 @@ def up():
     _ensure_master_key()
     _prepare_runtime_files()
     click.echo("Starting LiteLLM proxy...")
-    subprocess.run(_compose_cmd("--profile", "litellm", "up", "-d", "--build"), check=True)
+    subprocess.run(
+        _compose_cmd("--profile", "litellm", "up", "-d", "--build"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir()),
+    )
     click.echo("LiteLLM proxy is running. Admin console: https://litellm.cove.local/ui/")
 
 
@@ -268,7 +271,11 @@ def down():
     """Stop the LiteLLM proxy and Headroom sidecar."""
     ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping LiteLLM proxy...")
-    subprocess.run(_compose_cmd("stop", "litellm", "headroom"), check=True)
+    subprocess.run(
+        _compose_cmd("stop", "litellm", "headroom"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
+    )
     click.echo("LiteLLM proxy stopped.")
 
 
@@ -278,6 +285,7 @@ def status():
     result = subprocess.run(
         _compose_cmd("ps", "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}"),
         capture_output=True, text=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )
     click.echo(result.stdout)
     if result.returncode != 0:
@@ -309,4 +317,6 @@ def logs(lines, follow):
     cmd = _compose_cmd("logs", "--tail", str(lines))
     if follow:
         cmd.append("--follow")
-    subprocess.run(cmd, check=True)
+    subprocess.run(
+        cmd, check=True, env=scrubbed_environment(resolve_compose_dir(), warn=False)
+    )

@@ -3,6 +3,26 @@
   gather_facts: true
   vars:
     compose_dir: "{{ playbook_dir }}"
+    # Credential-ish variables the compose set consumes. `docker compose`
+    # interpolates the ambient environment ahead of the compose .env, so these
+    # are stripped below; the files of record (.env and each service's
+    # env_file) are the only credential inputs. Kept equal to
+    # cove.credential_env.CREDENTIAL_ENV_NAMES by a test.
+    credential_env_names:
+      - SYNTHETIC_API_KEY
+      - OLLAMA_API_KEY
+      - LITELLM_MASTER_KEY
+      - LITELLM_DB_PASSWORD
+      - LITELLM_UI_USERNAME
+      - LITELLM_UI_PASSWORD
+      - BIFROST_ENCRYPTION_KEY
+      - BIFROST_ADMIN_USERNAME
+      - BIFROST_ADMIN_PASSWORD
+      - BIFROST_CLIENT_VIRTUAL_KEY
+      - SPEEDTEST_APP_KEY
+      - SPEEDTEST_ADMIN_EMAIL
+      - SPEEDTEST_ADMIN_PASSWORD
+      - ZROK_ACCOUNT_TOKEN
 
   tasks:
     - name: Assert admin_username is set
@@ -925,8 +945,27 @@
       register: docker_host_detect
       changed_when: false
 
+    - name: Warn when ambient credentials would override the files of record
+      ansible.builtin.debug:
+        msg: >-
+          WARNING: ambient {{ item }} is set and is stripped before docker
+          compose runs. Credentials come from the compose .env and service env
+          files only; set COVE_ALLOW_AMBIENT_CREDENTIALS=1 to let the ambient
+          environment override deliberately.
+      loop: "{{ credential_env_names }}"
+      when: (lookup('env', item) | default('', true) | string | length) > 0
+
     - name: Bring up pod via docker compose
       ansible.builtin.shell: |
+        # Credentials come from the compose .env and service env files only.
+        # The ambient environment must not be interpolated ahead of them, so
+        # every credential name is stripped unless the operator deliberately
+        # opted in. `cove up` already scrubs the child environment; this line
+        # covers a direct `ansible-playbook compose/bringup.yml` run.
+        case "$(printf '%s' "${COVE_ALLOW_AMBIENT_CREDENTIALS:-}" | tr '[:upper:]' '[:lower:]')" in
+          1|true|yes|on) ;;
+          *) unset {{ credential_env_names | join(' ') }} ;;
+        esac
         docker compose \
         {{ '--project-name ' + compose_project_name if compose_project_name is defined else '' }} \
         --project-directory "{{ compose_dir }}" \

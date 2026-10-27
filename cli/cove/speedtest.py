@@ -9,6 +9,7 @@ import click
 
 from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
+from cove.credential_env import credential_from_ambient, scrubbed_environment
 
 
 SPEEDTEST_URL = "https://speedtest.cove.local/"
@@ -167,8 +168,12 @@ def _ensure_app_key() -> str:
     IaC: the admin email/password are also injected into the compose .env
     (SPEEDTEST_ADMIN_EMAIL / SPEEDTEST_ADMIN_PASSWORD) so a fresh deploy seeds
     the correct admin user — not the default admin@example.com/password."""
-    # 1. Operator explicitly set it — honor directly.
-    explicit = os.environ.get("SPEEDTEST_APP_KEY")
+    # 1. Operator explicitly opted into the ambient value — honor directly.
+    #    Without COVE_ALLOW_AMBIENT_CREDENTIALS the files of record are the only
+    #    inputs (a divergent ambient value is reported, never silently kept).
+    explicit = credential_from_ambient(
+        "SPEEDTEST_APP_KEY", _compose_env_path().parent
+    )
     if explicit:
         _upsert_env("SPEEDTEST_APP_KEY", explicit)
         return explicit
@@ -259,7 +264,11 @@ def up():
     ensure_compose_source_ready(resolve_compose_dir())
     _ensure_app_key()
     click.echo("Starting Speedtest Tracker...")
-    subprocess.run(_compose_cmd("--profile", "speedtest", "up", "-d"), check=True)
+    subprocess.run(
+        _compose_cmd("--profile", "speedtest", "up", "-d"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir()),
+    )
     click.echo("Speedtest Tracker is running at https://speedtest.cove/")
 
 
@@ -268,7 +277,11 @@ def down():
     """Stop the Speedtest Tracker service (data preserved)."""
     ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping Speedtest Tracker...")
-    subprocess.run(_compose_cmd("stop", "speedtest-tracker"), check=True)
+    subprocess.run(
+        _compose_cmd("stop", "speedtest-tracker"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
+    )
     click.echo("Speedtest Tracker stopped.")
 
 
@@ -278,6 +291,7 @@ def status():
     result = subprocess.run(
         _compose_cmd("ps", "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}"),
         capture_output=True, text=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )
     click.echo(result.stdout)
     if result.returncode != 0:
@@ -304,4 +318,6 @@ def logs(lines, follow):
     cmd = _compose_cmd("logs", "--tail", str(lines))
     if follow:
         cmd.append("--follow")
-    subprocess.run(cmd, check=True)
+    subprocess.run(
+        cmd, check=True, env=scrubbed_environment(resolve_compose_dir(), warn=False)
+    )

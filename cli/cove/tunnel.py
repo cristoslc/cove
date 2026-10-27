@@ -1,6 +1,5 @@
 """CLI commands for the zrok2 public-tunnel sidecar (optional profile)."""
 
-import os
 import re
 import selectors
 import subprocess
@@ -10,6 +9,7 @@ from dataclasses import dataclass
 import click
 
 from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
+from cove.credential_env import credential_from_ambient, scrubbed_environment
 
 
 ZROK2_IMAGE = "openziti/zrok2:2.0.4"
@@ -347,11 +347,13 @@ def _ensure_account_token() -> str:
 
 
 def _env_token(key: str):
-    import os
+    """An ambient token, only with the explicit credential opt-in.
 
-    value = os.environ.get(key)
+    Provisioning must not treat ambient state as custody: without
+    COVE_ALLOW_AMBIENT_CREDENTIALS the files of record win and a divergent
+    ambient value is reported with fingerprints (never values)."""
+    value = credential_from_ambient(key, _compose_env_path().parent)
     return value.strip() if value else None
-
 
 def _zrok2_exec(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     """Run a zrok2 command inside the tunnel sidecar (-T: never allocate a
@@ -361,6 +363,7 @@ def _zrok2_exec(*args: str, check: bool = True) -> subprocess.CompletedProcess:
         _compose_cmd("--profile", "tunnel", "exec", "-T", "tunnel",
                      "zrok2", *args),
         check=check,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )
 
 
@@ -373,6 +376,7 @@ def _zrok2_exec_capture(
         _compose_cmd("--profile", "tunnel", "exec", "-T", "tunnel",
                      "zrok2", *args),
         capture_output=True, text=True, check=check,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )
 
 
@@ -403,7 +407,7 @@ def _ensure_sidecar() -> None:
     image = _tunnel_image()
     subprocess.run(
         _compose_cmd("--profile", "tunnel", "up", "-d"), check=True,
-        env={**os.environ, "TUNNEL_IMAGE": image},
+        env={**scrubbed_environment(resolve_compose_dir()), "TUNNEL_IMAGE": image},
     )
 
 
@@ -492,6 +496,7 @@ def _run_share_foreground(
         stdin=subprocess.DEVNULL,
         text=True,
         bufsize=1,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )
     announced = False
     token = None
@@ -1140,7 +1145,11 @@ def down(name):
         shares = {}
     click.echo("Stopping tunnel sidecar...")
     ensure_compose_source_ready(resolve_compose_dir())
-    subprocess.run(_compose_cmd("stop", "tunnel"), check=True)
+    subprocess.run(
+        _compose_cmd("stop", "tunnel"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
+    )
     click.echo("Tunnel stopped.")
 
 

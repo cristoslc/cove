@@ -10,6 +10,7 @@ import requests
 
 from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
+from cove.credential_env import scrubbed_environment
 
 
 ADE_SERVICE = "ade"
@@ -160,7 +161,9 @@ def _compose_cmd(*args: str) -> list[str]:
 
 def _run_checked(cmd: list[str], action: str) -> None:
     try:
-        subprocess.run(cmd, check=True)
+        subprocess.run(
+            cmd, check=True, env=scrubbed_environment(resolve_compose_dir())
+        )
     except FileNotFoundError as exc:
         raise click.ClickException(
             f"docker is not installed or not on PATH: {exc}"
@@ -287,6 +290,7 @@ def status():
     result = subprocess.run(
         _compose_cmd("ps", "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}", ADE_SERVICE),
         capture_output=True, text=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )
     click.echo(result.stdout)
     if result.returncode != 0:
@@ -330,4 +334,6 @@ def logs(lines, follow):
     cmd = _compose_cmd("logs", "--tail", str(lines), ADE_SERVICE)
     if follow:
         cmd.append("--follow")
-    subprocess.run(cmd, check=True)
+    subprocess.run(
+        cmd, check=True, env=scrubbed_environment(resolve_compose_dir(), warn=False)
+    )

@@ -6,6 +6,7 @@ import click
 
 from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
+from cove.credential_env import scrubbed_environment
 
 
 TOOLHIVE_URL = "https://mcp.cove/"
@@ -40,7 +41,11 @@ def up():
     profile are seeded by `cove up` from bringup.yml."""
     ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Starting ToolHive MCP gateway...")
-    subprocess.run(_compose_cmd("--profile", "mcp", "up", "-d"), check=True)
+    subprocess.run(
+        _compose_cmd("--profile", "mcp", "up", "-d"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir()),
+    )
     click.echo(f"ToolHive is running at {TOOLHIVE_URL}")
 
 
@@ -54,7 +59,11 @@ def down():
     """
     ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping ToolHive MCP gateway...")
-    subprocess.run(_compose_cmd("stop", "toolhive"), check=True)
+    subprocess.run(
+        _compose_cmd("stop", "toolhive"),
+        check=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
+    )
     click.echo("ToolHive MCP gateway stopped.")
 
 
@@ -64,6 +73,7 @@ def status():
     result = subprocess.run(
         _compose_cmd("ps", "--format", "table {{.Name}}\t{{.Status}}\t{{.Ports}}"),
         capture_output=True, text=True,
+        env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )
     click.echo(result.stdout)
     if result.returncode != 0:
@@ -92,4 +102,6 @@ def logs(lines, follow):
     cmd = _compose_cmd("logs", "--tail", str(lines))
     if follow:
         cmd.append("--follow")
-    subprocess.run(cmd, check=True)
+    subprocess.run(
+        cmd, check=True, env=scrubbed_environment(resolve_compose_dir(), warn=False)
+    )

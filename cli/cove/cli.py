@@ -37,6 +37,7 @@ from cove.stateless import (
     changed_resource_files, compose_resource_dir, bundle_is_current,
     ensure_compose_source_ready,
 )
+from cove.credential_env import scrubbed_environment
 from cove.constants import VAULT_CONTAINER_NAME
 from cove.vault_unseal import ensure_unsealed, vault_health
 from cove.state import ensure_host_vars
@@ -396,7 +397,7 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
         log_dir = Path.home() / ".local" / "share" / "cove" / "logs"
         log_dir.mkdir(parents=True, exist_ok=True)
 
-    ansible_env = os.environ.copy()
+    ansible_env = scrubbed_environment(compose_dir)
     ansible_cfg = compose_dir / "ansible.cfg"
     if ansible_cfg.exists():
         ansible_env["ANSIBLE_CONFIG"] = str(ansible_cfg)
@@ -655,7 +656,9 @@ def down(volumes):
         cmd.append("--volumes")
 
     click.echo("Stopping containers...")
-    subprocess.run(cmd, check=True)
+    subprocess.run(
+        cmd, check=True, env=scrubbed_environment(compose_dir)
+    )
     click.echo("Cove is down.")
 
 
@@ -703,6 +706,7 @@ def uninstall(all_, force, global_):
                 "down", "--remove-orphans",
             ],
             check=False,
+            env=scrubbed_environment(compose_dir, warn=False),
         )
 
         home = Path.home()

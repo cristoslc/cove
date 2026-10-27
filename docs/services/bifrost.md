@@ -92,9 +92,11 @@ IaC-first, with the same split as LiteLLM:
 - **`local.env`**: the provider key file (`0600`). `SYNTHETIC_API_KEY` is
   projected here by `cove bifrost up` from the LiteLLM local.env (the one
   deployed source of record the LiteLLM provider config already runs on —
-  copied in-process, never printed; an explicit `SYNTHETIC_API_KEY` env var
-  wins, an existing entry is never overwritten; missing everywhere fails
-  loudly with instructions). `OLLAMA_API_KEY` is NOT written here: it
+  copied in-process, never printed; an existing entry is never overwritten;
+  missing everywhere fails loudly with instructions). An ambient
+  `SYNTHETIC_API_KEY` is not an input unless `COVE_ALLOW_AMBIENT_CREDENTIALS=1`
+  is set deliberately; a divergence is reported with fingerprints, never
+  values. `OLLAMA_API_KEY` is NOT written here: it
   arrives through the compose pass-through from the deployed `.env` where
   the workstation lane's SOPS projection lands it.
 - **The ollama-cloud key** is NOT Cove's to hold (workstation-lane ownership
