@@ -10,6 +10,10 @@ cove up            # provisions Forgejo along with the rest of the stack
 
 The forge is accessible at `https://git.cove.local/` through Cove's nginx ingress. Registration is disabled (`FORGEJO__service__DISABLE_REGISTRATION: "true"`), sign-in is required to view anything (`REQUIRE_SIGNIN_VIEW`), and the admin identity is seeded from 1Password on first boot — there is no default `admin@example.com` account.
 
+### Credential provisioning is cache-first
+
+`compose/provision_forgejo.yml` reads the admin password through the Vault cache (`cove creds vault-get`) and calls `cove creds vault-put` only on a cache miss. `vault-put` always re-reads 1Password by contract (issue #93: a rotation must never be served a stale cache), so an unconditional put made every converge an interactive 1Password prompt, including `cove serve` running `cove up` on a reboot with 1Password locked. With a warm cache, `cove up` never touches 1Password for this credential; after an upstream rotation, re-sync explicitly with `cove creds vault-put <op-ref>`. A cache miss still syncs, and a 1Password read failure fails the converge loudly.
+
 ## Webhook delivery (`webhook.ALLOWED_HOST_LIST`)
 
 Forgejo ships with an SSRF guard on webhook delivery: `webhook.ALLOWED_HOST_LIST`, whose upstream default is `external`. Under `external`, Forgejo refuses to deliver webhooks to any loopback or private-network (RFC1918) target — including `host.docker.internal` and the Docker bridge gateway.

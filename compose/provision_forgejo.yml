@@ -34,6 +34,13 @@
       ansible.builtin.set_fact:
         ts_dns_name_prov: "{{ (ts_status_prov.stdout | from_json).Self.DNSName | regex_replace('\\.$', '') }}"
 
+    # Cache-first credential provisioning. `cove creds vault-get` is the read
+    # path (local cache, then Vault) and never touches 1Password, while
+    # `cove creds vault-put` ALWAYS re-reads 1Password by contract (issue #93:
+    # a rotation must never be served a stale cache). So the put runs only on
+    # a cache MISS; a warm cache converges with no 1Password prompt at all
+    # (e.g. `cove serve` running `cove up` on a reboot while 1Password is
+    # locked). A miss still puts, and a 1Password read failure fails loud.
     - name: Check 1P forgejo admin item cached
       ansible.builtin.command:
         argv:
@@ -44,6 +51,7 @@
       register: pwd_check
       changed_when: false
       failed_when: false
+      no_log: true
 
     - name: Seed 1P with Forgejo creds (renders + executes bulk-write)
       ansible.builtin.command:
@@ -55,12 +63,32 @@
           - --execute
       when: pwd_check.rc != 0
 
-    - name: Cache admin password in Vault (no-op if already cached)
+    - name: Report cache hit (skip the 1Password sync entirely)
+      ansible.builtin.debug:
+        msg: >-
+          Forgejo admin password already cached; skipping `cove creds vault-put`
+          (no 1Password read on a warm converge).
+      when: pwd_check.rc == 0
+
+    - name: Cache admin password in Vault (cache miss only; re-reads 1Password)
       ansible.builtin.command:
         argv:
           - cove
           - creds
           - vault-put
+          - "{{ forgejo_admin_op_ref }}"
+      changed_when: false
+      no_log: true
+      when: pwd_check.rc != 0
+
+    # Read the value back through the read path, so the fact is the real secret
+    # on both branches. (`vault-put` stdout is a mask, never the value.)
+    - name: Read admin password from the Vault cache
+      ansible.builtin.command:
+        argv:
+          - cove
+          - creds
+          - vault-get
           - "{{ forgejo_admin_op_ref }}"
       register: admin_pw_resolve
       changed_when: false
