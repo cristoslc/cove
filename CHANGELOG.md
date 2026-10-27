@@ -4,7 +4,7 @@ All notable changes to Cove are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.15.9 (2026-10-27)
+## 0.15.9 (2026-10-26)
 
 ### Added
 - **`llmproxy.cove` product-neutral client endpoint** ([#97](../../pulls/97)) — the stable OpenAI-compatible client contract. An nginx vhost proxies `llmproxy.cove`/`llmproxy.cove.local` to one IaC upstream line (`set $llmproxy_upstream ...`, presently LiteLLM), with the streaming-critical settings (buffering off, 3600s timeouts). Product hostnames stay admin surfaces; cert SANs, TLS validation, hosts entry, landing card, and a coverage test all wired. The future cutover becomes a one-line upstream flip with zero client changes; no redirects (POST/SSE do not survive 3xx).
