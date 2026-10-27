@@ -153,3 +153,93 @@ class TestAdversarial:
         assert value not in ("*", ""), (
             f"group_vars default must not be '*' or empty, got: {value!r}"
         )
+
+
+def _provision_tasks() -> list[dict]:
+    with open(COMPOSE_DIR / "provision_forgejo.yml") as f:
+        return yaml.safe_load(f)[0]["tasks"]
+
+
+def _task_named(tasks: list[dict], fragment: str) -> dict:
+    hits = [t for t in tasks if fragment in str(t.get("name", ""))]
+    assert len(hits) == 1, (
+        f"expected exactly one provision task matching {fragment!r}, "
+        f"got {[t.get('name') for t in hits]}"
+    )
+    return hits[0]
+
+
+def _argv(task: dict) -> list[str]:
+    """Normalize a command task's argv (dict form, string form, or none)."""
+    cmd = task.get("ansible.builtin.command")
+    if isinstance(cmd, dict):
+        return [str(a) for a in cmd.get("argv", [])]
+    if isinstance(cmd, str):
+        return cmd.split()
+    return []
+
+
+class TestProvisionCredentialCacheFirst:
+    """provision_forgejo.yml must treat the Vault cache as authoritative.
+
+    `cove creds vault-put` ALWAYS re-reads 1Password (contract from issue #93:
+    a rotation must never be served a stale cache), and `cove creds vault-get`
+    is the read path (local cache, then Vault) that never touches 1Password.
+    The playbook therefore has to check the cache first and sync only on a
+    miss; otherwise every converge needs an unlocked 1Password, including
+    `cove serve` -> `cove up` on a reboot.
+    """
+
+    def test_cache_check_uses_read_path_and_runs_before_put(self):
+        tasks = _provision_tasks()
+        check = _task_named(tasks, "Check 1P forgejo admin item cached")
+        put = _task_named(tasks, "Cache admin password in Vault")
+        assert "vault-get" in _argv(check), (
+            "the cache guard must use the read path (`cove creds vault-get`), "
+            f"got argv={_argv(check)!r}"
+        )
+        assert "vault-put" in _argv(put), (
+            f"the sync task must call `cove creds vault-put`, got argv={_argv(put)!r}"
+        )
+        names = [str(t.get("name", "")) for t in tasks]
+        assert names.index(check["name"]) < names.index(put["name"]), (
+            "the cache guard must run BEFORE the vault-put sync"
+        )
+
+    def test_put_is_gated_on_cache_miss(self):
+        put = _task_named(_provision_tasks(), "Cache admin password in Vault")
+        assert put.get("when") == "pwd_check.rc != 0", (
+            "vault-put must be conditional on a cache miss "
+            f"(when: pwd_check.rc != 0), got when={put.get('when')!r}"
+        )
+
+    def test_put_less_path_exists_on_cache_hit(self):
+        tasks = _provision_tasks()
+        hit = _task_named(tasks, "Report cache hit")
+        assert hit.get("when") == "pwd_check.rc == 0", (
+            "a cache HIT path must be reported and continue with exit 0, "
+            f"got when={hit.get('when')!r}"
+        )
+        puts = [t for t in tasks if "vault-put" in _argv(t)]
+        assert len(puts) == 1, (
+            "exactly one vault-put task may exist, so a cache hit cannot "
+            f"invoke a second unconditional put; got {[t.get('name') for t in puts]}"
+        )
+
+    def test_admin_password_fact_reads_cache_not_masked_put_stdout(self):
+        tasks = _provision_tasks()
+        fact = _task_named(tasks, "Set admin password fact")
+        assert "admin_pw_resolve.stdout" in fact["ansible.builtin.set_fact"]["admin_password"]
+        readers = [t for t in tasks if t.get("register") == "admin_pw_resolve"]
+        assert len(readers) == 1, (
+            "exactly one task may register admin_pw_resolve (the read-back)"
+        )
+        reader = readers[0]
+        assert "vault-get" in _argv(reader), (
+            "admin_password must come from the read path; `vault-put` stdout is "
+            f"a mask, never the secret. got argv={_argv(reader)!r}"
+        )
+        assert "when" not in reader, (
+            "the read-back must run on BOTH branches (hit and miss) so the "
+            "admin password fact is always the cached value"
+        )
