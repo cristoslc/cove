@@ -124,11 +124,15 @@ streaming-only backstop had to be trusted to configuration discipline.
 - **Egress allowlist (DNS choke)**: the gateway's `dns:` is pinned to
   `cove-bifrost-dns` (172.43.0.10), a minimal dnsmasq sink on the dedicated
   `bifrost-egress` network (172.43.0.0/24, outside Docker's default pools).
-  The sink is read-only, caps-dropped except `NET_BIND_SERVICE`, publishes
-  no ports, and NXDOMAINs every name except `api.synthetic.new` and
-  `ollama.com` (`compose/bifrost/dnsmasq.conf`). **Caveat**: DNS enforcement
-  does not stop direct-IP egress; the digest pin and the vendor-update hold
-  are the anchors there.
+  The sink runs on a read-only rootfs with no pidfile written at all
+  (`--pid-file=`, dnsmasq's no-pidfile form), publishes no ports, and
+  NXDOMAINs every name except `api.synthetic.new` and `ollama.com`
+  (`compose/bifrost/dnsmasq.conf`). Caps: `cap_drop: ALL` plus
+  `NET_BIND_SERVICE` (bind :53), `SETUID`, and `SETGID` (dnsmasq's
+  startup privilege drop to the unprivileged `dnsmasq` user). The kernel
+  clears those caps at the drop, so the long-running daemon holds none.
+  **Caveat**: DNS enforcement does not stop direct-IP egress; the digest
+  pin and the vendor-update hold are the anchors there.
 - **Loopback-only**: the raw port binds 127.0.0.1; nginx is the ingress.
 
 ## Supply-chain finding (2026-10-26)

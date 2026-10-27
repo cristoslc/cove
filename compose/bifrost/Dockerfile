@@ -16,6 +16,9 @@ COPY dnsmasq.conf /etc/dnsmasq.d/bifrost.conf
 RUN dnsmasq --test -C /etc/dnsmasq.d/bifrost.conf
 
 # DNS listener; compose publishes nothing — only the bifrost service resolves
-# through this container.
+# through this container. The rootfs is read-only, so no pidfile is written
+# at all: an empty --pid-file path is dnsmasq's documented "no pid file"
+# form (2.78+). That keeps zero writable mounts and avoids the default /run
+# pidfile write (which is what crash-looped the sink).
 EXPOSE 53/udp
-CMD ["dnsmasq", "-k", "-C", "/etc/dnsmasq.d/bifrost.conf"]
+CMD ["dnsmasq", "-k", "-C", "/etc/dnsmasq.d/bifrost.conf", "--pid-file="]

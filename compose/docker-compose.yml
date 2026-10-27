@@ -427,9 +427,19 @@ services:
     networks:
       bifrost-egress:
         ipv4_address: 172.43.0.10
-    command: ["dnsmasq", "-k", "-C", "/etc/dnsmasq.d/bifrost.conf"]
+    # read_only rootfs: no pidfile is written at all. An empty --pid-file
+    # path is dnsmasq's documented "no pid file" form (2.78+), so the default
+    # /run write cannot fail and no writable /run mount is needed.
+    command: ["dnsmasq", "-k", "-C", "/etc/dnsmasq.d/bifrost.conf", "--pid-file="]
+    # dnsmasq binds :53 as root, then drops to the unprivileged dnsmasq user
+    # (its documented startup). cap_drop ALL stripped SETUID/SETGID, so the
+    # drop failed (incident: "failed to change group-id ... Operation not
+    # permitted"). Only these three are granted; the kernel clears them at
+    # the privilege drop, so the long-running process holds none.
     cap_add:
       - NET_BIND_SERVICE
+      - SETUID
+      - SETGID
     cap_drop:
       - ALL
     volumes:
