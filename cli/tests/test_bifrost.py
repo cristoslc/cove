@@ -24,6 +24,7 @@ import stat
 from pathlib import Path
 
 import pytest
+import click
 import yaml
 from click.testing import CliRunner
 
@@ -184,12 +185,23 @@ class TestBifrostConfigValidation:
         store = self.config["config_store"]
         assert store["enabled"] is True
         assert store["type"] == "sqlite"
-        assert store["config"]["path"] == "config.db"
+        # ABSOLUTE, on the mounted data dir: the default resolves relative to
+        # the image WORKDIR (/app), NOT the APP_DIR (/app/data) bind — an
+        # un-mounted store loses the generated virtual key, the pricing
+        # cache, and all governance state on every container recreation
+        # (observed 2026-10-27: /app/config.db was recreated per up).
+        assert store["config"]["path"] == "/app/data/config.db"
 
     def test_auth_enforced_on_inference(self):
         auth = self.config["governance"]["auth_config"]
         assert auth["is_enabled"] is True
-        assert auth["disable_auth_on_inference"] is False
+        # Dashboard auth is disabled on /v1/* (an OpenAI-style client sends
+        # the virtual key as the Bearer token; per-call Basic auth would
+        # break the OpenAI-compatible contract). The VK REQUIREMENT itself
+        # is carried by client.enforce_auth_on_inference — verified live
+        # 2026-10-27: requests without a (valid) virtual key get 401
+        # virtual_key_required on every tier.
+        assert auth["disable_auth_on_inference"] is True
         assert self.config["client"]["enforce_auth_on_inference"] is True
         assert auth["admin_username"] == "env.BIFROST_ADMIN_USERNAME"
         assert auth["admin_password"] == "env.BIFROST_ADMIN_PASSWORD"
@@ -282,11 +294,17 @@ class TestBifrostConfigValidation:
             "syn-infinite-backstop/infinite:small:vision",
         ]
 
-    def test_virtual_key_single_and_env_referenced(self):
+    def test_virtual_key_single_generated_not_declared(self):
+        """Bifrost v2.3.x generates virtual-key tokens itself (sk-bf-...) and
+        IGNORES any value provided at seed time — observed 2026-10-27: a
+        file-declared env ref (and an admin-API-provided value alike) both
+        end up as a generated token. The declaration carries policy only;
+        `cove bifrost up` fetches the generated token and projects it into
+        the compose .env (BIFROST_CLIENT_VIRTUAL_KEY)."""
         vks = self.config["governance"]["virtual_keys"]
         assert len(vks) == 1
         vk = vks[0]
-        assert vk["value"] == "env.BIFROST_VIRTUAL_KEY"
+        assert "value" not in vk
         assert vk["is_active"] is True
         providers_covered = {pc["provider"] for pc in vk["provider_configs"]}
         assert providers_covered == set(_provider_names(self.config))
@@ -347,9 +365,12 @@ class TestBifrostComposeSurface:
         assert svc["env_file"] == ["${COVE_DATA_ROOT}/bifrost/local.env"]
         env = svc["environment"]
         assert env["BIFROST_ENCRYPTION_KEY"] == "${BIFROST_ENCRYPTION_KEY:-}"
-        assert env["BIFROST_VIRTUAL_KEY"] == "${BIFROST_VIRTUAL_KEY:-}"
         assert env["BIFROST_ADMIN_USERNAME"] == "${BIFROST_ADMIN_USERNAME:-}"
         assert env["BIFROST_ADMIN_PASSWORD"] == "${BIFROST_ADMIN_PASSWORD:-}"
+        # A seed-provided virtual key is IGNORED by Bifrost v2.3.x (tokens are
+        # self-generated); nothing in the compose env carries one.
+        assert "BIFROST_VIRTUAL_KEY" not in env
+        assert "BIFROST_CLIENT_VIRTUAL_KEY" not in env
         # Workstation-lane key ownership: plain pass-through, no custody.
         assert env["OLLAMA_API_KEY"] == "${OLLAMA_API_KEY:-}"
 
@@ -401,12 +422,17 @@ class TestBifrostComposeSurface:
         content = (BIFROST_DIR / "dnsmasq.conf").read_text()
         assert "no-resolv" in content
         assert "local=/#/" in content, "fail-closed sink: everything NXDOMAIN"
-        assert "server=/api.synthetic.new/" in content
-        assert "server=/ollama.com/" in content
         servers = [l for l in content.splitlines() if l.startswith("server=/")]
-        assert len(servers) == 2, (
-            "the allowlist is exactly the two inference providers — no new "
-            "upstream without a test update"
+        # Exactly three vendor contacts: the two inference provider hosts
+        # (config.json base_urls) plus Bifrost's documented startup
+        # pricing-catalog fetch. A new contact needs this test to move.
+        assert servers == [
+            "server=/api.synthetic.new/9.9.9.9",
+            "server=/ollama.com/9.9.9.9",
+            "server=/getbifrost.ai/9.9.9.9",
+        ]
+        assert "pricing-catalog" in content, (
+            "the third contact must carry its rationale in the file"
         )
 
     def test_sink_command_writes_no_pidfile(self):
@@ -681,20 +707,21 @@ class TestBifrostCli:
         monkeypatch.setattr(bf, "_run_cove_creds", _boom)
         username = "smoke-admin-user"
         # Only the shared Cove Admin username lookup is answered; it must be
-        # the ONE vault read (the three secrets come from explicit env vars).
+        # the ONE vault read (the dashboard secrets come from explicit env
+        # vars; the client virtual key is fetched from the gateway, not
+        # vaulted).
         monkeypatch.setattr(
             bf, "_vault_get",
             lambda ref: username if "username" in ref else _boom(ref),
         )
         monkeypatch.setenv("BIFROST_ENCRYPTION_KEY", "explicit-not-a-secret-0")
         monkeypatch.setenv("BIFROST_ADMIN_PASSWORD", "explicit-not-a-secret-1")
-        monkeypatch.setenv("BIFROST_VIRTUAL_KEY", "bf-explicit-not-a-secret-2")
         bf._ensure_secrets()
         env_text = (compose_dir / ".env").read_text()
         assert "BIFROST_ENCRYPTION_KEY=explicit-not-a-secret-0" in env_text
         assert "BIFROST_ADMIN_PASSWORD=explicit-not-a-secret-1" in env_text
-        assert "BIFROST_VIRTUAL_KEY=bf-explicit-not-a-secret-2" in env_text
         assert f"BIFROST_ADMIN_USERNAME={username}" in env_text
+        assert "BIFROST_VIRTUAL_KEY" not in env_text
 
     def test_upsert_env_is_idempotent(self, tmp_path, monkeypatch):
         from cove.bifrost import _upsert_env
@@ -708,7 +735,7 @@ class TestBifrostCli:
         assert content.count("BIFROST_TEST_KEY=") == 1
         assert "BIFROST_TEST_KEY=second" in content
 
-    def test_seed_renders_three_distinct_values(self, tmp_path, monkeypatch):
+    def test_seed_renders_distinct_values(self, tmp_path, monkeypatch):
         from cove import bifrost as bf
         compose_dir = tmp_path / "compose"
         (compose_dir / "seeds").mkdir(parents=True)
@@ -719,16 +746,12 @@ class TestBifrostCli:
         monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
         rendered = bf._render_seed()
         assert "{{generate:" not in rendered, "all placeholders must be replaced"
-        vk_line = [l for l in rendered.splitlines()
-                   if l.strip().startswith("virtual_key[concealed]")][0]
-        vk_value = vk_line.split('"')[1]
-        assert vk_value.startswith("bf-") and len(vk_value) == 35
+        # The virtual key is NOT a seed field anymore (Bifrost generates it).
+        assert "virtual_key" not in rendered
         enc_line = [l for l in rendered.splitlines()
                     if l.strip().startswith("encryption_key[concealed]")][0]
         enc_value = enc_line.split('"')[1]
         assert len(enc_value) == 64 and all(c in "0123456789abcdef" for c in enc_value)
-        # The three values are distinct.
-        assert len({vk_value, enc_value}) == 2
 
     def test_status_reports_credential_names_not_values(self, tmp_path, monkeypatch):
         """status may only print SET/missing — never a value."""
@@ -738,7 +761,11 @@ class TestBifrostCli:
         (compose_dir / "bifrost").mkdir(parents=True)
         (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
         (compose_dir / ".env").write_text(
-            "COVE_DATA_ROOT=x\nBIFROST_VIRTUAL_KEY=value-never-printed\n"
+            "COVE_DATA_ROOT=x\n"
+            "BIFROST_CLIENT_VIRTUAL_KEY=sk-bf-value-never-printed\n"
+            "BIFROST_ENCRYPTION_KEY=hex-never-printed\n"
+            "BIFROST_ADMIN_USERNAME=dashboard-user\n"
+            "BIFROST_ADMIN_PASSWORD=passphrase-never-printed\n"
         )
         monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
 
@@ -755,9 +782,59 @@ class TestBifrostCli:
             bf.bifrost, ["status"], catch_exceptions=True,
         )
         assert "SET" in result.output
-        assert "value-never-printed" not in result.output
-        # The neutral client endpoint is reported on the status surface.
-        assert "llmproxy.cove" in result.output
+        for secret in ("sk-bf-value-never-printed", "hex-never-printed",
+                       "passphrase-never-printed", "BIFROST_VIRTUAL_KEY="):
+            assert secret not in result.output
+
+    def test_ensure_client_virtual_key_projects_generated_token(
+            self, tmp_path, monkeypatch, capsys):
+        """The generated token is fetched from the gateway's admin API and
+        projected into the compose .env; the value is never printed."""
+        from cove import bifrost as bf
+        compose_dir = tmp_path / "compose"
+        compose_dir.mkdir()
+        (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
+        (compose_dir / ".env").write_text(
+            "COVE_DATA_ROOT=x\n"
+            "BIFROST_ADMIN_USERNAME=dashboard-user\n"
+            "BIFROST_ADMIN_PASSWORD=passphrase\n"
+        )
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
+
+        rows = {"virtual_keys": [
+            {"id": "vk-cove", "name": "cove-agents", "value": "sk-bf-generated-token-never-printed-42"},
+        ]}
+        monkeypatch.setattr(bf, "_fetch_client_virtual_key", lambda *a, **k: rows["virtual_keys"][0])
+        monkeypatch.setattr(bf, "_wait_for_gateway_health", lambda *a, **k: True)
+        value = bf._ensure_client_virtual_key()
+        assert "generated-token" in value
+        env_text = (compose_dir / ".env").read_text()
+        assert f"{bf.CLIENT_VIRTUAL_KEY_ENV}=sk-bf-generated-token-never-printed-42" in env_text
+        assert "generated-token" not in capsys.readouterr().out
+
+    def test_ensure_client_virtual_key_fails_loud_without_admin_creds(
+            self, tmp_path, monkeypatch):
+        from cove import bifrost as bf
+        compose_dir = tmp_path / "compose"
+        compose_dir.mkdir()
+        (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
+        (compose_dir / ".env").write_text("COVE_DATA_ROOT=x\n")
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
+        try:
+            bf._ensure_client_virtual_key()
+            raise AssertionError("must fail loud when admin creds are missing")
+        except click.ClickException as e:
+            assert "BIFROST_ADMIN_USERNAME" in e.message
+
+    def test_gateway_port_default_and_env(self, tmp_path, monkeypatch):
+        from cove import bifrost as bf
+        compose_dir = tmp_path / "compose"
+        compose_dir.mkdir()
+        (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
+        assert bf._gateway_port() == 4002  # compose default
+        (compose_dir / ".env").write_text("BIFROST_PORT=4003\n")
+        assert bf._gateway_port() == 4003
 
     def test_neutral_endpoint_upstream_read_from_deployed_config(
         self, tmp_path, monkeypatch,
@@ -795,17 +872,174 @@ class TestBifrostCli:
         assert bf._neutral_endpoint_upstream() is None
 
 
+class TestBifrostFollowups:
+    """The 2026-10-26 converge findings: pricing-catalog allowlist entry,
+    provider-key provisioning, and the auth-gated health classification."""
+
+    def test_health_classification(self):
+        from cove.bifrost import _classify_health
+        assert _classify_health(None) == "unreachable"
+        assert _classify_health(200) == "ok"
+        assert _classify_health(302) == "ok"
+        # 401/403: the service ANSWERED — auth is a separate question.
+        assert _classify_health(401) == "auth-gated"
+        assert _classify_health(403) == "auth-gated"
+        assert _classify_health(404) == "unreachable"
+        assert _classify_health(500) == "unreachable"
+
+    def test_probe_prefers_any_ok_answer(self, monkeypatch):
+        from cove.bifrost import _probe_health_hosts
+        codes = {"a": 401, "b": 500, "c": None}
+        monkeypatch.setattr(
+            "cove.bifrost._probe_health_code",
+            lambda host: codes.get(host),
+        )
+        assert _probe_health_hosts(("a", "b", "c")) == (401, "auth-gated")
+        codes.update({"a": 200})
+        assert _probe_health_hosts(("a", "b", "c")) == (200, "ok")
+        # Nothing answers at all.
+        codes.update({"a": 500})
+        assert _probe_health_hosts(("a", "b", "c")) == (None, "unreachable")
+
+    def test_status_auth_gated_counts_reachable(self, tmp_path, monkeypatch):
+        """The converge's false negative: a 401 from /health (governance
+        requires the virtual key) must not read as an outage."""
+        from types import SimpleNamespace
+        from cove import bifrost as bf
+        compose_dir = tmp_path / "compose"
+        (compose_dir / "bifrost").mkdir(parents=True)
+        (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
+        (compose_dir / ".env").write_text("COVE_DATA_ROOT=x\n")
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
+        # The DEPLOYED stack context: docker ps succeeds, every probe ...
+        monkeypatch.setattr(bf.subprocess, "run", lambda *a, **k: SimpleNamespace(
+            stdout="", returncode=0))
+
+        def _fake_code(host):
+            return 401  # e.g. LiteLLM's master-key behavior, or gating
+
+        monkeypatch.setattr(bf, "_probe_health_code", _fake_code)
+        result = CliRunner().invoke(bf.bifrost, ["status"], catch_exceptions=True)
+        assert result.exit_code == 0
+        assert "OK (auth-gated)" in result.output
+
+    def test_status_unreachable_still_exits_nonzero(self, tmp_path, monkeypatch):
+        from types import SimpleNamespace
+        from cove import bifrost as bf
+        compose_dir = tmp_path / "compose"
+        (compose_dir / "bifrost").mkdir(parents=True)
+        (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
+        (compose_dir / ".env").write_text("COVE_DATA_ROOT=x\n")
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
+        monkeypatch.setattr(bf.subprocess, "run", lambda *a, **k: SimpleNamespace(
+            stdout="", returncode=0))
+        monkeypatch.setattr(bf, "_probe_health_code", lambda host: None)
+        result = CliRunner().invoke(bf.bifrost, ["status"])
+        assert result.exit_code != 0
+
+    def test_runtime_env_path_prefers_canonical_deploy(self, tmp_path, monkeypatch):
+        """Status reads target the DEPLOYED stack: the canonical install
+        dir, since source-checkout runs carry no runtime credentials."""
+        from cove import bifrost as bf
+        # Explicit override wins (tests/sandbox).
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(tmp_path / "sandbox"))
+        assert bf._runtime_env_path() == tmp_path / "sandbox" / ".env"
+        monkeypatch.delenv("COVE_COMPOSE_DIR")
+        # Canonical install dir present -> used.
+        canonical = tmp_path / "canonical"
+        canonical.mkdir()
+        (canonical / "inventory.yml").write_text("all:\n  hosts: {}\n")
+        monkeypatch.setattr(bf, "_config_compose_dir", lambda: canonical)
+        assert bf._runtime_env_path() == canonical / ".env"
+
+    def test_ensure_synthetic_key_honors_explicit_env(self, tmp_path, monkeypatch):
+        from cove import bifrost as bf
+        local = tmp_path / "bifrost" / "local.env"
+        monkeypatch.setenv("COVE_DATA_ROOT", str(tmp_path))
+        monkeypatch.setenv("SYNTHETIC_API_KEY", "explicit-provider-key-value")
+
+        def _boom(*a, **k):
+            raise AssertionError("no projection source runs when explicit")
+
+        monkeypatch.setattr(bf, "_read_file_var", _boom)
+        bf._ensure_synthetic_key()
+        assert "SYNTHETIC_API_KEY=explicit-provider-key-value" in local.read_text()
+        assert stat.S_IMODE(local.stat().st_mode) == 0o600
+
+    def test_ensure_synthetic_key_projects_from_litellm(self, tmp_path, monkeypatch):
+        from cove import bifrost as bf
+        litellm_env = tmp_path / "litellm" / "local.env"
+        litellm_env.parent.mkdir(parents=True)
+        litellm_env.write_text("SYNTHETIC_API_KEY=litellm-source-of-record\n")
+        monkeypatch.setenv("COVE_DATA_ROOT", str(tmp_path))
+        monkeypatch.delenv("SYNTHETIC_API_KEY", raising=False)
+        bf._ensure_synthetic_key()
+        local = tmp_path / "bifrost" / "local.env"
+        assert "SYNTHETIC_API_KEY=litellm-source-of-record" in local.read_text()
+        assert stat.S_IMODE(local.stat().st_mode) == 0o600
+        # Idempotent: a second run keeps the single line.
+        bf._ensure_synthetic_key()
+        assert local.read_text().count("SYNTHETIC_API_KEY=") == 1
+
+    def test_ensure_synthetic_key_reuses_existing_entry(self, tmp_path, monkeypatch):
+        from cove import bifrost as bf
+        bifrost_env = tmp_path / "bifrost" / "local.env"
+        bifrost_env.parent.mkdir(parents=True)
+        bifrost_env.write_text("SYNTHETIC_API_KEY=existing-bifrost-entry\n")
+        litellm_env = tmp_path / "litellm" / "local.env"
+        litellm_env.parent.mkdir(parents=True)
+        litellm_env.write_text("SYNTHETIC_API_KEY=other-source\n")
+        monkeypatch.setenv("COVE_DATA_ROOT", str(tmp_path))
+        monkeypatch.delenv("SYNTHETIC_API_KEY", raising=False)
+        bf._ensure_synthetic_key()
+        # Never overwritten by the projection.
+        assert "SYNTHETIC_API_KEY=existing-bifrost-entry" in bifrost_env.read_text()
+
+    def test_ensure_synthetic_key_fails_loud_message_names_source(
+            self, tmp_path, monkeypatch):
+        from cove import bifrost as bf
+        monkeypatch.setenv("COVE_DATA_ROOT", str(tmp_path))
+        monkeypatch.delenv("SYNTHETIC_API_KEY", raising=False)
+        try:
+            bf._ensure_synthetic_key()
+            raise AssertionError("must fail loud when no source exists")
+        except SystemExit:
+            pass
+        except click.ClickException as e:
+            assert "LiteLLM local.env" in e.message and "SYNTHETIC_API_KEY" in e.message
+
+    def test_ollama_passthrough_warning(self, tmp_path, monkeypatch, capsys):
+        from cove import bifrost as bf
+        compose_dir = tmp_path / "compose"
+        compose_dir.mkdir()
+        (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
+        (compose_dir / ".env").write_text("COVE_DATA_ROOT=x\n")
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
+        bf._check_ollama_passthrough()
+        out = capsys.readouterr().out
+        assert "WARNING" in out and "OLLAMA_API_KEY" in out
+        # With the entry present (workstation projection landed): silent.
+        (compose_dir / ".env").write_text("COVE_DATA_ROOT=x\nOLLAMA_API_KEY=projected\n")
+        bf._check_ollama_passthrough()
+        assert "WARNING" not in capsys.readouterr().out
+
+
+
 @pytest.fixture(scope="class")
 def gateway(request):
     """One pinned-Bifrost container against a local model-keyed mock upstream.
 
     Class-scoped (module-level fixture): started once, torn down after the
-    smoke class. No live Cove stack is touched."""
+    smoke class. No live Cove stack is touched. The container generates its
+    own virtual-key token; the fixture fetches it from the admin API exactly
+    like `cove bifrost up` does (direct loopback port, Basic dashboard
+    credentials)."""
     import socket
     import subprocess
     import tempfile
     import threading
     import time
+    import urllib.request
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     captured = []            # (auth, wire_model, stream) tuples, ordered
@@ -899,7 +1133,6 @@ def gateway(request):
          "--add-host", "host.docker.internal:host-gateway",
          "-v", f"{config_path}:/app/data/config.json:ro",
          "-v", f"{store_path}:/app/data/config.db",
-         "-e", f"BIFROST_VIRTUAL_KEY={TestBifrostLiveSmoke.VK}",
          "-e", "BIFROST_ENCRYPTION_KEY=" + "00" * 32,
          "-e", "BIFROST_ADMIN_USERNAME=smoke-admin",
          "-e", "BIFROST_ADMIN_PASSWORD=smoke-pass-not-a-secret",
@@ -941,7 +1174,32 @@ def gateway(request):
             f"container logs: {logs.stdout[-4000:]}\n{logs.stderr[-4000:]}"
         )
 
+    # Fetch the GENERATED token from the admin API (cove's up-flow shape);
+    # the value travels in-process and is never printed.
+    import base64
+    token = None
+    req = urllib.request.Request(
+        f"{base}/api/governance/virtual-keys",
+        headers={"Authorization": "Basic " + base64.b64encode(
+            "smoke-admin:smoke-pass-not-a-secret".encode()).decode()},
+    )
+    deadline = time.time() + 30
+    while time.time() < deadline and token is None:
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                rows = json.loads(resp.read()).get("virtual_keys", [])
+            matches = [row for row in rows if row.get("id") == "vk-cove"]
+            token = (matches[0].get("value") or None) if matches else None
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            token = None
+        if token is None:
+            time.sleep(2)
+    if not token:
+        teardown()
+        pytest.fail("the gateway generated no vk-cove token within 30s")
+
     request.cls._base = base
+    request.cls._token = token
     request.cls._captured = captured
     request.cls._captured_lock = captured_lock
 
@@ -953,18 +1211,21 @@ class TestBifrostLiveSmoke:
     Opt-in: COVE_ALLOW_LIVE_TESTS=1 (a real docker run of the pinned
     Bifrost image; no live Cove stack is touched). Proves:
 
-    1. Inference auth is enforced by default (missing VK -> 401), and the
-       FILE-SEEDED virtual key authenticates — the spike's unresolved
-       finding re-checked at implementation.
-    2. Tier routing executes the ordered fallback chain and the fallback
+    1. Virtual keys are mandatory on inference: a request with no
+       credential gets 401 on any tier.
+    2. The gateway-GENERATED token (fetched from the admin API — the shape
+       cove's up-flow projects into the compose .env) authenticates over
+       the OpenAI-style Bearer header, resolving the spike's "file-seeded
+       VK fails auth" finding: seed values are ignored; generation and
+       fetch is the working contract.
+    3. Tier routing executes the ordered fallback chain and the fallback
        hop actually serves when the primary errors.
-    3. The streaming-only backstop instance refuses non-streaming
+    4. The streaming-only backstop instance refuses non-streaming
        structurally (before any upstream call).
     """
 
     PRIMARY_KEY = "sk-primary-smoke"
     SECONDARY_KEY = "sk-secondary-smoke"
-    VK = "bf-smoke-virtual-key-fixed-for-this-test"
     FAIL_WIRE_MODEL = "hf:deepseek-ai/DeepSeek-V4.1-Flash"
 
     def _capture_count(self):
@@ -979,27 +1240,47 @@ class TestBifrostLiveSmoke:
                   "stream": False},
             timeout=30,
         )
-        assert resp.status_code == 401, f"auth must be enforced by default: {resp.status_code}"
+        assert resp.status_code == 401, (
+            f"virtual keys must be mandatory on inference: {resp.status_code} {resp.text[:150]}"
+        )
+
+    def test_generated_token_authenticates_bearer(self):
+        """The admin-API-fetched token works as an OpenAI-style Bearer AND
+        as x-bf-vk (the spike's file-seeded VK finding, resolved)."""
+        import requests
+        for headers in ({"Authorization": f"Bearer {self._token}"},
+                        {"x-bf-vk": self._token}):
+            resp = requests.post(
+                f"{self._base}/v1/chat/completions",
+                headers=headers,
+                json={"model": "syn:large:text",
+                      "messages": [{"role": "user", "content": "hi"}],
+                      "stream": False},
+                timeout=60,
+            )
+            assert resp.status_code == 200, (headers, resp.text[:200])
+            assert resp.json()["choices"][0]["message"]["content"] == "ok"
 
     def test_non_stream_falls_back_when_primary_errors(self):
         import requests
         before = self._capture_count()
         resp = requests.post(
             f"{self._base}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self.VK}"},
+            headers={"Authorization": f"Bearer {self._token}"},
             json={"model": "text:standard",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": False},
             timeout=60,
         )
-        assert resp.status_code == 200, f"fallback chain must recover primary failure: {resp.text[:300]}"
+        assert resp.status_code == 200, (
+            f"fallback chain must recover primary failure: {resp.text[:300]}")
         body = resp.json()
         assert body["choices"][0]["message"]["content"] == "ok"
         with self._captured_lock:
             new = list(self._captured)[before:]
         assert new, "the upstream mock saw no request"
-        fail_calls = [c for c in new if c[1] == self.FAIL_WIRE_MODEL]
-        secondary_calls = [c for c in new if c[0].endswith(self.SECONDARY_KEY)]
+        fail_calls = [call for call in new if call[1] == self.FAIL_WIRE_MODEL]
+        secondary_calls = [call for call in new if call[0].endswith(self.SECONDARY_KEY)]
         assert fail_calls, f"primary hop was never attempted: {new}"
         assert secondary_calls, f"fallback hop was never attempted: {new}"
         assert fail_calls[0][2] is False
@@ -1012,7 +1293,7 @@ class TestBifrostLiveSmoke:
         import requests
         resp = requests.post(
             f"{self._base}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self.VK}"},
+            headers={"Authorization": f"Bearer {self._token}"},
             json={"model": "text:standard",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": True},
@@ -1031,7 +1312,7 @@ class TestBifrostLiveSmoke:
         before = self._capture_count()
         resp = requests.post(
             f"{self._base}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self.VK}"},
+            headers={"Authorization": f"Bearer {self._token}"},
             json={"model": "syn:large:text",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": True},
@@ -1052,7 +1333,7 @@ class TestBifrostLiveSmoke:
         before = self._capture_count()
         resp = requests.post(
             f"{self._base}/v1/chat/completions",
-            headers={"Authorization": f"Bearer {self.VK}"},
+            headers={"Authorization": f"Bearer {self._token}"},
             json={"model": "infinite:small:vision",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": False},

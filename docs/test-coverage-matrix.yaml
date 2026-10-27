@@ -188,8 +188,29 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
-  - path: "Bifrost egress allowlist covers exactly the two inference providers"
+  - path: "Bifrost egress allowlist covers exactly the two inference providers plus the documented pricing-catalog contact"
     blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "Bifrost provider-key provisioning: Synthetic key projected from the LiteLLM local.env source of record (explicit env > existing entry > projection), ollama pass-through warning when the SOPS projection is absent, generated client virtual key fetched from the gateway admin API and projected (never printed)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "Bifrost SQLite store path pinned absolute (durable across container recreations; generated token preserved by hash-matched re-seeds)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: skip
+      corner: executable
+  - path: "Bifrost status /health classification: 401/403 answer is auth-gated reachable, not an outage; deployed-stack env reads prefer the canonical install dir"
+    blast_radius: medium
     coverage:
       happy: executable
       sad: executable

@@ -169,18 +169,37 @@ pre-seeded SQLite config store, and the service doc
 cutover checklist and the four pending operator decisions above. Findings
 recorded at implementation:
 
-- **File-seeded virtual key: spike finding resolved.** On transports v2.3.2
-  the file-seeded VK authenticates (live-smoke proved 401-for-no-key and
-  200-for-file-seeded-key on the same governance config). The `config.json`
-  + pre-seeded store shape from the spike is adopted unchanged.
+- **File-seeded virtual key: spike finding resolved (2026-10-27, mechanism
+  established on the live gateway).** Bifrost v2.3.x generates every
+  virtual-key TOKEN itself (`sk-bf-...`); a value provided at seed time
+  (literal or `env.*` reference in config.json) is IGNORED, and the admin
+  API regenerates a provided value too. The seeded row (id, policy,
+  provider configs) is honored; only the token is generated. Resolution:
+  the config carries policy only, the store is durable (absolute path on
+  the mounted bind), and `cove bifrost up` fetches the generated token from
+  the admin API post-boot and projects it into the compose `.env` as
+  `BIFROST_CLIENT_VIRTUAL_KEY`. OpenAI-style Bearer carries the token;
+  requests with no credential get 401 on every tier (verified live).
+- **Auth shape (verified live):** `client.enforce_auth_on_inference: true`
+  makes virtual keys MANDATORY on inference; dashboard auth stays enabled
+  but is disabled ON INFERENCE (`disable_auth_on_inference: true`) so
+  Bearer can carry the token (with auth-on-inference enabled, Authorization
+  cannot carry the VK at all — the OpenAI-compatible contract would break).
 - **Signature/provenance: nothing to verify.** Upstream publishes no cosign
   signatures, no attestations, no image SBOM (release-pipeline.yml read
   2026-10-26). Anchors are the pinned digest + the 48-72h hold; recorded in
   the service doc, nothing wired into bringup verification.
 - **Streaming-only gate: structural, verified.** The backstop instance's
   `allowed_requests` leaves only `chat_completion_stream` enabled; the live
-  smoke shows a non-streaming request to the gated tier never reaches any
-  upstream. The improvement over LiteLLM holds at runtime.
+  smoke and the live gateway both show non-streaming requests to the gated
+  tier never reach any upstream. The improvement over LiteLLM holds at
+  runtime.
+- **Pricing-catalog contact (2026-10-27):** the gateway fetches its pricing
+  catalog from getbifrost.ai at startup and EXITS (not degraded-start) when
+  unreachable; the DNS sink now allows it as the third (and only extra)
+  vendor contact. The built-in "telemetry" plugin is in-process Prometheus
+  metrics (no vendor endpoint observed), and the vendor logger feature is
+  inert without `MAXIM_LOG_REPO_ID`.
 - **Cutover plan approved (2026-10-26).** The operator approved all four
   pending decisions above (pgdata: secure-delete; key rotation: at cutover,
   the ollama half scheduled by the workstation lane against the date cove

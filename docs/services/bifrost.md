@@ -67,15 +67,36 @@ IaC-first, with the same split as LiteLLM:
   routing rules. Seeded to `~/Documents/cove-data/bifrost/config.json`
   (first boot only; operator edits preserved, wedge-guarded).
 - **`config.db`** (SQLite runtime store): **must pre-exist before the first
-  container boot** — a file-only boot cannot carry governance. Bringup and
+  container boot** — a file-only boot cannot carry governance, and the store
+  also carries the generated virtual key and the pricing cache. Bringup and
   `cove bifrost up` both seed it as an empty, valid SQLite file (`0600`,
-  never recreated when present). Bifrost mounts it writable and manages its
-  contents; with `source_of_truth: "config.json"`, file sections stay
-  authoritative.
+  never recreated when present). Bifrost mounts it writable at
+  `app/data/config.db` and manages its contents; `config.json` pins the
+  store path ABSOLUTE (`/app/data/config.db`) because the documented
+  default (`config.db`) resolves against the image WORKDIR (`/app`), not the
+  APP_DIR (`/app/data`) — observed 2026-10-27: with the default, the store
+  (and the generated virtual key inside it) reset on every container
+  recreation. With `source_of_truth: "config.json"`, file sections stay
+  authoritative; the generated token is preserved by hash-matched re-seeds.
+- **The client virtual key** is **Bifrost-generated** (v2.3.x turns every
+  seeded or API-passed value into its own `sk-bf-...` token; the seed value
+  is ignored — observed 2026-10-27). The declaration in `config.json`
+  carries policy only (no `value` field). `cove bifrost up` fetches the
+  generated token from the gateway's admin API after boot and projects it
+  into the deployed compose `.env` as `BIFROST_CLIENT_VIRTUAL_KEY` (in-process,
+  never printed; rotation via the dashboard refreshes it on the next `up`).
+  Clients authenticate OpenAI-style: `Authorization: Bearer <BIFROST_CLIENT_VIRTUAL_KEY>`
+  (or `x-bf-vk:`); requests with no credential get 401 (`enforce_auth_on_inference`).
 - **`dnsmasq.conf`** (git-tracked): the egress allowlist (see Security
   posture). Seeded first boot only.
-- **`local.env`**: the Synthetic subscription key (`SYNTHETIC_API_KEY`), same
-  pattern as LiteLLM's local.env. Created empty (`0600`), never overwritten.
+- **`local.env`**: the provider key file (`0600`). `SYNTHETIC_API_KEY` is
+  projected here by `cove bifrost up` from the LiteLLM local.env (the one
+  deployed source of record the LiteLLM provider config already runs on —
+  copied in-process, never printed; an explicit `SYNTHETIC_API_KEY` env var
+  wins, an existing entry is never overwritten; missing everywhere fails
+  loudly with instructions). `OLLAMA_API_KEY` is NOT written here: it
+  arrives through the compose pass-through from the deployed `.env` where
+  the workstation lane's SOPS projection lands it.
 - **The ollama-cloud key** is NOT Cove's to hold (workstation-lane ownership
   ruling, 2026-10-26): the workstation's SOPS role projects
   `OLLAMA_API_KEY` into the deployed compose `.env`, and the compose service
@@ -114,9 +135,13 @@ streaming-only backstop had to be trusted to configuration discipline.
   manifest digest (overridable via `BIFROST_IMAGE` only with the full
   tag+digest pair; the compose default carries both).
 - **Inference auth enforced by default**: `client.enforce_auth_on_inference`
-  is `true`, dashboard auth enabled, `disable_auth_on_inference` false. A
-  missing virtual key gets 401 (live-smoke verified). The single virtual key
-  (`env.BIFROST_VIRTUAL_KEY`) is allowed on all three instances.
+  is `true`; a request with no (valid) virtual key gets 401 on every tier
+  (live-verified 2026-10-27). Dashboard auth is disabled ON INFERENCE
+  (`disable_auth_on_inference: true`) so the OpenAI-compatible contract
+  holds: `Authorization: Bearer <token>` carries the virtual key; the
+  dashboard/API surface itself stays username/password protected.
+  Dashboard auth is enabled, and the generated virtual key is allowed on
+  all three instances.
 - **Request-body logging OFF** (adoption gate): `client.enable_logging:
   false`, `disable_content_logging: true`,
   `allow_per_request_content_storage_override: false`, and `logs_store`
@@ -126,8 +151,17 @@ streaming-only backstop had to be trusted to configuration discipline.
   `bifrost-egress` network (172.43.0.0/24, outside Docker's default pools).
   The sink runs on a read-only rootfs with no pidfile written at all
   (`--pid-file=`, dnsmasq's no-pidfile form), publishes no ports, and
-  NXDOMAINs every name except `api.synthetic.new` and `ollama.com`
-  (`compose/bifrost/dnsmasq.conf`). Caps: `cap_drop: ALL` plus
+  NXDOMAINs every name except exactly three documented vendor contacts:
+  `api.synthetic.new` and `ollama.com` (the inference providers), plus
+  `getbifrost.ai` — Bifrost loads its pricing catalog from there at
+  STARTUP and exits (crash-looped the container behind the sink, 2026-10-26
+  converge). The allowlist's purpose is preventing QUIET egress growth, not
+  forbidding every vendor contact: a startup fetch of a public pricing
+  catalog is not telemetry and carries no prompt data. Vendoring a pricing
+  snapshot was rejected — it goes stale, and wrong cost numbers are worse
+  than a known contact. `compose/bifrost/dnsmasq.conf` carries the rationale
+  in-file and the tests pin the exact three-name list.
+  Caps: `cap_drop: ALL` plus
   `NET_BIND_SERVICE` (bind :53), `SETUID`, and `SETGID` (dnsmasq's
   startup privilege drop to the unprivileged `dnsmasq` user). The kernel
   clears those caps at the drop, so the long-running daemon holds none.
@@ -151,26 +185,39 @@ none of which is verifiable from a pulled digest. The verified anchors are:
 Nothing signature-based could be wired into bringup verification; the finding
 is recorded here instead.
 
-## Virtual key auth re-check (file-seeded VK)
+## Virtual key resolution (the spike's file-seeded VK finding, resolved)
 
 The spike found a file-seeded virtual key failing to authenticate while an
-API-created one worked. **Outcome at implementation (v2.3.2): the file-seeded
-virtual key authenticates correctly.** The live smoke proves both halves:
-a request without a virtual key gets 401 (auth enforced), and a request
-bearing the `env.BIFROST_VIRTUAL_KEY` value passes governance and reaches the
-routed provider. No workaround is needed; `source_of_truth: "config.json"`
-plus the pre-seeded store is sufficient.
+API-created one worked. **Mechanism (established 2026-10-27 on v2.3.2,
+live gateway):** Bifrost generates every virtual-key TOKEN itself
+(`sk-bf-...`). A value provided at seed time — a literal or an `env.*`
+reference in `config.json` — is ignored, and an admin-API-created key with a
+provided value is regenerated too. The seeded ROW (id, policy, provider
+configs) is honored; only the token is generated. A request bearing the
+seed-provided value gets 401 `access not found`.
+
+**Resolution:** the config's VK declaration carries policy only (no `value`
+field); the store is durable (absolute path on the mounted bind), so the
+generated token is created once and preserved by hash-matched re-seeds;
+`cove bifrost up` fetches the token from the admin API after boot and
+projects it into the compose `.env` as `BIFROST_CLIENT_VIRTUAL_KEY`. The
+1Password item's short-lived `virtual_key` field from the first additive
+build is superseded: the rotating, authoritative token lives in the gateway
+(rotatable via the dashboard/API) and its fetched copy in the `.env`.
 
 ## Commands
 
 `cove bifrost up` — provision credentials (1Password `Bifrost Gateway` item:
-config-store encryption key, dashboard admin password, client virtual key;
-the admin username comes from the shared Cove Admin item, ADR-017), seed the
-runtime files, and start the profile (`up -d --build`, the sink image is
-built locally).
+config-store encryption key and dashboard admin password; the admin username
+comes from the shared Cove Admin item, ADR-017), seed the runtime files,
+project the provider keys, and start the profile (`up -d --build`, the sink
+image is built locally); after boot it fetches the gateway-GENERATED client
+virtual key from the admin API and projects it into the compose `.env`.
 
 `cove bifrost status` — compose ps, credential-wiring booleans (SET/missing,
-names never values), and the nginx health probe.
+names never values), and the nginx health probe (an auth answer like
+LiteLLM's master-key 401 counts REACHABLE; only a dead probe or an
+unhealthy HTTP answer is UNREACHABLE).
 
 `cove bifrost down` / `cove bifrost logs [-n N] [-f]` as for other optional
 services.
@@ -185,7 +232,7 @@ clients ──https──> nginx :443
                                            │  config.json (ro) + config.db (rw)
                                            │  env_file local.env + compose .env
                                            ▼
-                                DNS: cove-bifrost-dns (allowlist sink) ──> only api.synthetic.new, ollama.com
+                                DNS: cove-bifrost-dns (allowlist sink) ──> only api.synthetic.new, ollama.com, getbifrost.ai
                                            │
                                            ▼
                           syn-subscription / ollama-cloud / syn-infinite-backstop
@@ -263,7 +310,7 @@ group, tests, docs, SBOM) remains in
 
 `docker logs cove-bifrost` — most commonly a missing credential: every
 `env.*` reference in `config.json` must resolve (`BIFROST_ENCRYPTION_KEY`,
-`BIFROST_ADMIN_USERNAME`, `BIFROST_ADMIN_PASSWORD`, `BIFROST_VIRTUAL_KEY`,
+`BIFROST_ADMIN_USERNAME`, `BIFROST_ADMIN_PASSWORD`,
 `SYNTHETIC_API_KEY` in `local.env`, `OLLAMA_API_KEY` from the workstation
 projection). `cove bifrost status` names what is missing.
 
@@ -272,7 +319,17 @@ projection). `cove bifrost status` names what is missing.
 The provider host must appear in `compose/bifrost/dnsmasq.conf`'s
 `server=/host/resolver` lines AND in the config's provider `base_url`s under
 the same hostname. Everything else NXDOMAINs by design — that is the
-fail-closed posture, not a fault.
+fail-closed posture, not a fault. The third contact, `getbifrost.ai`, is the
+startup pricing-catalog fetch; removing it crash-loops the gateway (it
+exits instead of starting degraded).
+
+### Gateway crash-loops at startup
+
+`docker logs cove-bifrost` — the classic shape is the pricing manager:
+`failed to initialize pricing manager ... lookup getbifrost.ai ... no such
+host`. The sink's allowlist copy under the data root may be stale after a
+pin bump; re-seed `~/Documents/cove-data/bifrost/dnsmasq.conf` from
+`compose/bifrost/dnsmasq.conf` and `docker restart cove-bifrost-dns`.
 
 ### Sink container restarts
 
