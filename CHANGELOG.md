@@ -14,6 +14,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **The Bifrost SQLite config store is durable** — `config.json` pins `config_store.config.path` ABSOLUTE (`/app/data/config.db`): the documented relative default resolves against the image WORKDIR (`/app`), not the APP_DIR bind, so the store (the generated virtual key, governance state, the pricing cache) reset on every container recreation (observed 2026-10-27). The mounted bind now genuinely receives the store; the pre-seeded empty file is replaced by the gateway on first boot and preserved thereafter (hash-matched re-seeds keep the generated token).
 - **`cove bifrost status` no longer reports an auth answer as an outage** — `/health` probes classifying as 401/403 (LiteLLM's master-key behavior; Bifrost with governance enabled) count REACHABLE ("auth-gated"); only a failed probe or an unhealthy answer (4xx-other/5xx) is UNREACHABLE. Status reads also target the deployed stack: the canonical install dir's `.env` and its `COVE_DATA_ROOT`, so a run from a source checkout reads runtime credentials instead of an empty checkout file. The egress sink itself is unchanged in posture: exactly three documented vendor contacts (the two inference providers plus Bifrost's startup pricing-catalog fetch at `getbifrost.ai`), everything else NXDOMAIN-sunk.
 
+## 0.15.11 (2026-10-27)
+
+### Fixed
+- **Credentials come only from the files of record** ([#111](../../pulls/111)) — docker compose variable precedence let an ambient shell variable override `.env`/`local.env` on every spawn, so a converge from a differently-equipped shell could silently substitute a credential (and change the config hash, recreating services). A single module now scrubs 14 credential names from every compose and ansible child environment, warns loudly with fingerprints only when it had to discard an ambient value, and offers `COVE_ALLOW_AMBIENT_CREDENTIALS=1` as the deliberate override. `env_file` content remains the credential channel and `local.env` is unchanged. Proven with three hash sets (scrubbed vs two ambient sets) on the deployed compose.
+- **launchd agent registration is idempotent** ([#110](../../pulls/110)) — re-running `cove update auto` or `cove serve start` after a plist regeneration used to fail with `launchctl` exit 5 because the bootout passed the label in the service-path slot; bootout now targets the service, bootstrap failures become clear errors, and `cove serve stop`/`status` ask launchd instead of trusting the plist file.
+
 ## 0.15.10 (2026-10-27)
 
 ### Added
