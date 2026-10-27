@@ -20,10 +20,11 @@ When the data plane already has its own dedicated CLI (`fj` for Forgejo, `op` fo
 
 ## Proposed remapping
 
-### `cove vault` (service plane — new)
-- `cove vault status` — `vault_health()`, currently only in aggregate `cove status`
-- `cove vault unseal` — `ensure_unsealed()`, currently automatic/lazy
-- `cove vault token` — read/refresh root token from OS keystore
+### `cove vault` (service plane — partially shipped)
+- `cove vault up` — start the service, wait for readiness, unseal only if sealed (idempotent, fail-loud; shipped 2026-10-26)
+- `cove vault status` — `vault_health()`; prints initialized plus sealed/unsealed and exits non-zero unless unsealed (shipped 2026-10-26)
+- `cove vault unseal` — `ensure_unsealed()`; shipped 2026-10-22
+- `cove vault token` — read/refresh root token from OS keystore (not built)
 - `cove vault init` — bootstrap Vault (currently Ansible-only)
 
 ### `cove secrets` (data plane — replaces `cove creds vault-*`)
