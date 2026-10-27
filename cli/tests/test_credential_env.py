@@ -398,6 +398,12 @@ class TestComposeSubprocessBoundary:
         host_vars = tmp_path / "host.yml"
         host_vars.write_text("admin_username: x\n")
 
+        # The edge-auth step reads the llmproxy seed and may provision the
+        # client-token item; this test targets env scrubbing, so stub the seam.
+        edge_vars = tmp_path / "edge-vars.yml"
+        edge_vars.write_text("llmproxy_client_key: x\nllmproxy_upstream_key: y\n")
+        monkeypatch.setattr("cove.cli.edge_secret_vars_file", lambda: edge_vars)
+
         monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: tmp_path))
         monkeypatch.setenv("COVE_DATA_ROOT", str(data_root))
         monkeypatch.delenv("COVE_COMPOSE_DIR", raising=False)
@@ -424,12 +430,32 @@ class TestComposeSubprocessBoundary:
             returncode = 0
             stdout = iter([])
 
-            def wait(self):
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def wait(self, timeout=None):
                 return 0
+
+            def communicate(self, input=None, timeout=None):
+                return (b"", b"")
+
+            def poll(self):
+                return 0
+
+            def kill(self):
+                pass
 
         def _popen(cmd, **kwargs):
             captured.setdefault("envs", []).append(kwargs.get("env"))
-            return _Proc()
+            p = _Proc()
+            p.args = cmd
+            return p
 
         monkeypatch.setattr(cove.cli.subprocess, "Popen", _popen)
 
