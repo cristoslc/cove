@@ -315,6 +315,10 @@
           - --sans
           - bifrost.cove.local
           - --sans
+          - llmproxy.cove
+          - --sans
+          - llmproxy.cove.local
+          - --sans
           - speedtest.cove
           - --sans
           - speedtest.cove.local
@@ -358,6 +362,7 @@
           "ade.cove" "ade.cove.local" \
           "litellm.cove" "litellm.cove.local" \
           "bifrost.cove" "bifrost.cove.local" \
+          "llmproxy.cove" "llmproxy.cove.local" \
           "speedtest.cove" "speedtest.cove.local" \
           "mcp.cove" "mcp.cove.local" \
           "hc.cove" "hc.cove.local" \
@@ -379,7 +384,7 @@
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.0\.1\s+.*cove(\s|$)'
-        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local bifrost.cove bifrost.cove.local speedtest.cove speedtest.cove.local mcp.cove mcp.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
+        line: "127.0.0.1 cove cove.local git.cove git.cove.local vault.cove vault.cove.local ade.cove ade.cove.local litellm.cove litellm.cove.local bifrost.cove bifrost.cove.local llmproxy.cove llmproxy.cove.local speedtest.cove speedtest.cove.local mcp.cove mcp.cove.local hc.cove hc.cove.local ca.cove ca.cove.local pages.cove pages.cove.local"
         state: present
       failed_when: false
 

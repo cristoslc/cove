@@ -230,6 +230,13 @@ workflow_paths:
       sad: executable
       edge: skip
       corner: skip
+  - path: "Neutral client endpoint llmproxy.cove: alias vhost proxies the configured active upstream with litellm-vhost streaming settings; wired in cert SANs, TLS validation, hosts entry, landing card, and bifrost status"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
   - path: "cove litellm up"
     blast_radius: high
     coverage:

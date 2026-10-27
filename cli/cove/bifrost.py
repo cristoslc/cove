@@ -307,6 +307,44 @@ def _local_env_flag_set(name: str) -> bool:
     return False
 
 
+def _neutral_endpoint_upstream() -> str | None:
+    """The active proxy upstream the neutral llmproxy.cove vhost proxies to,
+    read from the deployed nginx config — the one-line product-swap point
+    (docs/services/bifrost.md, "Client endpoint").
+
+    Returns None when the deployed config is absent or carries no
+    llmproxy_upstream line (reported, never guessed)."""
+    conf = resolve_compose_dir() / "nginx" / "default.conf"
+    if not conf.exists():
+        return None
+    for line in conf.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("set $llmproxy_upstream "):
+            return (
+                stripped.removeprefix("set $llmproxy_upstream ")
+                .rstrip(";")
+                .strip()
+            )
+    return None
+
+
+def _probe_health_hosts(hosts: tuple[str, ...]) -> bool:
+    """True when /health answers through nginx on any of the given
+    hostnames (SNI-free curl with an explicit Host header)."""
+    for host in hosts:
+        try:
+            health = subprocess.run(
+                ["curl", "-sf", "-H", f"Host: {host}",
+                 f"https://127.0.0.1:{NGINX_HTTPS_PORT}/health"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            continue
+        if health.returncode == 0:
+            return True
+    return False
+
+
 @click.group()
 def bifrost():
     """Manage the Bifrost gateway (optional harbor service).
@@ -367,20 +405,25 @@ def status():
         )
 
     click.echo("Checking /health through nginx...")
-    for host in ("bifrost.cove.local", "bifrost.cove"):
-        try:
-            health = subprocess.run(
-                ["curl", "-sf", "-H", f"Host: {host}",
-                 f"https://127.0.0.1:{NGINX_HTTPS_PORT}/health"],
-                capture_output=True, text=True, timeout=10,
-            )
-        except subprocess.TimeoutExpired:
-            continue
-        if health.returncode == 0:
-            click.echo("  Health: OK")
-            return
-    click.echo("  Health: UNREACHABLE")
-    raise SystemExit(1)
+    surfaces = (
+        ("Bifrost gateway", ("bifrost.cove.local", "bifrost.cove")),
+        ("Neutral client endpoint (llmproxy.cove)",
+         ("llmproxy.cove.local", "llmproxy.cove")),
+    )
+    all_ok = True
+    for label, hosts in surfaces:
+        reachable = _probe_health_hosts(hosts)
+        click.echo(f"  {label}: " + ("OK" if reachable else "UNREACHABLE"))
+        all_ok = all_ok and reachable
+    upstream = _neutral_endpoint_upstream()
+    if upstream:
+        click.echo(f"  llmproxy.cove upstream: {upstream}")
+    else:
+        click.echo(
+            "  llmproxy.cove upstream: not found in deployed nginx config"
+        )
+    if not all_ok:
+        raise SystemExit(1)
 
 
 @bifrost.command()

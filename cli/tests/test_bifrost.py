@@ -129,6 +129,30 @@ def _chain(rule: dict) -> list[str]:
     return ids
 
 
+def _extract_server_block(rendered: str, marker: str) -> str:
+    """The full `server { ... }` block whose server_name line contains
+    `marker` (brace-matched from the block's opening line)."""
+    lines = rendered.split("\n")
+    marker_idx = next(
+        (i for i, l in enumerate(lines) if marker in l), None
+    )
+    assert marker_idx is not None, f"no server block matches {marker!r}"
+    start_idx = marker_idx
+    for i in range(marker_idx, max(marker_idx - 10, -1), -1):
+        if lines[i].strip().startswith("server {") or lines[i].strip() == "server":
+            start_idx = i
+            break
+    block_lines: list[str] = []
+    brace_depth = 0
+    for i in range(start_idx, len(lines)):
+        block_lines.append(lines[i])
+        brace_depth += lines[i].count("{")
+        brace_depth -= lines[i].count("}")
+        if brace_depth <= 0 and len(block_lines) > 1:
+            break
+    return "\n".join(block_lines)
+
+
 def _provider_names(config: dict) -> dict:
     return config["providers"]
 
@@ -395,6 +419,31 @@ class TestBifrostNginxSurface:
         assert "proxy_buffering off;" in rendered
         assert "proxy_read_timeout 3600s;" in rendered
 
+    def test_neutral_endpoint_vhost_proxies_the_configured_upstream(self):
+        """llmproxy.cove is THE canonical client-facing OpenAI-compatible
+        endpoint: an alias vhost proxying to the ACTIVE proxy upstream —
+        one IaC line to change on a product swap — with the streaming
+        settings copied from the litellm vhost (the ladder serves
+        3600-second streams)."""
+        rendered = _render_nginx()
+        assert "server_name llmproxy.cove llmproxy.cove.local;" in rendered
+        # The product-swap line names the currently active proxy.
+        assert "set $llmproxy_upstream http://litellm:4000;" in rendered
+        block = _extract_server_block(rendered, "server_name llmproxy.cove")
+        assert "proxy_pass $llmproxy_upstream$request_uri;" in block
+        assert "resolver 127.0.0.11" in block
+        # Streaming-critical settings, copied from the litellm vhost.
+        assert "proxy_buffering off;" in block
+        assert "proxy_read_timeout 3600s;" in block
+        assert "proxy_send_timeout 3600s;" in block
+
+    def test_product_hostnames_stay_admin_debug_surfaces(self):
+        """The neutral alias is additive: the litellm and bifrost vhosts
+        (admin/debug surfaces) must both still be present."""
+        rendered = _render_nginx()
+        assert "server_name litellm.cove litellm.cove.local;" in rendered
+        assert "server_name bifrost.cove bifrost.cove.local;" in rendered
+
     def test_landing_page_carries_the_card(self):
         landing = (NGINX_DIR / "landing.html").read_text()
         assert 'id="bifrost"' in landing
@@ -402,6 +451,14 @@ class TestBifrostNginxSurface:
         assert "bifrost.cove.local" in landing
         # The health-loop service list drives the status dot.
         assert "bifrost" in landing.split("const services = ", 1)[1].split(";", 1)[0]
+
+    def test_landing_page_carries_the_neutral_endpoint_card(self):
+        landing = (NGINX_DIR / "landing.html").read_text()
+        assert 'id="llmproxy"' in landing
+        assert 'id="dot-llmproxy"' in landing
+        assert "llmproxy.cove.local" in landing
+        # The health-loop service list drives the status dot.
+        assert "llmproxy" in landing.split("const services = ", 1)[1].split(";", 1)[0]
 
     def test_cert_sans_and_hosts_entry_present(self):
         content = (COMPOSE_DIR / "bringup.yml").read_text()
@@ -413,6 +470,27 @@ class TestBifrostNginxSurface:
             if isinstance(t, dict) and "hosts" in (t.get("name", "") or "").lower()
         ]
         assert hosts_tasks, "No /etc/hosts task found in bringup.yml"
+
+    def test_neutral_endpoint_wired_everywhere(self):
+        """Every place the product hostnames are wired carries the neutral
+        names too: cert SANs, the bringup TLS-validation loop, the
+        /etc/hosts entry, and the landing card (the dnsmasq resolver is
+        wildcard-based — address=/cove/ + /cove.local/ — so both neutral
+        names resolve with no per-name entry)."""
+        bringup_text = (COMPOSE_DIR / "bringup.yml").read_text()
+        # Cert SAN list entries.
+        assert "- llmproxy.cove\n" in bringup_text
+        assert "- llmproxy.cove.local\n" in bringup_text
+        # TLS-cert validation loop.
+        assert '"llmproxy.cove" "llmproxy.cove.local"' in bringup_text
+        # /etc/hosts entry.
+        hosts_line = next(
+            l for l in bringup_text.splitlines()
+            if "127.0.0.1 cove cove.local" in l
+        )
+        assert "llmproxy.cove llmproxy.cove.local" in hosts_line
+        # Landing card (covered in detail by the dedicated test above).
+        assert "llmproxy.cove.local" in (NGINX_DIR / "landing.html").read_text()
 
 
 class TestBifrostBringup:
@@ -633,6 +711,43 @@ class TestBifrostCli:
         )
         assert "SET" in result.output
         assert "value-never-printed" not in result.output
+        # The neutral client endpoint is reported on the status surface.
+        assert "llmproxy.cove" in result.output
+
+    def test_neutral_endpoint_upstream_read_from_deployed_config(
+        self, tmp_path, monkeypatch,
+    ):
+        """The upstream report reads the deployed nginx config — the
+        product-swap line — and reports what llmproxy.cove proxies to."""
+        from cove import bifrost as bf
+        compose_dir = tmp_path / "compose"
+        nginx_dir = compose_dir / "nginx"
+        nginx_dir.mkdir(parents=True)
+        (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
+        (nginx_dir / "default.conf").write_text(
+            "server {\n"
+            "    server_name llmproxy.cove llmproxy.cove.local;\n"
+            "    set $llmproxy_upstream http://litellm:4000;\n"
+            "}\n"
+        )
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
+        assert bf._neutral_endpoint_upstream() == "http://litellm:4000"
+
+    def test_neutral_endpoint_upstream_missing_config_is_none(
+        self, tmp_path, monkeypatch,
+    ):
+        """No deployed config (or no swap line) reports None — never a
+        guessed upstream."""
+        from cove import bifrost as bf
+        compose_dir = tmp_path / "compose"
+        compose_dir.mkdir(parents=True)
+        (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
+        monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
+        assert bf._neutral_endpoint_upstream() is None
+        nginx_dir = compose_dir / "nginx"
+        nginx_dir.mkdir()
+        (nginx_dir / "default.conf").write_text("server { }\n")
+        assert bf._neutral_endpoint_upstream() is None
 
 
 @pytest.fixture(scope="class")
