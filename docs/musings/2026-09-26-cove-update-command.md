@@ -165,3 +165,23 @@ worktree previously produced a wheel with no bundled pins at all), and the
 wheel is built outside the git worktree so worktree cleanup cannot take it.
 Downloading the release asset instead of rebuilding at the tag remains the
 design-pure path if a second machine ever makes asset plumbing worth it.
+
+## Addendum (2026-10-27): the agent's PATH must name what the flow shells out to
+
+The daily job had been failing with `FileNotFoundError: 'cove'`: the rendered
+plist pinned a PATH without `~/.local/bin`, so `which("cove")` failed at run
+time and the quiet converge fell back to the bare name. The same PATH also
+omitted `uv` and `ansible-playbook` (both under `~/.local/bin`), so even a
+resolved `cove` could not have installed a release or run bring-up. The plist
+now leads with the resolved cove bin dir, then the scheduling shell's PATH,
+then the standard macOS dirs; `_cove_bin()` never degrades to a bare name (it
+falls back to `sys.argv[0]`, which under launchd is the plist's absolute
+`ProgramArguments` path, and fails loud otherwise). `cove serve` renders its
+plist through the same helpers, since its login agent re-execs `cove` too.
+
+Scheduled failures surface only in `~/Library/Logs/cove-update.log`. Nothing
+pushes them to the operator, `cove status` does not report update-job health,
+and a converge subprocess that exits non-zero does not fail `cove update`
+(its output lands in the same log). `cove update --check` is the on-demand
+view. The log is the failure surface, not a convenience: the operator has to
+know it exists and read it after a run that should have changed something.
