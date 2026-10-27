@@ -3,8 +3,7 @@ group_vars default, and adversarial wildcard/empty-value attempts.
 
 Also pins the cache-first admin-password provisioning in
 `compose/provision_forgejo.yml` (`TestProvisionCredentialCacheFirst`, plus a
-behavior check that executes the `creds`-tagged tasks with a fake `cove` when
-`ansible-playbook` is on PATH).
+behavior check that executes the `creds`-tagged tasks with a fake `cove`).
 
 Implements issue #44 — Forgejo's upstream default webhook.ALLOWED_HOST_LIST
 is `external`, which blocks webhook delivery to loopback/private targets.
@@ -190,13 +189,12 @@ def _argv(task: dict) -> list[str]:
 
 
 # --- Behavior harness -------------------------------------------------------
-# The repo does not ship ansible as a Python dependency (`cli/pyproject.toml`
-# has no ansible, and `import ansible` fails inside the test venv), so a
-# playbook-execution test can only run where the operator's own
-# `ansible-playbook` is on PATH; it skips everywhere else. The credential tasks
-# carry `tags: [creds]`, so `--tags creds` executes exactly that block against
-# localhost with a fake `cove` on PATH, and the fake records what ansible
-# actually ran. That is a real behavior check, not a re-read of the YAML.
+# `ansible-core` is a dev dependency (see `[dependency-groups]` in
+# `cli/pyproject.toml`), so `ansible-playbook` is on PATH in a normal dev venv
+# and this block always runs. The credential tasks carry `tags: [creds]`, so
+# `--tags creds` executes exactly that block against localhost with a fake
+# `cove` on PATH, and the fake records what ansible actually ran. That is a
+# real behavior check, not a re-read of the YAML.
 
 ANSIBLE_PLAYBOOK = shutil.which("ansible-playbook")
 
@@ -253,7 +251,11 @@ def _run_creds_block(tmp_path: Path, *, warm: bool, put_rc: int = 0):
 
 @pytest.mark.skipif(
     ANSIBLE_PLAYBOOK is None,
-    reason="ansible-playbook not on PATH (not a Python dependency of this project)",
+    reason=(
+        "ansible-playbook is missing from PATH, which a normal dev venv never "
+        "does: ansible-core is in the `dev` dependency group. Run `uv sync` "
+        "in cli/ (or `uv run --directory cli pytest`) to install it."
+    ),
 )
 class TestProvisionCredentialCacheFirstBehavior:
     """Execute the playbook's credential block and check what it actually ran."""
