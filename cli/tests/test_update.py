@@ -6,6 +6,7 @@ version's pins via the normal bring-up flow. `cove update auto` registers a
 daily non-interactive job. See docs/musings/2026-09-26-cove-update-command.md.
 """
 
+import os
 import plistlib
 from importlib.resources import files
 import tempfile
@@ -16,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -296,6 +298,127 @@ class TestUpdateAuto:
         result = CliRunner().invoke(upd.update, ["auto", "--off"])
         assert result.exit_code == 0, result.output
         assert not plist.exists()
+
+
+class TestScheduledAgentResolvesCove:
+    """The daily job crashed with `FileNotFoundError: 'cove'` (2026-10-27).
+
+    The rendered plist pinned a PATH without `~/.local/bin`, so at run time
+    `which("cove")` failed, and `_converge` fell back to the bare name "cove".
+    These tests pin both halves of the fix: the plist PATH names the resolved
+    binary's directory, and the binary path never degrades to a bare name.
+    """
+
+    def _tmp_plist(self, tmp_path, monkeypatch):
+        import cove.update as upd
+
+        plist = tmp_path / "LaunchAgents" / "app.cove.update.plist"
+        plist.parent.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(upd, "PLIST_PATH", plist)
+        monkeypatch.setattr(upd, "LOG_PATH", tmp_path / "cove-update.log")
+
+        def fake_run(cmd, **kw):
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        return plist
+
+    def _fake_cove(self, tmp_path) -> Path:
+        bin_dir = tmp_path / "userbin"
+        bin_dir.mkdir()
+        cove_bin = bin_dir / "cove"
+        cove_bin.write_text("#!/bin/sh\nexit 0\n")
+        cove_bin.chmod(0o755)
+        return cove_bin
+
+    def test_plist_path_resolves_the_installed_binary(self, tmp_path, monkeypatch):
+        import cove.update as upd
+
+        cove_bin = self._fake_cove(tmp_path)
+        monkeypatch.setattr(
+            upd, "which", lambda name: str(cove_bin) if name == "cove" else None
+        )
+        plist = self._tmp_plist(tmp_path, monkeypatch)
+
+        result = CliRunner().invoke(upd.update, ["auto"])
+        assert result.exit_code == 0, result.output
+
+        data = plistlib.loads(plist.read_bytes())
+        assert data["ProgramArguments"][0] == str(cove_bin)
+
+        agent_path = data["EnvironmentVariables"]["PATH"]
+        entries = agent_path.split(os.pathsep)
+        assert str(cove_bin.parent) in entries, (
+            f"agent PATH must carry the cove bin dir, got {entries}"
+        )
+        assert "/usr/bin" in entries and "/bin" in entries
+
+        # Behavioural: a launchd run (bare PATH replaced by the plist's PATH)
+        # resolves the very binary the agent invokes.
+        assert shutil.which("cove", path=agent_path) == str(cove_bin)
+
+    def test_shell_path_is_carried_into_the_agent_path(self, tmp_path, monkeypatch):
+        """`~/.local/bin` holds cove, uv, and ansible-playbook; the scheduling
+        shell's PATH is the truthful list of what the operator has."""
+        import cove.update as upd
+
+        cove_bin = self._fake_cove(tmp_path)
+        monkeypatch.setattr(upd, "which", lambda name: str(cove_bin))
+        monkeypatch.setenv("PATH", f"{cove_bin.parent}{os.pathsep}/opt/homebrew/bin")
+        plist = self._tmp_plist(tmp_path, monkeypatch)
+
+        result = CliRunner().invoke(upd.update, ["auto"])
+        assert result.exit_code == 0, result.output
+        data = plistlib.loads(plist.read_bytes())
+        entries = data["EnvironmentVariables"]["PATH"].split(os.pathsep)
+        assert entries[0] == str(cove_bin.parent), (
+            "the resolved cove dir must lead the agent PATH"
+        )
+        assert "/opt/homebrew/bin" in entries
+        assert entries.count(str(cove_bin.parent)) == 1, "PATH entries must be deduped"
+
+    def test_cove_bin_falls_back_to_the_running_binary(self, tmp_path, monkeypatch):
+        import cove.update as upd
+
+        cove_bin = self._fake_cove(tmp_path)
+        monkeypatch.setattr(upd, "which", lambda name: None)
+        monkeypatch.setattr("sys.argv", [str(cove_bin)])
+        assert upd._cove_bin() == str(cove_bin)
+
+    def test_cove_bin_never_returns_a_bare_name(self, tmp_path, monkeypatch):
+        import cove.update as upd
+
+        monkeypatch.setattr(upd, "which", lambda name: None)
+        monkeypatch.setattr("sys.argv", [str(tmp_path / "missing-cove")])
+        with pytest.raises(click.ClickException) as exc:
+            upd._cove_bin()
+        message = str(exc.value)
+        assert "not on PATH" in message
+        assert "cove update auto" in message
+
+    def test_quiet_converge_invokes_the_resolved_binary(self, monkeypatch):
+        import cove.update as upd
+
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, **kw):
+            calls.append([str(c) for c in cmd])
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(upd, "_convergence_pending", lambda wheel: True)
+        monkeypatch.setattr(upd, "_stack_running", lambda: True)
+        monkeypatch.setattr(upd, "_cove_bin", lambda: "/fake/bin/cove")
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+
+        upd._converge(check=False, quiet=True, wheel_path=None)
+
+        assert calls, "the quiet converge must spawn `cove up`"
+        assert calls[0] == [
+            "/fake/bin/cove",
+            "up",
+            "--no-provision",
+            "--non-interactive",
+        ], calls[0]
 # ---------------------------------------------------------------------------
 # Converge gating: bring up only when something was running AND the update
 # would actually change the stack (operator decision 2026-10-13).

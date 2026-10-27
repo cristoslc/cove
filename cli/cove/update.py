@@ -274,7 +274,7 @@ def _converge(check: bool, quiet: bool, wheel_path: str | None) -> None:
     if quiet:
         env = dict(os.environ, COVE_PULL_POLICY="always")
         subprocess.run(
-            [which("cove") or "cove", "up", "--no-provision", "--non-interactive"],
+            [_cove_bin(), "up", "--no-provision", "--non-interactive"],
             stdin=subprocess.DEVNULL, env=env, check=False,
         )
     else:
@@ -335,7 +335,63 @@ def _do_update(check: bool, quiet: bool) -> None:
 
 
 def _cove_bin() -> str:
-    return which("cove") or "cove"
+    """Absolute path to the installed `cove` executable.
+
+    `which` resolves through the invoking PATH. Under launchd the process was
+    started from the plist's absolute ProgramArguments path, so `sys.argv[0]`
+    is that same binary and is the fallback when the agent's PATH is bare.
+    Never returns a bare name: the literal "cove" fallback is exactly what
+    produced `FileNotFoundError: 'cove'` in the daily job (2026-10-27), where
+    the plist PATH omitted `~/.local/bin`.
+    """
+    found = which("cove")
+    if found:
+        return str(Path(found))
+    argv0 = Path(sys.argv[0] or "")
+    if argv0.is_absolute() and argv0.is_file() and os.access(argv0, os.X_OK):
+        return str(argv0)
+    raise click.ClickException(
+        "Cannot resolve the installed `cove` executable: it is not on PATH "
+        "and sys.argv[0] is not an absolute file. Re-run `cove update auto` "
+        "from a shell where `cove` is on PATH."
+    )
+
+
+# launchd starts an agent with a bare PATH. The update flow shells out to
+# `cove` (the converge re-exec), `uv` (wheel build and tool install), `git`
+# (the release worktree), `docker` (stack state), and `ansible-playbook` (the
+# converge). On macOS `cove`, `uv`, and `ansible-playbook` live in
+# `~/.local/bin`, which launchd's default PATH omits, so the generated plist
+# pins a PATH that contains them.
+_FALLBACK_PATH_DIRS = (
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+)
+
+
+def _plist_path(cove_bin: str) -> str:
+    """PATH for the scheduled run.
+
+    The resolved cove bin dir comes first, then the PATH the scheduling shell
+    ran under (where `cove update auto` was typed, so it names every tool the
+    operator actually has), then the standard macOS/Host dirs. Deduped with
+    order preserved; the first match wins, as in a shell.
+    """
+    candidates: list[str] = []
+    binary = Path(cove_bin)
+    if binary.is_absolute():
+        candidates.append(str(binary.parent))
+    candidates.extend(os.environ.get("PATH", "").split(os.pathsep))
+    candidates.extend(_FALLBACK_PATH_DIRS)
+    dirs: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in dirs:
+            dirs.append(candidate)
+    return os.pathsep.join(dirs)
 
 
 def _bootout() -> None:
@@ -368,7 +424,7 @@ def _render_plist(hour: int, minute: int) -> str:
     <key>StandardErrorPath</key><string>{LOG_PATH}</string>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PATH</key><string>{_plist_path(cove_bin)}</string>
         <key>HOME</key><string>{Path.home()}</string>
     </dict>
 </dict>
@@ -398,7 +454,13 @@ def update(ctx: click.Context, check: bool, quiet: bool):
 def auto(off_: bool, at: str):
     """Schedule `cove update --quiet` daily. The opt-in IS the approval.
 
-    Failures and rollbacks surface in the log; routine successes are silent.
+    The plist pins the `cove` this command resolves, so run it from the
+    installed tool, not a checkout's virtualenv: otherwise the daily job runs
+    that venv's binary, which disappears when the venv is rebuilt.
+
+    Routine success is silent. Every run writes to the log the agent points at
+    (`~/Library/Logs/cove-update.log` on macOS); that file is the only place a
+    failed scheduled run surfaces, and nothing pushes it to you.
     """
     if off_:
         _bootout()

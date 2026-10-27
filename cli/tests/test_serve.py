@@ -11,7 +11,9 @@ container operations run here. The operator runs `cove serve start` for the
 first real activation.
 """
 
+import os
 import plistlib
+import shutil
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -101,6 +103,30 @@ class TestServeStart:
         data = plistlib.loads(serve_world.plist.read_bytes())
         assert "StartCalendarInterval" not in data
         assert "KeepAlive" not in data
+
+    def test_start_plist_path_names_the_cove_bin_dir(
+        self, serve_world, tmp_path, monkeypatch
+    ):
+        """Same 2026-10-27 defect as the update agent: launchd's default PATH
+        omits the user bin dir, so `serve run`'s `cove up` re-exec could not
+        resolve `cove`. The rendered PATH must name the resolved binary."""
+        from cove.serve import serve
+
+        bin_dir = tmp_path / "userbin"
+        bin_dir.mkdir()
+        cove_bin = bin_dir / "cove"
+        cove_bin.write_text("#!/bin/sh\nexit 0\n")
+        cove_bin.chmod(0o755)
+        monkeypatch.setattr(serve_world.module, "_cove_bin", lambda: str(cove_bin))
+
+        result = CliRunner().invoke(serve, ["start"])
+        assert result.exit_code == 0, result.output
+        data = plistlib.loads(serve_world.plist.read_bytes())
+        assert data["ProgramArguments"][0] == str(cove_bin)
+
+        agent_path = data["EnvironmentVariables"]["PATH"]
+        assert str(bin_dir) in agent_path.split(os.pathsep)
+        assert shutil.which("cove", path=agent_path) == str(cove_bin)
 
     def test_start_bootstraps_into_user_session(self, serve_world):
         from cove.serve import serve

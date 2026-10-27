@@ -24,6 +24,7 @@ from shutil import which
 
 import click
 
+from cove.update import _cove_bin, _plist_path
 from cove.vault import unseal_or_warn
 
 LAUNCHD_LABEL = "app.cove.serve"
@@ -35,10 +36,6 @@ LOG_PATH = Path.home() / "Library" / "Logs" / "cove-serve.log"
 # bounded: the agent must always terminate.
 DOCKER_PROBE_ATTEMPTS = 15
 DOCKER_PROBE_INTERVAL_SECONDS = 2.0
-
-
-def _cove_bin() -> str:
-    return which("cove") or "cove"
 
 
 def _launchctl(*args: str, check: bool) -> subprocess.CompletedProcess:
@@ -76,7 +73,7 @@ def _render_plist() -> str:
     <key>StandardErrorPath</key><string>{LOG_PATH}</string>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>PATH</key><string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>PATH</key><string>{_plist_path(cove_bin)}</string>
         <key>HOME</key><string>{Path.home()}</string>
     </dict>
 </dict>
