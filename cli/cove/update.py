@@ -186,6 +186,9 @@ def _is_generated_compose_file(rel: str) -> bool:
     packaging without affecting any pin)."""
     return (
         rel == "nginx/default.conf"
+        # Rendered 0600 edge credentials (client token + backend key); the
+        # wheel ships only the template. Deployed presence is runtime state.
+        or rel == "nginx/llmproxy-auth.conf"
         or rel == "dnsmasq/cove.conf"
         or (rel.startswith("seeds/") and rel.endswith(".yaml"))
         or rel == ".env"

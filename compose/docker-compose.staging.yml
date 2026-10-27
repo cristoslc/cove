@@ -49,6 +49,8 @@ services:
       - ${NGINX_CONF_DIR:-./nginx}/cove-config-locations.conf:/etc/nginx/cove-config-locations.conf:ro
       - ${NGINX_CONF_DIR:-./nginx}/cove-pages-locations.conf:/etc/nginx/cove-pages-locations.conf:ro
       - ${NGINX_CONF_DIR:-./nginx}/cove-tunnel-shares.conf:/etc/nginx/cove-tunnel-shares.conf:ro
+      # llmproxy.cove edge credentials (staging render; secrets).
+      - ${NGINX_CONF_DIR:-./nginx}/llmproxy-auth.conf:/etc/nginx/llmproxy-auth.conf:ro
       - ${COVE_DATA_ROOT}/certs:/certs:ro
       - ${COVE_DATA_ROOT}/pages/sites:/data/pages/sites:ro
       - ${COVE_DATA_ROOT}/nginx/user.d:/etc/nginx/user.d:ro

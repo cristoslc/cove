@@ -22,7 +22,15 @@ from cove import __version__
 # wheel built from a clean checkout, e.g. the `cove update` git-worktree path,
 # has none). Pruning it left the file missing; Docker then auto-created it as a
 # directory and `docker restart cove-nginx` refused to start (2026-10-19 sev-2).
-RUNTIME_PRESERVED_FILES = (".env", "nginx/default.conf", "certs/rootCA.pem")
+# `nginx/llmproxy-auth.conf` is the rendered 0600 edge credential file: the
+# wheel ships only its template, so pruned-then-recreated would hand the running
+# nginx a fresh inode it never sees (same stale-inode class).
+RUNTIME_PRESERVED_FILES = (
+    ".env",
+    "nginx/default.conf",
+    "nginx/llmproxy-auth.conf",
+    "certs/rootCA.pem",
+)
 
 # The live compose project name, hardcoded in compose/docker-compose.yml. Docker
 # Compose keys a project by (name, working directory), so a second compose dir

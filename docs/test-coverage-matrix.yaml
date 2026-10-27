@@ -265,6 +265,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "llmproxy.cove authentication edge: clients present the cove-owned client token (401 otherwise, before any upstream) and nginx injects the ACTIVE backend key paired with $llmproxy_upstream; the public vhost holds no secret, the rendered edge config is 0600, and `cove up` fails loud when the token is missing"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable
   - path: "cove litellm up"
     blast_radius: high
     coverage:

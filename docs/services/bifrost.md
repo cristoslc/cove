@@ -45,6 +45,29 @@ touching a single client.
   names the ACTIVE proxy upstream: `http://litellm:4000` today (LiteLLM
   still serves agent traffic), flipped to `http://bifrost:8080` on cutover
   day. One line changes; nothing else does.
+- **Edge authentication (clients hold ONE token)**: `llmproxy.cove` is the
+  authentication edge, not a thin alias. Clients present a **client-scoped,
+  cove-owned token** — never a backend credential — and nginx rejects anything
+  else with `401` before an upstream sees the request. It then injects the
+  ACTIVE backend credential toward the upstream (the LiteLLM master key
+  today, the Bifrost virtual key after the flip). Backend credentials never
+  reach clients, so a proxy swap cannot strand a client credential.
+
+  | credential | who holds it | where it lives | where it is read |
+  | --- | --- | --- | --- |
+  | client token | machine clients (opencode, omp, pi) | 1Password item `Cove LLM Proxy Client Key` (URL-keyed `https://llmproxy.cove.local/`, field `client_key`; shared across machines) plus the Vault `op-cache` entry | `cove up` resolves it (env `COVE_LLM_PROXY_CLIENT_KEY` -> compose `.env` -> Vault cache -> provision the item) and renders it into `nginx/llmproxy-auth.conf` at mode 0600 |
+  | LiteLLM master key | the edge and LiteLLM only | 1Password `LiteLLM Proxy` item -> compose `.env` `LITELLM_MASTER_KEY` | `cove up` reads `.env` and renders it into the same 0600 file; the client never sees it |
+  | Bifrost virtual key | the edge and Bifrost only | gateway-generated, projected into compose `.env` as `BIFROST_CLIENT_VIRTUAL_KEY` | same render path; used only when the active upstream is `http://bifrost:8080` |
+
+  The rendered credential file (`compose/nginx/llmproxy-auth.conf`, rendered
+  at mode `0600` and gitignored) carries two `map`s: one exact-match map of
+  `"Bearer <client token>"`, and one that pairs every switchable upstream with
+  its backend key. The public `default.conf` (world-readable in the
+  container) only references `$llmproxy_authorized` and
+  `$llmproxy_upstream_key`, so it holds no secret. An upstream missing from
+  the map gets an empty key and fails closed at the upstream rather than
+  borrowing another product's credential. `cove up` refuses to render when
+  the client token is missing (never an unauthenticated or wildcard edge).
 - **Streaming-critical settings** are copied from the litellm vhost:
   `proxy_buffering off` and 3600s read/send timeouts, because the ladder
   serves 3600-second streams.
@@ -56,6 +79,29 @@ touching a single client.
   upstream report. The dnsmasq resolver is wildcard-based
   (`address=/cove/` and `address=/cove.local/`), so both neutral names
   resolve with no per-name entry.
+
+### Migration and rollback (edge auth)
+
+The edge gate turns on the moment this release's `cove up` renders nginx, so the
+credential swap below is the lane's one coordinated change. Cove executes none
+of it.
+
+- **Migration**: replace each client's credential slot (today
+  `~/.config/workstation/secrets/litellm-master-key`, sent straight to
+  `litellm.cove`) with the edge token from
+  `op://Private/Cove LLM Proxy Client Key/client_key`, and point its base URL
+  at `https://llmproxy.cove/v1`. Clients then reach LiteLLM through the edge,
+  which injects the master key server-side. The LiteLLM master key stops being
+  a client credential entirely — it is an edge/backend credential from then on.
+- **Rollback (before the drain window closes)**: flip `$llmproxy_upstream`
+  back to `http://litellm:4000`, release, and re-render. Clients need no
+  change: the client token and the server-side injection are independent of
+  which backend is active.
+- **Rolling back the edge itself** (a prior wheel): the old `default.conf` has
+  no edge auth and forwards the client's own `Authorization` header, so a
+  client already holding the edge token starts failing against the backend.
+  Reverting the edge is therefore a coordinated change with the lane, exactly
+  like a client re-point — not a quiet rollback.
 
 ## Configuration ownership
 
@@ -228,8 +274,10 @@ services.
 
 ```
 clients ──https──> nginx :443
-         llmproxy.cove ─> $llmproxy_upstream (the ACTIVE proxy; one IaC line)
-                        └─ today: litellm :4000 — from cutover: bifrost :8080 (127.0.0.1:4002)
+         llmproxy.cove ── auth edge: client token only (401 otherwise)
+                        ├─ injects $llmproxy_upstream_key (backend key, server-side)
+                        └─> $llmproxy_upstream (the ACTIVE proxy; one IaC line)
+                        ├─ today: litellm :4000 — from cutover: bifrost :8080 (127.0.0.1:4002)
          bifrost.cove (admin console) ─> bifrost :8080
                                            │  config.json (ro) + config.db (rw)
                                            │  env_file local.env + compose .env
@@ -278,12 +326,15 @@ cutover day, then teardown one week later.
 2. Start the bifrost profile: `cove bifrost up` (skip if already running).
 3. Smoke the neutral endpoint with a real streaming request through the
    ladder: a `stream: true` chat completion against
-   `https://llmproxy.cove/v1/chat/completions` with the virtual key.
+   `https://llmproxy.cove/v1/chat/completions` with the CLIENT TOKEN (the
+   edge injects the Bifrost virtual key server-side; the virtual key is no
+   longer a client credential).
 4. Rotate the Synthetic key (provider side, then into both env copies —
    Bifrost's `local.env` and LiteLLM's, which still drains for a week).
-5. Notify the workstation lane with the cutover date; the lane re-points
-   clients to `llmproxy.cove` and schedules the ollama-cloud key rotation
-   for the same day.
+5. Notify the workstation lane with the cutover date; the lane has already
+   replaced the clients' credential slot with the edge client token (see
+   "Migration and rollback" above) and schedules the ollama-cloud key
+   rotation for the same day.
 6. Watch the old `litellm.cove` vhost drain over the week.
 
 ### Phase 2 — teardown day (T+7)

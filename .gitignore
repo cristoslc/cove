@@ -65,6 +65,8 @@ cli/.pytest_cache/
 
 .agents/cove/
 compose/nginx/default.conf
+# Rendered llmproxy edge credentials (client token + active backend key), 0600.
+compose/nginx/llmproxy-auth.conf
 
 # Dispatch artifacts (opencode subagent dispatch)
 .subagents/

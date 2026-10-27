@@ -41,6 +41,7 @@ from cove.credential_env import scrubbed_environment
 from cove.constants import VAULT_CONTAINER_NAME
 from cove.vault_unseal import ensure_unsealed, vault_health
 from cove.state import ensure_host_vars
+from cove.llmproxy import edge_secret_vars_file
 
 
 def _detect_running_optional_profiles() -> list[str]:
@@ -429,6 +430,12 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
 
     base_cmd = ["ansible-playbook", "-i", str(inventory)]
     base_cmd.extend(["-e", f"@{host_vars_file}"])
+    # The llmproxy.cove edge authenticates clients with a cove-owned token and
+    # injects the ACTIVE backend key server-side, so both must reach the nginx
+    # templates. A 0600 extra-vars file keeps them out of argv (where `ps`
+    # would expose them) and out of the compose .env (the backend services own
+    # their own entries); it is removed at process exit.
+    base_cmd.extend(["-e", f"@{edge_secret_vars_file()}"])
     # Ansible gathers ansible_hostname from the kernel hostname, which on macOS
     # drifts to the DHCP-assigned name when HostName is unset (e.g. 'Mac'). The
     # CLI keys everything else (cert SANs, host_vars, 1Password op_refs) on the
