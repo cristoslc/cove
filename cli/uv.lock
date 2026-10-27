@@ -235,7 +235,7 @@ wheels = [
 
 [[package]]
 name = "cove-cli"
-version = "0.15.9"
+version = "0.15.12"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
