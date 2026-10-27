@@ -181,3 +181,13 @@ recorded at implementation:
   `allowed_requests` leaves only `chat_completion_stream` enabled; the live
   smoke shows a non-streaming request to the gated tier never reaches any
   upstream. The improvement over LiteLLM holds at runtime.
+- **Cutover plan approved (2026-10-26).** The operator approved all four
+  pending decisions above (pgdata: secure-delete; key rotation: at cutover,
+  the ollama half scheduled by the workstation lane against the date cove
+  sends; 1Password `LiteLLM Proxy` item: retained until the drain window
+  closes, then deleted; drain window: one week) and adopted the
+  product-neutral client endpoint `llmproxy.cove` (+ `.cove.local`) as the
+  canonical client-facing surface — clients re-point there, and product
+  swaps change the alias vhost's upstream variable only. The resolved
+  two-phase cutover runbook lives in
+  [docs/services/bifrost.md](../services/bifrost.md) ("Cutover checklist").

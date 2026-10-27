@@ -194,6 +194,40 @@ server {
     }
 }
 
+# llmproxy.cove — product-neutral client endpoint (OpenAI-compatible)
+# THE canonical client-facing LLM endpoint. The client contract is
+# OpenAI-compatible HTTP, so the hostname must outlive any single product:
+# clients point at llmproxy.cove, and a product swap changes only the
+# upstream variable below. The product hostnames (litellm.cove, bifrost.cove)
+# remain the admin/debug surfaces. Streaming-critical settings match the
+# litellm vhost: the ladder serves 3600-second streams, so buffering stays
+# off and the read/send timeouts are long.
+server {
+    listen 443 ssl;
+    server_name llmproxy.cove llmproxy.cove.local;
+
+    ssl_certificate     /certs/cove.local.pem;
+    ssl_certificate_key /certs/cove.local-key.pem;
+
+    resolver 127.0.0.11 valid=10s;
+    # THE PRODUCT-SWAP LINE: the one IaC line that changes when the serving
+    # product swaps. It names the ACTIVE proxy upstream — litellm today;
+    # http://bifrost:8080 from cutover day (docs/services/bifrost.md,
+    # "Client endpoint" + the cutover runbook).
+    set $llmproxy_upstream http://litellm:4000;
+
+    location / {
+        proxy_pass $llmproxy_upstream$request_uri;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+}
+
 # speedtest.cove — Speedtest Tracker
 # speedtest-tracker is an optional profiled service. Using a variable for
 # the upstream host defers DNS resolution to request time, so nginx starts
