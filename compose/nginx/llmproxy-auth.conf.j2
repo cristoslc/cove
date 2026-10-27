@@ -1,0 +1,30 @@
+# llmproxy.cove edge credentials. THIS FILE CONTAINS SECRETS.
+# Rendered by `cove up` from llmproxy-auth.conf.j2 at mode 0600 and included by
+# default.conf (http context). Gitignored; never commit, never print, never
+# copy to a client.
+#
+# Two credentials live here and they have different owners:
+#   * CLIENT TOKEN — the one stable credential machine clients hold. Cove-owned,
+#     edge-scoped, and independent of which backend serves traffic.
+#   * BACKEND KEY — the ACTIVE upstream's own credential (LiteLLM master key
+#     today, Bifrost virtual key after the cutover). It exists only here and in
+#     that backend's env; it never reaches a client.
+#
+# Client auth: anything that is not the exact bearer is unauthorized BEFORE any
+# upstream sees the request (default.conf returns 401 on $llmproxy_authorized).
+# The comparison is an exact map key, so an empty token can never become a
+# wildcard: "Bearer " only matches a client that literally sends that string.
+map $http_authorization $llmproxy_authorized {
+    default                             0;
+    "Bearer {{ llmproxy_client_key }}"  1;
+}
+
+# Backend credential, paired with `set $llmproxy_upstream` in default.conf.j2.
+# The product swap is that ONE line: this map already carries the key for every
+# upstream it can name. An unknown upstream gets an empty key (fail closed at
+# the upstream) rather than borrowing another product's credential.
+map $llmproxy_upstream $llmproxy_upstream_key {
+    default                 "";
+    "http://litellm:4000"   "Bearer {{ llmproxy_litellm_key }}";
+    "http://bifrost:8080"   "Bearer {{ llmproxy_bifrost_key }}";
+}

@@ -145,22 +145,38 @@ else
 fi
 
 # Staging nginx conf dir: static files from the branch + a fresh render of
-# default.conf.j2 (staging render — the live conf is never touched).
+# default.conf.j2 and the llmproxy edge auth include (staging render — the live
+# conf is never touched). The staging edge token is generated per deploy: it is
+# a local test credential, never the live client token.
 NGINX_STAGING_CONF="$STAGING_DATA_ROOT/nginx-conf"
 for f in landing.html pages.html cove-config-locations.conf cove-pages-locations.conf cove-tunnel-shares.conf; do
     cp "$COMPOSE_DIR/nginx/$f" "$NGINX_STAGING_CONF/$f"
 done
-"$STAGING_VENV/bin/python" - "$COMPOSE_DIR/nginx/default.conf.j2" "$NGINX_STAGING_CONF/default.conf" "$ADE_PORT" <<'PYEOF'
+STAGING_LLMPROXY_CLIENT_KEY="sk-staging-$(openssl rand -hex 16)"
+export STAGING_LLMPROXY_CLIENT_KEY
+"$STAGING_VENV/bin/python" - "$COMPOSE_DIR/nginx" "$NGINX_STAGING_CONF" "$ADE_PORT" <<'PYEOF'
+import os
 import sys
+from pathlib import Path
+
 from jinja2 import Environment, FileSystemLoader
 
-template_path, dest, ade_port = sys.argv[1], sys.argv[2], sys.argv[3]
-env = Environment(loader=FileSystemLoader(str(__import__("pathlib").Path(template_path).parent)))
-rendered = env.get_template("default.conf.j2").render({"ade_port": ade_port})
-with open(dest, "w") as f:
-    f.write(rendered)
+src_dir, dest_dir, ade_port = sys.argv[1], sys.argv[2], sys.argv[3]
+env = Environment(loader=FileSystemLoader(src_dir))
+default = env.get_template("default.conf.j2").render({"ade_port": ade_port})
+Path(dest_dir, "default.conf").write_text(default)
+auth = env.get_template("llmproxy-auth.conf.j2").render({
+    "llmproxy_client_key": os.environ["STAGING_LLMPROXY_CLIENT_KEY"],
+    # Staging has no real backends; these placeholders never leave the
+    # isolated staging project.
+    "llmproxy_litellm_key": "sk-staging-litellm",
+    "llmproxy_bifrost_key": "sk-staging-bifrost",
+})
+auth_path = Path(dest_dir, "llmproxy-auth.conf")
+auth_path.write_text(auth)
+auth_path.chmod(0o600)
 PYEOF
-echo "  nginx conf: rendered from branch template (ade_port=$ADE_PORT)" >&2
+echo "  nginx conf: rendered from branch template (ade_port=$ADE_PORT; llmproxy edge auth 0600)" >&2
 
 # ToolHive seed (staging root only; mirrors bringup.yml first-boot copies):
 # curated registry, default permission profile, and the control-plane config

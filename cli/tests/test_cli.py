@@ -29,7 +29,7 @@ CLI_DIR = PROJECT_ROOT / "cli"
 
 
 @pytest.fixture(autouse=True)
-def _fake_ansible_popen(monkeypatch):
+def _fake_ansible_popen(monkeypatch, tmp_path):
     """_run_ansible always tees ansible output through subprocess.Popen.
     Fake it so CLI up-flow tests never invoke the real ansible-playbook."""
     class _Proc:
@@ -69,6 +69,12 @@ def _fake_ansible_popen(monkeypatch):
     # Default: passwordless sudo NOT installed, so up-flow tests exercise the
     # getpass prompt path unless a test overrides this below.
     monkeypatch.setattr("cove.cli.passwordless_sudo_ok", lambda: False)
+    # `cove up` resolves the llmproxy.cove edge credentials (1Password/Vault)
+    # before Ansible. Tests must never touch the operator's real credentials:
+    # hand Ansible a small extra-vars file instead.
+    edge_vars = tmp_path / "llmproxy-edge-vars.yml"
+    edge_vars.write_text("llmproxy_client_key: test-client-token\n")
+    monkeypatch.setattr("cove.cli.edge_secret_vars_file", lambda: edge_vars)
     return holder
 
 
@@ -635,6 +641,47 @@ class TestCoveUpCommand:
             assert hostname_override == "ansible_hostname=stable-host", (
                 f"ansible_hostname must match the host_vars stem (stable), "
                 f"got: {hostname_override}"
+            )
+
+    def test_up_passes_the_llmproxy_edge_vars_file(
+        self, tmp_path, monkeypatch, _fake_ansible_popen
+    ):
+        """cove up hands the llmproxy edge credentials to Ansible through a
+        file (`-e @<path>`), never as an argv literal where `ps` would expose a
+        client token or backend key."""
+        compose_sub = tmp_path / "compose"
+        compose_sub.mkdir()
+        (compose_sub / "inventory.yml").write_text("---\n")
+        (compose_sub / "bringup.yml").write_text("---\n")
+        host_vars_file = tmp_path / "state" / "hosts" / "stable-host.yml"
+        host_vars_file.parent.mkdir(parents=True)
+
+        with patch.object(cove.cli.Path, "cwd", return_value=tmp_path), patch(
+            "subprocess.run"
+        ) as mock_run, patch(
+            "cove.cli.ensure_host_vars", return_value=host_vars_file
+        ), patch("cove.status.check_all") as mock_check, patch(
+            "cove.cli._detect_running_optional_profiles", return_value=[]
+        ), patch("cove.cli.getpass.getpass", return_value="secret"):
+            mock_run.return_value.returncode = 0
+            mock_check.return_value = []
+
+            _invoke_callback(
+                "up", no_provision=True, no_upgrade=True, all_=False, log=False
+            )
+
+            bringup_args = [str(a) for a in _fake_ansible_popen["calls"][0]]
+            edge_refs = [
+                a for a in bringup_args
+                if a.startswith("@") and a.endswith("llmproxy-edge-vars.yml")
+            ]
+            assert edge_refs, (
+                "cove up must pass the llmproxy edge credential file as an "
+                f"@-prefixed extra var; got: {bringup_args}"
+            )
+            assert Path(edge_refs[0][1:]).exists()
+            assert "test-client-token" not in " ".join(bringup_args), (
+                "the client token must never appear in ansible argv"
             )
 
     def test_up_no_become_prompt_per_playbook(self, tmp_path, monkeypatch, _fake_ansible_popen):

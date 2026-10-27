@@ -1,3 +1,10 @@
+# The llmproxy.cove edge maps (llmproxy-auth.conf) key on
+# "Bearer <client token>" — a string longer than nginx's default 64-byte
+# map hash bucket, so the default bucket size fails to build with
+# "you should increase map_hash_bucket_size". 256 leaves room for a longer
+# token without touching the maps' exact-match semantics.
+map_hash_bucket_size 256;
+
 # Map client User-Agent to platform name for /config/dns auto-detection.
 # The /config/dns endpoint uses $config_dns_type to serve the correct
 # DNS setup script for the visitor's operating system.
@@ -36,6 +43,11 @@ include /etc/nginx/user.d/*.conf;
 
 # Public share routes rendered by `cove tunnel` (empty file when no shares).
 include /etc/nginx/cove-tunnel-shares.conf;
+
+# llmproxy.cove edge credentials (client token + active backend key). Rendered
+# separately by `cove up` at mode 0600 and gitignored, so this file — which is
+# world-readable inside the container — never carries a credential.
+include /etc/nginx/llmproxy-auth.conf;
 
 # Default server — catches direct IP access (LAN, Tailscale).
 # Serves the Cove landing page so direct IP access shows the portal.
@@ -202,6 +214,12 @@ server {
 # remain the admin/debug surfaces. Streaming-critical settings match the
 # litellm vhost: the ladder serves 3600-second streams, so buffering stays
 # off and the read/send timeouts are long.
+#
+# This vhost is also the AUTHENTICATION EDGE: clients present ONE cove-owned
+# client token (never a backend key), nginx rejects anything else with 401
+# before an upstream sees it, and nginx injects the ACTIVE backend credential
+# server-side. Backend credentials never reach clients, so a proxy swap cannot
+# strand a client credential.
 server {
     listen 443 ssl;
     server_name llmproxy.cove llmproxy.cove.local;
@@ -213,8 +231,18 @@ server {
     # THE PRODUCT-SWAP LINE: the one IaC line that changes when the serving
     # product swaps. It names the ACTIVE proxy upstream — litellm today;
     # http://bifrost:8080 from cutover day (docs/services/bifrost.md,
-    # "Client endpoint" + the cutover runbook).
+    # "Client endpoint" + the cutover runbook). The matching backend key is
+    # already in llmproxy-auth.conf's map, so the flip is this line, not a
+    # client change.
     set $llmproxy_upstream http://litellm:4000;
+
+    # Client auth at the edge. $llmproxy_authorized is an exact-match map of
+    # "Bearer <client token>" (llmproxy-auth.conf), so anything else — a
+    # missing header, a backend key, a stale token — is 401 here and never
+    # reaches the upstream.
+    if ($llmproxy_authorized = 0) {
+        return 401;
+    }
 
     location / {
         proxy_pass $llmproxy_upstream$request_uri;
@@ -222,6 +250,10 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto https;
+        # Inject the ACTIVE backend credential (paired with $llmproxy_upstream
+        # by the map in llmproxy-auth.conf). The client's own Authorization
+        # header is replaced here, never forwarded.
+        proxy_set_header Authorization $llmproxy_upstream_key;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
         proxy_buffering off;

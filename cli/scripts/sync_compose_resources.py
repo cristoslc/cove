@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SRC = REPO_ROOT / "compose"
 DST = REPO_ROOT / "cli" / "cove" / "resources" / "compose"
 
-EXCLUDE_NAMES = {".env", "default.conf", "cove.conf"}
+EXCLUDE_NAMES = {".env", "default.conf", "cove.conf", "llmproxy-auth.conf"}
 EXCLUDE_SUFFIXES = {".env"}
 EXCLUDE_DIRS = {"data", "logs", "raft", "__pycache__"}
 EXCLUDE_HOST_VARS_YML = True

@@ -529,6 +529,29 @@ def _neutral_endpoint_upstream() -> str | None:
     return None
 
 
+def _neutral_endpoint_backend_key_state() -> str | None:
+    """Whether the deployed edge config carries a backend key for the ACTIVE
+    upstream: "SET", "missing", or None when the deployed edge config is
+    absent (reported, never guessed). Names/states only — never the value."""
+    compose = resolve_compose_dir()
+    conf = compose / "nginx" / "llmproxy-auth.conf"
+    if not conf.exists():
+        return None
+    upstream = _neutral_endpoint_upstream()
+    if not upstream:
+        return None
+    prefix = f'"{upstream}"'
+    for line in conf.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped.startswith(prefix):
+            continue
+        value = stripped[len(prefix):].strip().rstrip(";").strip().strip('"')
+        if not value.startswith("Bearer "):
+            return "missing"
+        return "SET" if value[len("Bearer "):].strip() else "missing"
+    return "missing"
+
+
 def _probe_health_code(host: str) -> int | None:
     """HTTP status of GET /health through nginx for one hostname (SNI-free
     curl with an explicit Host header), or None when the probe itself
@@ -676,6 +699,22 @@ def status():
     else:
         click.echo(
             "  llmproxy.cove upstream: not found in deployed nginx config"
+        )
+    # The auth model, in one line: clients hold ONE cove-owned edge token; the
+    # ACTIVE backend credential is injected server-side and never leaves the
+    # edge, so a proxy swap cannot strand a client credential.
+    click.echo(
+        "  llmproxy.cove edge auth: clients authenticate at the edge with the "
+        "cove-owned client token; backend credentials never reach clients"
+    )
+    key_state = _neutral_endpoint_backend_key_state()
+    if key_state is None:
+        click.echo(
+            "  llmproxy.cove backend key: not found in deployed edge config"
+        )
+    else:
+        click.echo(
+            f"  llmproxy.cove backend key: {key_state} (injected server-side)"
         )
     if not all_ok:
         raise SystemExit(1)

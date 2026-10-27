@@ -123,6 +123,13 @@ curl -H "Host: litellm.cove.local" https://127.0.0.1/v1/models
 
 If these succeed, configure the client to use `https://litellm.cove.local/v1` as its API base URL.
 
+> **Clients do not hold the master key.** The master key is an
+> edge/backend credential. Machine clients authenticate at
+> `https://llmproxy.cove/v1` with the cove-owned edge client token
+> (`op://Private/Cove LLM Proxy Client Key/client_key`), and nginx injects the
+> master key server-side. See [bifrost.md](bifrost.md#client-endpoint-llmproxycove-product-neutral)
+> for the credential table, the swap line, and the migration/rollback order.
+
 ### Admin routes accessible
 
 If `/key/generate` or other admin routes are reachable, inspect the generated nginx config's LiteLLM server block and confirm its route whitelist is intact.

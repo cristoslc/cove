@@ -498,6 +498,7 @@
         - cove-config-locations.conf
         - cove-pages-locations.conf
         - cove-tunnel-shares.conf
+        - llmproxy-auth.conf
       register: nginx_mount_targets
     - name: List contents of wedged nginx mount directories
       ansible.builtin.find:
@@ -535,6 +536,30 @@
         src: "{{ nginx_conf_dir }}/default.conf.j2"
         dest: "{{ nginx_conf_dir }}/default.conf"
         mode: "0644"
+      notify: Reload nginx
+
+    # The llmproxy.cove edge credentials: the cove-owned CLIENT token clients
+    # present, plus the ACTIVE backend key nginx injects upstream. They are
+    # rendered into a SEPARATE 0600 file (gitignored) so the world-readable
+    # default.conf never carries a credential, and they reach Ansible as extra
+    # vars from `cove up` — never argv, never the compose .env (the backend
+    # services own their own env entries).
+    - name: Assert the llmproxy edge client token was provided
+      ansible.builtin.assert:
+        that:
+          - llmproxy_client_key | default('', true) | string | length > 0
+        fail_msg: >-
+          llmproxy_client_key is empty, so the llmproxy.cove edge would render
+          without client authentication. `cove up` provisions the token from
+          the 'Cove LLM Proxy Client Key' 1Password item (Vault-cached) and
+          passes it to Ansible; run `cove up` rather than ansible-playbook.
+        quiet: true
+
+    - name: Render llmproxy edge auth config from template
+      ansible.builtin.template:
+        src: "{{ nginx_conf_dir }}/llmproxy-auth.conf.j2"
+        dest: "{{ nginx_conf_dir }}/llmproxy-auth.conf"
+        mode: "0600"
       notify: Reload nginx
 
     - name: Ensure cove-tunnel-shares.conf exists (empty state, never a directory)

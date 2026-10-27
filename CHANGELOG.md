@@ -6,6 +6,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Added
+- **`llmproxy.cove` authenticates clients at the edge** ([#113](../../pulls/113)) — the stable client endpoint is now the authentication edge. Machine clients present ONE cove-owned client token (1Password `Cove LLM Proxy Client Key`, Vault-cached; rendered into a `0600` `nginx/llmproxy-auth.conf`), never a backend credential; anything else is `401` before any upstream. nginx injects the ACTIVE backend key (LiteLLM master key today, Bifrost virtual key after the swap) server-side, paired with `$llmproxy_upstream` through a map, so the cutover stays one line and no client token ever has to change. The world-readable `default.conf` carries no secret, `cove up` refuses to render without a client token (an empty token can never become a wildcard), and `cove bifrost status` reports the auth model plus the active backend-key state. The LiteLLM master key is no longer a client credential.
+
 ### Changed
 - **Bifrost egress sink additionally allows `getbifrost.ai`** — Bifrost loads its pricing catalog from that host at startup and exits when unreachable (crash-looping behind the fail-closed DNS sink; observed in the 2026-10-26 converge). The sink now allows exactly three documented vendor contacts: the two inference providers plus the pricing-catalog fetch. Vendoring a pricing snapshot was rejected (stale snapshots mean wrong cost numbers); rationale recorded in `compose/bifrost/dnsmasq.conf` and docs/services/bifrost.md, and the allowlist test pins the exact three-name list.
 

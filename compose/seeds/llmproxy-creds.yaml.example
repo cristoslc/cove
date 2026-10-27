@@ -1,0 +1,25 @@
+# Cove LLM proxy EDGE client token seed for 1Password.
+# Provision it with `cove up`: it renders the token into this seed, creates the
+# shared item, and caches it in Vault. Do NOT run `cove creds 1p-bulk-write` on
+# this .example directly — the `{{generate:client_key}}` placeholder must be
+# rendered first (the 1p-bulk-write grammar takes an integer length).
+# Copy to llmproxy-creds.yaml to pin values for your host.
+#
+# This item holds ONE credential: the client-scoped token that machine clients
+# (opencode, omp, pi) present to `https://llmproxy.cove`. It is keyed to the
+# endpoint URL (NOT per-hostname), so every machine and every client shares the
+# same stable token. It is NOT the LiteLLM master key: backend credentials stay
+# server-side in the rendered nginx config and the backend service envs.
+#
+# Rotation: regenerate this field, then `cove creds vault-put
+# 'op://Private/Cove LLM Proxy Client Key/client_key'` and re-render the edge
+# with `cove up`. Clients pick up the new token on their next credential sync.
+
+items:
+  - title: "Cove LLM Proxy Client Key"
+    vault: Private
+    category: login
+    fields:
+      client_key[concealed]: "{{generate:client_key}}"
+      url[text]: "https://llmproxy.cove.local/"
+      purpose[text]: "llmproxy.cove edge client token (clients authenticate here; backend keys never reach clients)"
