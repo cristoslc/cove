@@ -600,6 +600,105 @@ class TestConvergeGating:
         )
 
 
+class TestConvergeFailureFailsTheUpdate:
+    """A converge that exits non-zero must fail `cove update` (2026-10-27).
+
+    The flow spawned the converge with `check=False` and never inspected the
+    return code, so a stack that did not converge still reported success and
+    exited 0. A job that says "updated" while the stack is broken is worse than
+    one that fails: the operator's next action depends on which half failed.
+    """
+
+    def _run_update(self, deployed_compose, monkeypatch, tmp_path, converge_rc):
+        import cove.update as upd
+
+        # Force a pending converge: a changed bundled template.
+        (deployed_compose / "nginx" / "default.conf.j2").write_text("changed\n")
+        monkeypatch.setattr(upd, "__version__", "0.9.0")  # latest == installed
+        monkeypatch.setattr(upd, "LOG_PATH", tmp_path / "cove-update.log")
+
+        calls: list[list[str]] = []
+
+        def fake_run(cmd, *a, **kw):
+            argv = [str(c) for c in cmd]
+            calls.append(argv)
+            if "ls-remote" in argv:
+                return SimpleNamespace(
+                    returncode=0, stdout=_ls_remote(["v0.9.0"]), stderr=""
+                )
+            if "get-url" in argv:
+                return SimpleNamespace(
+                    returncode=0, stdout="ssh://git.cove.example/cove.git", stderr=""
+                )
+            if "ps" in argv:
+                return SimpleNamespace(returncode=0, stdout="cove-nginx\n", stderr="")
+            if "up" in argv:
+                return SimpleNamespace(returncode=converge_rc, stdout="", stderr="")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        return CliRunner().invoke(upd.update, ["--quiet"]), calls
+
+    def test_failed_converge_exits_nonzero_naming_the_converge_and_log(
+        self, deployed_compose, monkeypatch, tmp_path
+    ):
+        result, calls = self._run_update(
+            deployed_compose, monkeypatch, tmp_path, converge_rc=1
+        )
+        assert installed_or_up_calls(calls), "the converge must have been attempted"
+        assert result.exit_code != 0, (
+            f"a failed converge must fail the update, got exit 0:\n{result.output}"
+        )
+        output = result.output
+        assert "did not converge" in output
+        assert "exited 1" in output
+        assert str(tmp_path / "cove-update.log") in output
+
+    def test_successful_converge_keeps_the_update_green(
+        self, deployed_compose, monkeypatch, tmp_path
+    ):
+        result, calls = self._run_update(
+            deployed_compose, monkeypatch, tmp_path, converge_rc=0
+        )
+        assert installed_or_up_calls(calls), "the converge must have been attempted"
+        assert result.exit_code == 0, result.output
+        assert "did not converge" not in result.output
+
+    def test_install_failure_names_the_install_not_the_converge(
+        self, deployed_compose, monkeypatch
+    ):
+        """The two halves get different messages: the operator fixes a broken
+        install differently from a broken converge."""
+        import cove.update as upd
+
+        monkeypatch.setattr(upd, "__version__", "0.8.0")  # latest 0.9.0 > installed
+
+        def fake_run(cmd, *a, **kw):
+            argv = [str(c) for c in cmd]
+            if "ls-remote" in argv:
+                return SimpleNamespace(
+                    returncode=0, stdout=_ls_remote(["v0.9.0"]), stderr=""
+                )
+            if "get-url" in argv:
+                return SimpleNamespace(
+                    returncode=0, stdout="ssh://git.cove.example/cove.git", stderr=""
+                )
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        def broken_install(tag):
+            raise subprocess.CalledProcessError(2, ["uv", "tool", "install", "x.whl"])
+
+        monkeypatch.setattr(upd.subprocess, "run", fake_run)
+        monkeypatch.setattr(upd, "_install_wheel", broken_install)
+
+        result = CliRunner().invoke(upd.update, ["--quiet"])
+        assert result.exit_code != 0, result.output
+        output = result.output
+        assert "installing cove 0.9.0 failed" in output
+        assert "uv tool install x.whl" in output
+        assert "did not converge" not in output
+
+
 def installed_or_up_calls(calls):
     """Calls that either install (uv tool install) or bring up (`cove up`)."""
     return [

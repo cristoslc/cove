@@ -251,9 +251,22 @@ def _convergence_pending(wheel_path: str | None) -> bool:
     return deployed != bundled
 
 
+def _where_to_look(quiet: bool) -> str:
+    """One clause naming where a failed step's command output went."""
+    if quiet:
+        return f"The daily run's log is {LOG_PATH}."
+    return "The command output is above."
+
+
 def _converge(check: bool, quiet: bool, wheel_path: str | None) -> None:
     """Bring up, but only when it has impact: pending pin changes AND a stack
-    that is already running."""
+    that is already running.
+
+    A converge that exits non-zero fails the update (ClickException, exit 1).
+    It must never report success over a stack that did not converge: the
+    operator's next action differs between "the release is installed but the
+    stack is broken" and "the install failed".
+    """
     pending = _convergence_pending(wheel_path)
     if check:
         click.echo(f"  converge:          {'pending' if pending else 'no-op (pins converged)'}")
@@ -273,12 +286,20 @@ def _converge(check: bool, quiet: bool, wheel_path: str | None) -> None:
         return
     if quiet:
         env = dict(os.environ, COVE_PULL_POLICY="always")
-        subprocess.run(
+        displayed = "cove up --no-provision --non-interactive"
+        result = subprocess.run(
             [_cove_bin(), "up", "--no-provision", "--non-interactive"],
             stdin=subprocess.DEVNULL, env=env, check=False,
         )
     else:
-        subprocess.run([_cove_bin(), "up"], check=False)
+        displayed = "cove up"
+        result = subprocess.run([_cove_bin(), "up"], check=False)
+    if result.returncode != 0:
+        raise click.ClickException(
+            "the release is installed, but the stack did not converge: "
+            f"`{displayed}` exited {result.returncode}. "
+            + _where_to_look(quiet)
+        )
 
 
 def _check_container_pins() -> None:
@@ -315,7 +336,19 @@ def _do_update(check: bool, quiet: bool) -> None:
     try:
         if _version_tuple(latest) > _version_tuple(installed):
             click.echo(f"Updating cove: {installed} -> {latest}...")
-            wheel_path = _install_wheel(latest)
+            try:
+                wheel_path = _install_wheel(latest)
+            except subprocess.CalledProcessError as exc:
+                failed = (
+                    exc.cmd
+                    if isinstance(exc.cmd, str)
+                    else " ".join(str(part) for part in exc.cmd)
+                )
+                raise click.ClickException(
+                    f"installing cove {latest} failed: `{failed}` exited "
+                    f"{exc.returncode}. The stack was not converged. "
+                    + _where_to_look(quiet)
+                ) from exc
             click.echo(f"Installed cove {latest}.")
         elif not quiet:
             click.echo(f"cove cli is up to date ({installed}).")
