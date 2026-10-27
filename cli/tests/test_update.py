@@ -419,6 +419,75 @@ class TestScheduledAgentResolvesCove:
             "--no-provision",
             "--non-interactive",
         ], calls[0]
+
+
+class TestAutoRegistrationIsIdempotent:
+    """`launchctl bootstrap` is not idempotent (2026-10-27).
+
+    Re-running `cove update auto` after regenerating a fixed plist died with
+    `CalledProcessError ... exit status 5` because the label was still loaded.
+    The bootout that ran first targeted `gui/<uid> <label>`, which launchctl
+    reads as a service PATH and rejects, so nothing was unloaded.
+    """
+
+    def _patch_plist(self, tmp_path, monkeypatch):
+        import cove.update as upd
+
+        plist = tmp_path / "LaunchAgents" / "app.cove.update.plist"
+        monkeypatch.setattr(upd, "PLIST_PATH", plist)
+        monkeypatch.setattr(upd, "LOG_PATH", tmp_path / "cove-update.log")
+        monkeypatch.setattr(upd, "_cove_bin", lambda: "/fake/bin/cove")
+        return upd
+
+    def test_re_register_unloads_the_loaded_label_first(self, tmp_path, monkeypatch):
+        from launchd_fake import FakeLaunchd
+
+        upd = self._patch_plist(tmp_path, monkeypatch)
+        fake = FakeLaunchd()
+        fake.loaded.add("app.cove.update")  # the operator's state: already loaded
+        monkeypatch.setattr(upd.subprocess, "run", fake)
+
+        result = CliRunner().invoke(upd.update, ["auto"])
+
+        assert result.exit_code == 0, result.output
+        assert [
+            "launchctl",
+            "bootout",
+            f"gui/{os.getuid()}/app.cove.update",
+        ] in fake.calls, fake.calls
+        assert "app.cove.update" in fake.loaded, "the agent must end up loaded"
+
+    def test_first_registration_tolerates_an_absent_service(self, tmp_path, monkeypatch):
+        from launchd_fake import FakeLaunchd
+
+        upd = self._patch_plist(tmp_path, monkeypatch)
+        fake = FakeLaunchd()  # nothing loaded yet
+        monkeypatch.setattr(upd.subprocess, "run", fake)
+
+        result = CliRunner().invoke(upd.update, ["auto"])
+
+        assert result.exit_code == 0, result.output
+        assert "app.cove.update" in fake.loaded
+
+    def test_bootstrap_failure_is_a_clear_error(self, monkeypatch):
+        import cove.update as upd
+
+        def failing(cmd, *a, **kw):
+            return SimpleNamespace(
+                returncode=5,
+                stdout="",
+                stderr="Bootstrap failed: 5: Input/output error",
+            )
+
+        monkeypatch.setattr(upd.subprocess, "run", failing)
+        with pytest.raises(click.ClickException) as exc:
+            upd._bootstrap("app.cove.update", Path("/tmp/app.cove.update.plist"))
+        message = str(exc.value)
+        assert "launchctl bootstrap app.cove.update" in message
+        assert "exit 5" in message
+        assert "Bootstrap failed" in message
+
+
 # ---------------------------------------------------------------------------
 # Converge gating: bring up only when something was running AND the update
 # would actually change the stack (operator decision 2026-10-13).

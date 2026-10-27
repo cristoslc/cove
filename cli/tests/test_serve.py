@@ -64,6 +64,10 @@ def serve_world(tmp_path, monkeypatch):
         if argv[0] == "colima":
             state.colima_started = True
             return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if argv[0] == "launchctl" and len(argv) > 1 and argv[1] == "print":
+            return SimpleNamespace(
+                returncode=0 if state.loaded else 113, stdout="", stderr=""
+            )
         if argv[0] == "launchctl" and "list" in argv:
             out = f"{srv.LAUNCHD_LABEL}\n" if state.loaded else "other.agent\n"
             return SimpleNamespace(returncode=0, stdout=out, stderr="")
@@ -148,6 +152,32 @@ class TestServeStart:
         assert "bootout" in seq and "bootstrap" in seq, seq
         assert seq.index("bootout") < seq.index("bootstrap"), seq
 
+    def test_start_unloads_the_loaded_label_before_bootstrap(
+        self, tmp_path, monkeypatch
+    ):
+        """The mock above models argv order; this one models launchctl's real
+        rule: bootstrap on a loaded label exits 5, and only the service-target
+        bootout form (`gui/<uid>/<label>`) actually unloads (2026-10-27)."""
+        import cove.serve as srv
+        from launchd_fake import FakeLaunchd
+
+        plist = tmp_path / "LaunchAgents" / "app.cove.serve.plist"
+        monkeypatch.setattr(srv, "PLIST_PATH", plist)
+        monkeypatch.setattr(srv, "_cove_bin", lambda: "/fake/bin/cove")
+        fake = FakeLaunchd()
+        fake.loaded.add("app.cove.serve")
+        monkeypatch.setattr(srv.subprocess, "run", fake)
+
+        result = CliRunner().invoke(srv.serve, ["start"])
+
+        assert result.exit_code == 0, result.output
+        assert [
+            "launchctl",
+            "bootout",
+            f"gui/{os.getuid()}/app.cove.serve",
+        ] in fake.calls, fake.calls
+        assert "app.cove.serve" in fake.loaded
+
 
 class TestServeStop:
     def test_stop_boots_out_and_removes_plist(self, serve_world):
@@ -159,6 +189,28 @@ class TestServeStop:
         assert result.exit_code == 0, result.output
         assert not serve_world.plist.exists()
         assert any(c[:2] == ["launchctl", "bootout"] for (c, _) in serve_world.calls)
+
+    def test_stop_unloads_a_loaded_label_when_the_plist_is_gone(
+        self, tmp_path, monkeypatch
+    ):
+        """The reported mismatch: `stop` said "not installed" while launchd had
+        the label loaded, because it trusted the plist file instead of asking
+        launchd. It must bootout the loaded agent either way."""
+        import cove.serve as srv
+        from launchd_fake import FakeLaunchd
+
+        plist = tmp_path / "LaunchAgents" / "app.cove.serve.plist"
+        monkeypatch.setattr(srv, "PLIST_PATH", plist)
+        fake = FakeLaunchd()
+        fake.loaded.add("app.cove.serve")
+        monkeypatch.setattr(srv.subprocess, "run", fake)
+
+        result = CliRunner().invoke(srv.serve, ["stop"])
+
+        assert result.exit_code == 0, result.output
+        assert "app.cove.serve" not in fake.loaded, "stop must unload a loaded agent"
+        assert "nothing to do" not in result.output
+        assert "unloaded" in result.output, result.output
 
     def test_stop_off_alias_removes_plist(self, serve_world):
         from cove.serve import serve
