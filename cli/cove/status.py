@@ -45,7 +45,6 @@ SERVICES = [
 
 OPTIONAL_SERVICES = [
     ("cove-litellm", "LiteLLM", "litellm"),
-    ("cove-headroom", "Headroom", "litellm"),
     ("cove-bifrost", "Bifrost", "bifrost"),
     ("cove-bifrost-dns", "Bifrost DNS", "bifrost"),
     ("cove-speedtest-tracker", "Speedtest", "speedtest"),

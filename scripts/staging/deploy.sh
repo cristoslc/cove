@@ -78,7 +78,7 @@ fi
 # (e.g., litellm profile for the litellm-hardening branch)
 if docker compose --project-directory "$REPO_ROOT/compose" config --profiles 2>/dev/null | grep -q "litellm"; then
     echo "Starting litellm profile..." >&2
-    docker compose --project-directory "$REPO_ROOT/compose" --profile litellm up -d litellm headroom 2>&1 >&2 || true
+    docker compose --project-directory "$REPO_ROOT/compose" --profile litellm up -d litellm 2>&1 >&2 || true
     # Wait for litellm to be healthy
     for i in $(seq 1 30); do
         if docker inspect cove-litellm --format '{{.State.Health.Status}}' 2>/dev/null | grep -q "healthy"; then

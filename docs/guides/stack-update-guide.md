@@ -32,7 +32,6 @@ Single source of truth for image pins is `compose/` (bundled into the `cove` whe
 | Forgejo runner | `data.forgejo.org/forgejo/runner:11` | `compose/docker-compose.yml` (`FORGEJO_RUNNER_IMAGE`) | Major-line tag |
 | Speedtest Tracker | `lscr.io/linuxserver/speedtest-tracker:v1.15.1-ls177` | `compose/docker-compose.yml` (`SPEEDTEST_IMAGE`) | Tag |
 | ToolHive | `ghcr.io/stacklok/toolhive:v0.51.4@sha256:5e1e2536…` | `compose/docker-compose.yml` (`TOOLHIVE_IMAGE`) | Tag + digest |
-| Headroom | `ghcr.io/chopratejas/headroom:latest@sha256:50b85d8e…` | `compose/docker-compose.yml` (`HEADROOM_IMAGE`) | Digest-pinned (`latest` tag is incidental) |
 | zrok2 tunnel | `openziti/zrok2:2.0.4` | `compose/tunnel.yml` (`TUNNEL_IMAGE`) | Tag |
 | LiteLLM (built) | `cove-litellm:1.84.0`, from `python:3.13-slim`, `litellm==1.84.0` hash-pinned | `compose/litellm/Dockerfile` | Own build; app pin is the SLA subject |
 | ADE (built) | `cove-ade:0.44.0`, from `node:24-bookworm-slim`, `bb-app==0.44.0` | `compose/ade/Dockerfile` + `ADE_BB_APP_VERSION` | Own build; app pin is the SLA subject |

@@ -100,25 +100,31 @@ def _render_nginx() -> str:
 
 
 class TestComposeServiceDefinitions:
-    """Validate LiteLLM and Headroom service definitions in docker-compose.yml."""
+    """Validate LiteLLM service definitions in docker-compose.yml."""
 
     def test_litellm_service_exists(self):
         data = _load_compose()
         assert "litellm" in data["services"], "litellm service missing from compose"
 
-    def test_headroom_service_exists(self):
+    def test_no_headroom_service(self):
+        """Headroom is gone, not merely misconfigured.
+
+        LiteLLM 1.84.0 has no Headroom integration, so the sidecar served one
+        request in its lifetime and compressed nothing. Its published port
+        mapped a port nothing listened on. Do not re-add the service without a
+        gateway that actually implements compression; if one does, pin it and
+        add a test that fails when compression is not invoked.
+        """
         data = _load_compose()
-        assert "headroom" in data["services"], "headroom service missing from compose"
+        assert "headroom" not in data["services"], (
+            "headroom must not be in compose: LiteLLM 1.84.0 has no Headroom "
+            "integration, so the service is a dead claim and a dead port"
+        )
 
     def test_litellm_has_profile(self):
         data = _load_compose()
         profiles = data["services"]["litellm"].get("profiles", [])
         assert "litellm" in profiles, "litellm service must have profiles: [\"litellm\"]"
-
-    def test_headroom_has_profile(self):
-        data = _load_compose()
-        profiles = data["services"]["headroom"].get("profiles", [])
-        assert "litellm" in profiles, "headroom service must have profiles: [\"litellm\"]"
 
     def test_litellm_not_read_only(self):
         """The litellm container must NOT be read_only — the admin UI needs
@@ -126,12 +132,6 @@ class TestComposeServiceDefinitions:
         data = _load_compose()
         assert data["services"]["litellm"].get("read_only") is not True, (
             "litellm container must NOT be read_only — admin UI needs write access"
-        )
-
-    def test_headroom_read_only(self):
-        data = _load_compose()
-        assert data["services"]["headroom"].get("read_only") is True, (
-            "headroom container must be read_only: true"
         )
 
     def test_litellm_binds_localhost_only(self):
@@ -159,12 +159,6 @@ class TestComposeServiceDefinitions:
         limits = deploy.get("resources", {}).get("limits", {})
         assert "memory" in limits, "litellm must have a memory limit"
 
-    def test_headroom_has_memory_limit(self):
-        data = _load_compose()
-        deploy = data["services"]["headroom"].get("deploy", {})
-        limits = deploy.get("resources", {}).get("limits", {})
-        assert "memory" in limits, "headroom must have a memory limit"
-
     def test_litellm_uses_env_vars_for_credentials(self):
         data = _load_compose()
         env = data["services"]["litellm"].get("environment", {})
@@ -181,11 +175,6 @@ class TestComposeServiceDefinitions:
         data = _load_compose()
         name = str(data["services"]["litellm"].get("container_name", ""))
         # Env var substitution: ${LITELLM_CONTAINER_NAME:-cove-litellm}
-        assert "cove-" in name, f"container_name must default to cove- prefix, got: {name}"
-
-    def test_headroom_container_name_has_cove_prefix(self):
-        data = _load_compose()
-        name = str(data["services"]["headroom"].get("container_name", ""))
         assert "cove-" in name, f"container_name must default to cove- prefix, got: {name}"
 
     def test_litellm_has_build_context(self):
@@ -256,16 +245,20 @@ class TestLitellmConfig:
             "allowed_routes is Enterprise-only; route lockdown is at nginx layer"
         )
 
-    def test_config_has_headroom_enabled(self):
-        config = _load_litellm_config()
-        headroom = config.get("headroom_settings", {})
-        assert headroom.get("enabled") is True, "Headroom compression must be enabled"
+    def test_config_has_no_inert_headroom_settings(self):
+        """A compression setting the pinned LiteLLM ignores is a dead claim.
 
-    def test_config_headroom_fallback_is_direct(self):
+        LiteLLM 1.84.0 has no Headroom integration; it ships as a `guardrails:`
+        entry in >=1.92. The old `headroom_settings:` block was silently
+        ignored, so compression never ran. Re-adding compression must use the
+        supported form and a pin that implements it, with a test that fails
+        when the pin ignores the setting.
+        """
         config = _load_litellm_config()
-        headroom = config.get("headroom_settings", {})
-        assert headroom.get("fallback") == "direct", (
-            "Headroom fallback must be 'direct' (fail open)"
+        assert "headroom_settings" not in config, (
+            "headroom_settings is inert on the pinned LiteLLM (1.84.0); "
+            "re-add compression only as a `guardrails:` entry on a >=1.92 pin, "
+            "with a test that fails when the pin ignores the setting"
         )
 
 
@@ -452,7 +445,9 @@ class TestBringupIntegration:
             content = f.read()
         assert "LITELLM_IMAGE" in content, "bringup.yml .env must include LITELLM_IMAGE"
         assert "LITELLM_CONTAINER_NAME" in content, "bringup.yml .env must include LITELLM_CONTAINER_NAME"
-        assert "HEADROOM_IMAGE" in content, "bringup.yml .env must include HEADROOM_IMAGE"
+        assert "HEADROOM_IMAGE" not in content, (
+            "bringup.yml must not seed a headroom image after the removal"
+        )
 
     def test_cert_validation_includes_litellm_cove(self):
         with open(COMPOSE_DIR / "bringup.yml") as f:
@@ -561,18 +556,6 @@ class TestConfigTemplate:
         content = self._load_template()
         assert "os.environ/LITELLM_MASTER_KEY" in content
         assert "OLLAMA_API_KEY" not in content
-
-    def test_template_has_headroom_enabled(self):
-        content = self._load_template()
-        assert "headroom_settings:" in content
-        assert "enabled: true" in content
-
-    def test_template_headroom_endpoint_uses_docker_service_name(self):
-        """Headroom endpoint must use the Docker service name, not 127.0.0.1."""
-        content = self._load_template()
-        assert "http://headroom:4001" in content, (
-            "config template must use headroom:4001 (Docker service name), not 127.0.0.1:4001"
-        )
 
     def test_template_disables_mcp(self):
         content = self._load_template()
@@ -1290,7 +1273,7 @@ class TestMasterKeyAutoGen:
 
 
 class TestStatusOptionalServices:
-    """Validate status.py includes LiteLLM/Headroom as optional services."""
+    """Validate status.py includes LiteLLM as an optional service."""
 
     def test_optional_services_list_exists(self):
         from cove.status import OPTIONAL_SERVICES
@@ -1300,11 +1283,6 @@ class TestStatusOptionalServices:
         from cove.status import OPTIONAL_SERVICES
         names = [label for _, label, _ in OPTIONAL_SERVICES]
         assert "LiteLLM" in names, "LiteLLM must be in OPTIONAL_SERVICES"
-
-    def test_headroom_in_optional_services(self):
-        from cove.status import OPTIONAL_SERVICES
-        names = [label for _, label, _ in OPTIONAL_SERVICES]
-        assert "Headroom" in names, "Headroom must be in OPTIONAL_SERVICES"
 
     def test_litellm_not_in_required_services(self):
         """LiteLLM is optional — it must NOT be in the required SERVICES list."""
@@ -1396,15 +1374,6 @@ class TestInverseAssertions:
         """A compose file without litellm service should not have the service."""
         data = {"services": {"forgejo": {}, "nginx": {}}}
         assert "litellm" not in data["services"]
-
-    def test_headroom_image_not_latest(self):
-        """Headroom image must NOT use :latest — it must be pinned by digest."""
-        data = _load_compose()
-        image = str(data["services"]["headroom"].get("image", ""))
-        # The default should contain a digest, not just :latest
-        assert "sha256:" in image or "@sha256" in image, (
-            f"Headroom image must be pinned by digest, got: {image}"
-        )
 
     def test_litellm_not_exposed_on_0000(self):
         """LiteLLM must NOT bind to 0.0.0.0 — only 127.0.0.1."""

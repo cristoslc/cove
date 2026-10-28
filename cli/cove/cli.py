@@ -220,7 +220,7 @@ def _unseal_restarted_vault(*, no_provision: bool) -> None:
 
 def _start_optional_services() -> None:
     """Start the optional services whose containers need credentials prepared
-    by the CLI first (LiteLLM proxy + Headroom, Speedtest Tracker: 1Password/
+    by the CLI first (LiteLLM proxy, Speedtest Tracker: 1Password/
     Vault seeds injected into the compose .env before `docker compose up`).
     Runner has no credential step: the bringup playbook starts it via its
     COMPOSE_PROFILES env (ADE is core since 0.8.0; ToolHive likewise has no
@@ -354,7 +354,7 @@ def _report_ansible_failure(playbook: Path, lines: list[str], logfile: Path) -> 
 @app.command()
 @click.option("--no-provision", is_flag=True, help="Skip Vault bootstrap and Forgejo provisioning")
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
-@click.option("--all", "all_", is_flag=True, help="Also start all optional services (LiteLLM + Headroom, Runner, Speedtest). The tunnel is excluded: shares are created interactively with `cove tunnel up`.")
+@click.option("--all", "all_", is_flag=True, help="Also start all optional services (LiteLLM, Runner, Speedtest). The tunnel is excluded: shares are created interactively with `cove tunnel up`.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
 @click.option("--non-interactive", is_flag=True,
               help="No prompts (scheduled runs): skip the BECOME prompt; elevation "

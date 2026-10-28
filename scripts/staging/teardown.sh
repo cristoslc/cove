@@ -11,7 +11,7 @@
 #      `cove-staging` — `compose down -v` for that project plus removal of its
 #      staging data root (~/Documents/cove-data-staging by default).
 #   B. LEGACY in-live mode (deploy.sh): stop the staging-only profile
-#      containers (cove-litellm, cove-headroom) and remove the staging venv.
+#      containers (cove-litellm) and remove the staging venv.
 #
 # Production safety: the live project's containers (cove-forgejo, cove-vault,
 # cove-nginx, cove-dnsmasq, cove-dnsproxy, cove-ade-server, ...) are NEVER
@@ -35,11 +35,11 @@ LIVE_DATA_ROOT="${COVE_LIVE_DATA_ROOT:-$HOME/Documents/cove-data}"
 # --- Production safety guards -------------------------------------------------
 
 # Guard 1: Resource names MUST NOT match known production names. Since the
-# isolated staging mode, cove-litellm/cove-headroom ARE live-stack (production)
-# containers whenever the operator runs those profiles — teardown never stops
+# isolated staging mode, cove-litellm IS a live-stack (production) container
+# whenever the operator runs that profile — teardown never stops
 # anything whose name matches production. Stopping live optional profiles is
 # the operator's explicit `cove litellm down`, not a staging teardown.
-PRODUCTION_CONTAINERS="cove-forgejo cove-nginx cove-vault cove-dnsmasq cove-dnsproxy cove-ade-server cove-litellm cove-litellm-db cove-headroom cove-speedtest-tracker cove-forgejo-runner cove-tunnel"
+PRODUCTION_CONTAINERS="cove-forgejo cove-nginx cove-vault cove-dnsmasq cove-dnsproxy cove-ade-server cove-litellm cove-litellm-db cove-speedtest-tracker cove-forgejo-runner cove-tunnel"
 STAGING_CONTAINERS=""
 
 for container in $STAGING_CONTAINERS; do
