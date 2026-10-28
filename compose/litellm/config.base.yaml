@@ -13,8 +13,11 @@ general_settings:
   disable_user_management: false
   disable_jwt_auth: true
 
-headroom_settings:
-  enabled: true
-  endpoint: "http://headroom:4001"
-  model: "local"
-  fallback: "direct"
+# Headroom compression is intentionally absent. LiteLLM 1.84.0 has no Headroom
+# integration; it ships as a `guardrails:` entry in >=1.92. The former
+# `headroom_settings:` block was silently ignored: the sidecar's own counters
+# showed one request in its lifetime and zero compression jobs. Cove's Bifrost
+# replacement does not carry compression either, so this is a capability that
+# never ran, not one being dropped. Re-adding compression requires the
+# `guardrails:` form and a LiteLLM pin >=1.92, with a test that fails on a pin
+# that ignores it.

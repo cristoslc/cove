@@ -48,7 +48,7 @@ cd compose && docker compose up -d --profile litellm
 
 ## Impact
 
-`cove litellm up` cannot start LiteLLM/Headroom until fixed. Workaround:
+`cove litellm up` cannot start LiteLLM until fixed. Workaround:
 `cd compose && COMPOSE_PROFILES=litellm docker compose up -d`.
 
 ## Tests affected

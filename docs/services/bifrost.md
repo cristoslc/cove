@@ -339,7 +339,7 @@ cutover day, then teardown one week later.
 
 ### Phase 2 — teardown day (T+7)
 
-1. Stop LiteLLM + Headroom and disable the `litellm` compose profile.
+1. Stop LiteLLM and disable the `litellm` compose profile.
 2. Secure-delete the `litellm-db` postgres pgdata volume (prompt-bearing
    request logs; irreversible, operator sign-off).
 3. Drop the `OLLAMA_API_KEY` pass-through line from the deployed compose
@@ -347,7 +347,7 @@ cutover day, then teardown one week later.
    Bifrost directly at cutover).
 4. Delete the 1Password `LiteLLM Proxy` item and its Vault cache entries —
    the drain window closed today, so the retention rule is satisfied.
-5. Prune the litellm/headroom images.
+5. Prune the litellm image.
 
 Rollback shape: before teardown day, the prior release's wheel restores the
 whole surface and the product-swap line flips back to

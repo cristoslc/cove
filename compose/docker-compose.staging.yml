@@ -77,10 +77,6 @@ services:
     # Loopback-only in base; dropped entirely in staging (nginx fronts it).
     ports: !override []
 
-  headroom:
-    container_name: cove-staging-headroom
-    ports: !override []
-
   forgejo-runner:
     container_name: cove-staging-forgejo-runner
 

@@ -83,7 +83,6 @@ LIVE_CONTAINER_NAMES = {
     "cove-ade-server",
     "cove-litellm",
     "cove-litellm-db",
-    "cove-headroom",
     "cove-speedtest-tracker",
     "cove-forgejo-runner",
     "cove-tunnel",
@@ -95,8 +94,8 @@ LIVE_CONTAINER_NAMES = {
 # owns 443 directly since the pf shim drop; dnsmasq moved to 5354 —
 # UDP 5353 is squatted on this Mac by GLKVM Helper):
 # nginx 443/tcp + 8080/tcp + 80/tcp, dnsmasq 5354/udp, forgejo ssh 2222,
-# litellm 4000, headroom 4001, speedtest 8982.
-LIVE_HOST_PORTS = {"443", "80", "8080", "5354", "2222", "4000", "4001", "8982"}
+# litellm 4000, speedtest 8982.
+LIVE_HOST_PORTS = {"443", "80", "8080", "5354", "2222", "4000", "8982"}
 
 # The live stack's data root (never mounted, never written by staging).
 LIVE_DATA_ROOT = Path("~/Documents/cove-data").expanduser()

@@ -245,7 +245,7 @@ def _inject_admin_env() -> None:
 def litellm():
     """Manage the LiteLLM proxy (optional harbor service).
 
-    LiteLLM is a hardened LLM proxy with Headroom compression.
+    LiteLLM is a hardened LLM proxy.
     It runs on https://litellm.cove.local/ (API root) and proxies to upstream
     providers; the admin console is at https://litellm.cove.local/ui/.
     """
@@ -253,7 +253,7 @@ def litellm():
 
 @litellm.command()
 def up():
-    """Start the LiteLLM proxy and Headroom sidecar."""
+    """Start the LiteLLM proxy."""
     ensure_compose_source_ready(resolve_compose_dir())
     _ensure_master_key()
     _prepare_runtime_files()
@@ -268,11 +268,11 @@ def up():
 
 @litellm.command()
 def down():
-    """Stop the LiteLLM proxy and Headroom sidecar."""
+    """Stop the LiteLLM proxy."""
     ensure_compose_source_ready(resolve_compose_dir())
     click.echo("Stopping LiteLLM proxy...")
     subprocess.run(
-        _compose_cmd("stop", "litellm", "headroom"),
+        _compose_cmd("stop", "litellm"),
         check=True,
         env=scrubbed_environment(resolve_compose_dir(), warn=False),
     )

@@ -101,8 +101,13 @@ flowchart LR
     Agent["AI agent"] -->|HTTPS| Nginx["Cove nginx ingress"]
     Nginx -->|whitelisted API routes| Proxy["LiteLLM proxy"]
     Proxy -->|provider request| Provider["Operator-configured provider"]
-    Proxy --> Headroom["Headroom sidecar"]
 ```
+
+Compression is not configured. The pinned LiteLLM 1.84.0 has no Headroom
+integration (it arrives as a `guardrails:` entry in 1.92 and later), so Cove
+ships no compression sidecar and sets no compression key. See
+[litellm-headroom-and-request-size.md](../tech-debt/litellm-headroom-and-request-size.md)
+for the evidence and the two independent request-size gaps.
 
 ## Troubleshooting
 

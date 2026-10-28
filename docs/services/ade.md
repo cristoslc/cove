@@ -153,7 +153,7 @@ parses `docker compose -p cove-staging ... config`):
   prefix explicit `container_name` values with the project name, so the
   override is required — otherwise staging would reuse the live names).
 - **Ports:** nginx publishes only `127.0.0.1:9443→443`; the forgejo SSH,
-  dnsmasq UDP, litellm, headroom, and speedtest host bindings are removed
+  dnsmasq UDP, litellm, and speedtest host bindings are removed
   (`ports: !override []` — the `!override` tag replaces the base list). ADE
   has no host port in either mode; it is reached through nginx by `Host:`.
 - **Data:** `COVE_DATA_ROOT`/`FORGEJO_DATA_ROOT` point at
