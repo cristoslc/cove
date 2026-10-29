@@ -109,9 +109,10 @@ IaC-first, with the same split as LiteLLM:
 
 - **`compose/bifrost/config.json`** (git-tracked): the governance source. It
   carries `source_of_truth: "config.json"`, the auth settings, the three
-  custom provider instances, the single virtual key, and the eleven tier
+  custom provider instances, the single virtual key, the eleven tier
   routing rules (nine canonical aliases plus the two deprecated
-  `text:standard` aliases). Seeded to `~/Documents/cove-data/bifrost/config.json`
+  `text:standard` aliases), and the served-name key `aliases` that
+  `/v1/models` advertises. Seeded to `~/Documents/cove-data/bifrost/config.json`
   (first boot only; operator edits preserved, wedge-guarded).
 - **`config.db`** (SQLite runtime store): **must pre-exist before the first
   container boot** — a file-only boot cannot carry governance, and the store
@@ -178,19 +179,39 @@ so per ADR-008 ("aliases lead with the modality") its canonical alias is
 | `text:standard` | **deprecated alias** — same chain as `vision:standard` |
 | `nonstreaming:text:standard` | **deprecated alias** — same chain as `nonstreaming:vision:standard` |
 
-### How a caller discovers the vision capability
+### How a caller discovers the tiers
 
-The OpenAI-compatible `/v1/models` listing is **empty on this deployment**
-(`{"data":[], ...}`, HTTP 200, with or without a credential): `list_models` is
-`false` on all three custom provider instances, and Bifrost's own config schema
-carries **no capability or modality field** for a model or a routing rule. So
-`/v1/models` cannot carry a vision flag, and none is invented for it. The
-**alias name is the discovery mechanism** — a caller reading the tier list
-sees `vision:standard` and knows the tier reads images. The machine-readable
-discovery surface is the routing-rule API the dashboard reads,
-`GET /api/governance/routing-rules`, where each tier is a rule whose
-`cel_expression` names the alias and whose `description` (a real, schema-defined
-field, rendered in the dashboard's Routing Rules list) states the capability.
+`GET /v1/models` advertises the served tier names. Bifrost builds the listing
+from provider model catalogues; the tier names ride in as **static key
+`aliases`** (a schema-defined map on a provider key), which the gateway
+backfills into the listing even though they are not provider models. Every tier
+is declared exactly once, on the key of its routing rule's primary provider,
+carrying the rule's primary wire model as the value, so the discoverable list
+cannot drift from what serves.
+
+Two things had to change for the listing to be non-empty. First, `list_models`
+was `false` on all three custom providers, and Bifrost's list-all fan-out
+**skips** any provider whose `allowed_requests` forbids it — so with it off the
+listing was `{"data":[]}`. It is now enabled on all three. Second, nothing
+declared the tier names; the `aliases` map does now. Each key's `models`
+allowlist is also narrowed from `["*"]` to the exact wire models the routing
+rules send that key, so the listing carries only the models this gateway serves
+(no upstream-catalogue noise) and the key is least-privilege.
+
+Entries are provider-scoped: `syn-subscription/vision:standard`,
+`syn-infinite-backstop/infinite:small:vision`, and the wire ids
+(`syn-subscription/hf:deepseek-ai/DeepSeek-V4.1-Flash`). A client that sends the
+provider-scoped tier name routes through the same routing rule as the bare
+name, because Bifrost strips the provider prefix before evaluating the rule. A
+live `GET /v1/models` against the pinned gateway returns 21 such entries and no
+foreign models.
+
+Bifrost's schema still defines **no capability or modality field** for a model
+or a routing rule, so `/v1/models` carries no vision flag and none is invented
+for it. The capability is told by the alias name (`vision:standard`) and by the
+routing rule's `description` (a real, schema-defined field the dashboard's
+Routing Rules list renders), which the machine-readable API
+`GET /api/governance/routing-rules` returns.
 
 The capability is verified, not assumed: a 1×1 red PNG sent inline to the
 standard tier (as `text:standard`, the name it carried at probe time) through

@@ -244,13 +244,17 @@ class TestBifrostConfigValidation:
         for provider in _provider_names(self.config).values():
             assert provider["keys"][0]["value"].startswith("env.")
 
-    def test_subscription_and_ollama_allow_chat_only(self):
-        """12-field allowed_requests: exactly chat + chat streaming enabled;
-        everything else default-false-explicit."""
+    def test_subscription_and_ollama_allow_chat_and_listing_only(self):
+        """12-field allowed_requests: exactly chat, chat streaming, and
+        list_models enabled; everything else default-false-explicit.
+        `list_models` is enabled so the providers take part in the
+        `/v1/models` fan-out that serves the tier names (see
+        test_served_names_match_routing_rules)."""
         for name in ("syn-subscription", "ollama-cloud"):
             allowed = _provider_names(self.config)[name]["custom_provider_config"][
                 "allowed_requests"]
-            expected_enabled = {"chat_completion", "chat_completion_stream"}
+            expected_enabled = {
+                "chat_completion", "chat_completion_stream", "list_models"}
             truthy = {k for k, v in allowed.items() if v}
             assert truthy == expected_enabled
             assert set(allowed) == {
@@ -263,11 +267,69 @@ class TestBifrostConfigValidation:
 
     def test_infinite_backstop_is_streaming_only(self):
         """The structural gate: the backstop instance can only serve chat
-        streaming, so a non-streaming request can never reach it."""
+        streaming, so a non-streaming request can never reach it. list_models
+        is enabled only so its served name appears in /v1/models."""
         allowed = _provider_names(self.config)["syn-infinite-backstop"][
             "custom_provider_config"]["allowed_requests"]
         truthy = {k for k, v in allowed.items() if v}
-        assert truthy == {"chat_completion_stream"}
+        assert truthy == {"chat_completion_stream", "list_models"}
+
+    def test_served_names_match_routing_rules(self):
+        """`/v1/models` on Bifrost lists provider-catalogue models; the tier
+        names are surfaced by static key `aliases` (a schema-defined field) that
+        the gateway backfills into the listing. This pins the declaration to the
+        routing rules so the discoverable list cannot drift from what actually
+        serves:
+          - the union of declared alias names equals the tier set;
+          - each alias sits on its rule's PRIMARY provider with the rule's
+            primary wire model as the value;
+          - each key's `models` allowlist admits every wire model its rules
+            send it (targets and fallbacks)."""
+        providers = _provider_names(self.config)
+        rules = _rules(self.config)
+        declared = {}
+        for pname, prov in providers.items():
+            for tier, wire in prov["keys"][0].get("aliases", {}).items():
+                assert tier not in declared, f"{tier} declared on two providers"
+                declared[tier] = (pname, wire)
+        assert set(declared) == set(rules), (
+            "the discoverable serve names must cover exactly the tiers: "
+            f"missing={set(rules) - set(declared)} "
+            f"extra={set(declared) - set(rules)}"
+        )
+        for tier, rule in rules.items():
+            pname, wire = declared[tier]
+            primary = rule["targets"][0]
+            assert (pname, wire) == (primary["provider"], primary["model"]), (
+                f"{tier}: declared {pname}/{wire} does not match its rule's "
+                f"primary target {primary['provider']}/{primary['model']}"
+            )
+        for pname, prov in providers.items():
+            allowlist = set(prov["keys"][0]["models"])
+            used = set()
+            for rule in rules.values():
+                for target in rule["targets"]:
+                    if target["provider"] == pname:
+                        used.add(target["model"])
+                for fallback in rule.get("fallbacks", []):
+                    fb_provider, _, fb_model = fallback.partition("/")
+                    if fb_provider == pname:
+                        used.add(fb_model)
+            assert used <= allowlist, (
+                f"{pname} key allowlist drops wire models its rules send it: "
+                f"{sorted(used - allowlist)}"
+            )
+
+    def test_providers_take_part_in_the_models_listing(self):
+        """`ListAllModels` skips any provider whose `allowed_requests` forbids
+        list_models (Bifrost source, list-all fan-out). All three must allow it
+        or the tiers never reach `/v1/models`."""
+        for name in _provider_names(self.config):
+            allowed = _provider_names(self.config)[name][
+                "custom_provider_config"]["allowed_requests"]
+            assert allowed["list_models"] is True, (
+                f"{name} would be skipped in the /v1/models fan-out"
+            )
 
     def test_routing_rules_match_the_ladder(self):
         rules = _rules(self.config)
@@ -1100,6 +1162,17 @@ def gateway(request):
         def log_message(self, *args):  # quiet
             pass
 
+        def do_GET(self):
+            # Model discovery: an empty 200 list is enough. Bifrost backfills
+            # the provider key's declared names/allowlist into the response, so
+            # GET /v1/models still surfaces the tier names.
+            body = json.dumps({"object": "list", "data": []}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_POST(self):
             length = int(self.headers.get("Content-Length", 0))
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -1271,6 +1344,8 @@ class TestBifrostLiveSmoke:
        hop actually serves when the primary errors.
     4. The streaming-only backstop instance refuses non-streaming
        structurally (before any upstream call).
+    5. GET /v1/models advertises the served tier names, so the aliases are
+       discoverable through the API.
     """
 
     PRIMARY_KEY = "sk-primary-smoke"
@@ -1397,6 +1472,27 @@ class TestBifrostLiveSmoke:
             "the gate must be structural: NOTHING may reach the gated instance "
             f"for a non-streaming request (calls seen: {new})"
         )
+
+    def test_served_tier_names_are_discoverable_via_models(self):
+        """GET /v1/models advertises the served tier names, so a client can
+        discover the aliases through the API. Bifrost lists provider models
+        and backfills the key-declared `aliases`; the ids are provider-scoped
+        (`<provider>/<tier>`), and a request using the prefixed name routes
+        through the same rule as the bare name."""
+        import requests
+        resp = requests.get(
+            f"{self._base}/v1/models",
+            headers={"Authorization": f"Bearer {self._token}"},
+            timeout=30,
+        )
+        assert resp.status_code == 200, resp.text[:300]
+        ids = [m.get("id", "") for m in resp.json().get("data", [])]
+        joined = " ".join(ids)
+        for tier in ("vision:standard", "nonstreaming:vision:standard",
+                     "text:standard", "text:light"):
+            assert tier in joined, (
+                f"tier {tier} missing from the served listing: {sorted(ids)}"
+            )
 
     def test_phone_home_scan(self):
         """Recorded, not asserted: outbound fetch attempts beyond the mock."""
