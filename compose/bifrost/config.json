@@ -117,6 +117,27 @@
         }
       }
     },
+    "ollama": {
+      "keys": [
+        {
+          "name": "ollama-cloud-systemone",
+          "value": "env.OLLAMA_API_KEY",
+          "models": ["clef", "vision:system1-classifier"],
+          "aliases": {
+            "vision:system1-classifier": "clef"
+          },
+          "ollama_key_config": {
+            "url": "https://ollama.com"
+          },
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "base_url": "https://ollama.com",
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 1
+      }
+    },
     "syn-infinite-backstop": {
       "keys": [
         {
@@ -180,6 +201,12 @@
           },
           {
             "provider": "syn-infinite-backstop",
+            "allowed_models": ["*"],
+            "key_ids": ["*"],
+            "weight": 1
+          },
+          {
+            "provider": "ollama",
             "allowed_models": ["*"],
             "key_ids": ["*"],
             "weight": 1
@@ -377,6 +404,21 @@
           "ollama-cloud/deepseek-v4.1-flash"
         ],
         "priority": 11,
+        "enabled": true
+      },
+      {
+        "id": "rr-vision-system1-classifier",
+        "name": "System One classifier tier",
+        "description": "Decision (System One) tier, not a chat tier: served on POST /v1/decisions (and /typesafe/v1/systemone), not /v1/chat/completions. Clef is a 27B multimodal decision model that reads text, JSON, and images, so per ADR-008 its canonical alias leads with the modality (vision:). Served by the built-in ollama provider pointed at Ollama Cloud (https://ollama.com/v1/systemone). No fallback: no second System One provider is configured.",
+        "cel_expression": "model == 'vision:system1-classifier'",
+        "targets": [
+          {
+            "provider": "ollama",
+            "model": "clef",
+            "weight": 1.0
+          }
+        ],
+        "priority": 12,
         "enabled": true
       }
     ]
