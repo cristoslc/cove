@@ -14,7 +14,7 @@ Related: [the LiteLLM exit musing](litellm-exit.md), [the removed-claim and requ
 ## Short answers
 
 - **Can Bifrost use Headroom?** Yes, in principle, but only by chaining Headroom as an OpenAI-compatible hop (keep it in front of Bifrost so the ladder stays intact). The in-process hook path is blocked by the official Bifrost image, which is statically linked and cannot load a Go plugin. Client-side `headroom wrap` works but is per-client and bypasses the neutral `llmproxy.cove` edge.
-- **Should it?** No, not now. The only measured value is about 6.3% on real tool-heavy traffic and possibly near zero on tool-role payloads, while the two real gaps (no declared input limit, and a `400` that never cascades) are the actual cause of the incident and are not answered by compression.
+- **Should it?** No, not now. The only measured value is about 6.3% on real tool-heavy traffic and possibly near zero on tool-role payloads, while the two real gaps (no declared input limit, and a `400` that never cascades) remain the incident's cause and are not answered by compression or by Bifrost.
 - **Or drop it?** Yes. Stay dropped, and revisit only if a measured A/B on the existing replay harness shows a material reduction after the file-read protection gap is addressed, and after the two gaps are handled.
 
 The honest split is: **"can" is yes, "should" is no.**
@@ -75,7 +75,13 @@ Two blockers:
 
 **Value.** The only Cove-specific measurement is 6.3% on tool-heavy traffic, and the dominant payload (OpenCode file reads, about two thirds of tool bytes) is protected by Headroom's tag protector, so it comes back byte-identical. Headroom's own README agrees that savings "scale with how repetitive the payload is" and that prose "compress very little". What would show compression earning its place is a replay A/B on the existing harness measuring input tokens, cost, latency, and answer quality, with the file-read protection relaxed to a lossless fold. That A/B is runnable today; the earlier run predates any such fix, so 6.3% is a floor, not the ceiling, and a fresh number is the gate.
 
-**What the A/B cannot fix.** The incident was a provider refusing a 415,724-token session against an unverified declared 524,288 window, and the `400` never tried the group's other deployments. A 6.3% reduction would not have saved that session. The two gaps are the actual problem, and they are independent of the gateway.
+**What the A/B cannot fix.** The incident was a provider refusing a request that fit its advertised window, and the `400` never tried the group's other deployments. What the record supports about the size is narrower than it looks:
+
+- The session had used 415,724 input tokens, and that measurement was taken before the turn's own content was added. The true sent size is therefore unknown, and the client's figure may understate it.
+- Adding the requested 32,768 return gives 448,492; reserving the provider's full 65,536 output allowance gives 481,260. Both fit the advertised 524,288.
+- The refusal therefore only bounds the real ceiling from above. The true ceiling sits at or below roughly 448,000, and nothing recorded places it lower.
+
+A 6.3% reduction of the recorded input lands near 389,000, which fits under any ceiling at or above that. So the refusal does not show that a single-digit reduction could not have saved the session, and it does not fix the reduction that would have been required: that is the difference between the true sent size and a ceiling nobody has measured. What the refusal does show is that the two gaps remain the incident's cause regardless, because a request refused below its own group's other deployments never reaches them, and that is independent of the gateway and of compression.
 
 **Do Bifrost or Headroom answer either gap?** Not today.
 
@@ -84,7 +90,7 @@ Two blockers:
 
 So compression is a distraction from the two gaps, and the two gaps are more valuable to close first.
 
-**Cost and risk, weighed.** A second proxy hop and its latency; a resident model and RAM; a model/runtime download from `huggingface.co` and `cdn.pyke.io` that fights Cove's offline-first posture and would widen Bifrost's fail-closed DNS allowlist (currently exactly `api.synthetic.new`, `ollama.com`, and `getbifrost.ai`); telemetry on by default with a fail-open parser; Headroom's own CVE-2026-32920 and the CompressionAttack class; and a new SBOM and update-hold surface. Apache-2.0 licensing is fine and the project is very active. None of this is disqualifying on its own, but it is a lot of surface for a capability that never ran and would not have prevented the incident.
+**Cost and risk, weighed.** A second proxy hop and its latency; a resident model and RAM; a model/runtime download from `huggingface.co` and `cdn.pyke.io` that fights Cove's offline-first posture and would widen Bifrost's fail-closed DNS allowlist (currently exactly `api.synthetic.new`, `ollama.com`, and `getbifrost.ai`); telemetry on by default with a fail-open parser; Headroom's own CVE-2026-32920 and the CompressionAttack class; and a new SBOM and update-hold surface. Apache-2.0 licensing is fine and the project is very active. None of this is disqualifying on its own, but it is a lot of surface for a capability that never ran.
 
 ## Recommendation
 
@@ -109,7 +115,8 @@ So compression is a distraction from the two gaps, and the two gaps are more val
 - Whether Headroom preserves streaming, tool calls, and provider prompt-cache behavior when chained in front of Bifrost. The passthrough path is where its bugs land; a live A/B is required.
 - Whether the official Bifrost image supports WASM plugins, and whether a WASM plugin can open an HTTP connection to Headroom.
 - Whether Bifrost has any built-in pre-dispatch input-limit validation, versus only plugin-visible model metadata.
-- The real provider input ceiling (gap 1) and whether a `400` can be made to cascade at all (gap 2). Both are blocked on policy and, for the ceiling, on a `429`-free probe.
+- The real provider input ceiling (gap 1) and the true size of the refused request: the 415,724 figure predates the turn's own content, so neither is measured, and the ceiling probe last hit `429`.
+- Whether a `400` can be made to cascade at all (gap 2). This is a policy question, not a measurement.
 - Headroom's behavior in a Cove-shaped offline deployment at the current version, including the beacon's fail-open parsing and the exact pre-seed surface.
 - The achievable reduction on Cove's own traffic after the file-read protection gap is addressed. The 6.3% figure predates any fix and should not be treated as the ceiling.
 
