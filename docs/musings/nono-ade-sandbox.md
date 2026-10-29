@@ -5,12 +5,27 @@
 **Spike:** `docs/research/Active/(SPIKE-017)-nono-agent-sandbox-for-bb/` (branch `bb/nono-agent-sandbox-spike-thr_ces8x6i2qm`, Forgejo PR #143, draft)
 **Rubric:** ADR-016 (Two-Tier Service Adoption Rubric), ADR-018 (ADE and its execution modes), PURPOSE.md (Low-Isolation, Low-Friction; Self-Contained)
 **Method:** read the spike note and its profile/launcher; read the bundled Modal Sandbox skill (bb `0.47.1`), ADR-016/018, `docs/services/ade.md`, the Forgejo runner compose entry; then measured the spike's profile with nono `0.80.0` on macOS/Seatbelt, read-only, no stack touched.
+**Ruling:** operator accepted the three decisions on 2026-10-29 (§ "Operator ruling") — adopt later, host out of Cove's governance, no fourth host requirement and no Cove-shipped binary.
 
 ## Recommendation in one paragraph
 
 **Adopt later, and not as a default.** The spike's seam is real and cheap — a launcher behind an ACP provider entry, no bb change — but the *policy* it ships is not safe to adopt: measured, the drafted grant list lets a sandboxed agent read every Cove service credential, the local CA private key, and the decrypted SOPS secrets sitting in the checkout. A narrowed profile that keeps the agent working and closes those reads is straightforward and is drafted in §3. Even then, nono bounds what the agent's own syscalls touch, not what the agent can get its harness to do: from inside the sandbox, the bb daemon answered an unauthenticated API call, so the work the agent cannot do itself it can still ask for. The sandbox is worth having eventually as the on-host capability layer under the container step-up that ADR-018 already plans; it is not worth shipping before Phase 2 enrollment is live-verified and the grant list is rewritten from "what broke first" to "what is minimal".
 
 If the operator does adopt it, the first seam is the **ACP agent launch on the machine that runs threads**, one opt-in provider id, default off — never a `cove ade` flag, never a compose change.
+
+## Operator ruling (2026-10-29)
+
+Three decisions were accepted as written on 2026-10-29. The recommendation does not change; what changes is that these are now policy, not proposals, and the open questions below are marked accordingly.
+
+1. **Adopt later — no nono work now.** The reopen condition is the four artifacts in §5, unchanged. Nothing starts from a default, a flag, or a compose entry.
+2. **Cove does not govern the Mac.** ADR-018 stands: nono on this host is documented host tooling owned by the workstation lane. Cove's own nono seam is the Phase-3 machine containers, inside the outer boundary — not the operator's laptop.
+3. **No fourth host requirement, and no Cove-shipped binary.** `cove` ships no host state. The launcher fails loud when nono is absent or the wrong version, naming the pin; it never installs, downloads, or falls back to running the agent unsandboxed.
+
+Consequences that follow from the ruling, recorded so the next reader does not re-argue them:
+
+- The on-host profile, launcher, and doctor are **workstation-lane artifacts**, not Cove wheel resources. They live beside the workstation's own config and die with it.
+- Cove's copy of the same artifacts appears only **inside a Phase-3 machine image**, where the container is the perimeter and nono is the inner capability layer.
+- A `cove` command that installs, stages, or version-manages nono is **out of scope** unless this ruling is revisited.
 
 ---
 
@@ -66,8 +81,8 @@ The ADE is a server plus machines. `cove-ade-server` stores threads, the databas
 
 Two Cove-specific wrinkles that belong in any adoption note:
 
-1. **The registration is not IaC.** `customAgents` lives in the machine's bb data dir (`bb plugin config provider-acp set customAgents …`), not in a repo. Cove's IaC bias is satisfied for the profile and launcher (wheel resources, data root) and *not* for the registration — that stays a documented runbook line, like the Phase 2 enrollment cutover.
-2. **The host is not Cove's to govern.** ADR-018: "the host is the operator's own device; cove does not govern it". Installing nono on the Mac is a host change the operator accepts, as the spike's note already records. Cove can ship the artifacts and the documentation without claiming authority over the machine.
+1. **The registration is not IaC.** `customAgents` lives in the machine's bb data dir (`bb plugin config provider-acp set customAgents …`), not in a repo. Cove's IaC bias is satisfied for the profile and launcher only where Cove ships them — the Phase-3 machine image; on this host they are workstation-lane files. The registration stays a documented runbook line either way, like the Phase 2 enrollment cutover.
+2. **The host is not Cove's to govern — ruled 2026-10-29.** ADR-018: "the host is the operator's own device; cove does not govern it". Installing nono on the Mac is a host change owned by the workstation lane, as the spike's note already records. Cove documents the seam; it does not manage the machine.
 
 ---
 
@@ -144,7 +159,7 @@ That does not make the sandbox pointless — opportunistic credential reads are 
 
 ## 4. Cost, risk, and rollout
 
-**Cost.** One host install. The spike used Homebrew, which is unpinned: `brew upgrade` moves the binary and the policy semantics with it. Cove's Self-Contained principle says the host provides Python, uv, and a container runtime and nothing else — so an adopted nono is either a fourth host requirement the operator waives, or a Cove-downloaded, checksum-pinned release staged under the data root, which is new machinery Cove does not have today. The second is the Cove-shaped answer and the larger piece of work.
+**Cost.** One host install. The spike used Homebrew, which is unpinned: `brew upgrade` moves the binary and the policy semantics with it. Under the 2026-10-29 ruling that install belongs to the workstation lane, not to Cove: `cove` ships no host state and no binary, so an absent or mismatched nono is a loud launcher failure naming the pin — never a download, an install, or a silent fallback to the unsandboxed agent. The cost that remains for Cove is the documentation and the doctor; the cost for the workstation lane is keeping the host install and the pin current. Pinning matters either way, because a nono upgrade changes group semantics, and group semantics are the policy.
 
 **Failure modes to design for** (all observed or directly implied):
 
@@ -157,7 +172,7 @@ That does not make the sandbox pointless — opportunistic credential reads are 
 | nono missing or wrong version | provider launch exits 127 or behaves unexpectedly | launcher checks presence and version, fails loud with the expected pin |
 | Denied write the agent needs | agent cannot save state; turn fails late | grant the agent's own state dirs; doctor covers them |
 
-**Rollout shape.** One machine (the Mac), one new provider id (`acp-opencode-nono`), default off, alongside the untouched `acp-opencode`. Enable is one config write plus one model-policy classification; disable is removing the entry and the classification. Nothing in compose, nothing in `cove up`, nothing in the ADE server. Before enabling on any second machine, run the doctor there: profiles are host-shaped, and nono says so.
+**Rollout shape.** One machine (the Mac), one new provider id (`acp-opencode-nono`), default off, alongside the untouched `acp-opencode`, owned by the workstation lane per the ruling. Enable is one config write plus one model-policy classification; disable is removing the entry and the classification. Nothing in compose, nothing in `cove up`, nothing in the ADE server. Before enabling on any second machine, run the doctor there: profiles are host-shaped, and nono says so.
 
 **Audit worth having.** nono records sessions and can sign audit roots; that is the part that makes "what did the agent touch" answerable after the fact. It is also the part with the weakest durability guarantees today (a crashed supervisor can leave a session undiscoverable). Treat it as evidence, not as a compliance record.
 
@@ -169,7 +184,7 @@ That does not make the sandbox pointless — opportunistic credential reads are 
 
 1. **The policy is not ready to ship, and a sandbox with a bad policy is worse than no sandbox** — it converts an obvious risk into a believed-mitigated one. The narrowed profile in §3 is the start, not the finish; the Keychain question is open and the delegation hole is not closed by any profile.
 2. **The seam sits on an unverified layer.** ADE Phase 2 (machine enrollment) has not been live-verified. Stacking a sandbox on a harness whose server/machine split is still a runbook is how two failures become indistinguishable.
-3. **The host dependency conflicts with a stated principle.** Self-Contained names exactly three host requirements; nono is a fourth. Either the operator waives that for this tool or Cove grows a pinned-download path. Both are decisions, not implementation details.
+3. **The host-dependency question is settled by ownership, not by waiving the principle.** Self-Contained still names exactly three host requirements for `cove`; nono is a workstation-lane tool that `cove` neither requires nor ships (ruled 2026-10-29). What remains is keeping that lane's pin honest.
 4. **The marginal value today is small, given what is granted.** Until the grant list is narrow, nono denies little that matters. Once it is narrow, the remaining value is real but specific: opportunistic reads, accidental writes outside the worktree, and a record of what happened.
 
 **The honest alternative** is not "do nothing forever". ADR-018 already declares the containerized machine and the per-project container as the step-up modes, and a container gives a filesystem boundary around the whole thread, including the setup hook and the terminals the ACP sandbox cannot reach (a container still shares the host kernel — a separate kernel is what a Modal machine or a VM buys, and it costs provisioning and provider-login work that ADR-018 still lists as open). That is the stronger answer to "a hostile repo ran its tests on my laptop", and it is already on the roadmap. nono is the finer-grained layer that makes the inside of that container less flat — which is why the natural sequencing is *container first, nono inside it*, not nono first.
@@ -180,6 +195,8 @@ That does not make the sandbox pointless — opportunistic credential reads are 
 - A standing workflow that runs third-party code on the host (reviewing and testing forge PRs from other people) — the strongest legitimate case, and still only partly answered by nono, because the setup hook runs first.
 - Phase 3 stalling: if machine containers slip, the on-host launch wrapper becomes the only step-up available and the calculus changes.
 
+None of these is a start signal on its own: the 2026-10-29 ruling makes the four artifacts below the only start point, and any of the three triggers still begins there.
+
 **If adopted, the first deliverable is four artifacts and no default:**
 
 1. A profile file in the repo (wheel resource), with `meta.version` and the validated nono version beside it.
@@ -187,13 +204,20 @@ That does not make the sandbox pointless — opportunistic credential reads are 
 3. A doctor command that proves the profile by execution, not by `nono why`.
 4. A documented launch seam in `docs/services/ade.md`: the one-line registration, the off switch, and the delegation caveat.
 
+Where those land follows from the ruling: for **this host** the profile, launcher, and doctor are workstation-lane artifacts, and the Cove doc describes the seam; for **Cove** the same artifacts arrive inside a Phase-3 machine image, which is the only place `cove` ships them. The "wheel resource" parenthetical in item 1 therefore applies to the image case only; on this host the profile is a workstation-lane file.
+
 ---
 
 ## Open questions for the operator
 
-1. **Does Cove govern machine #1 at all?** ADR-018 says the host is the operator's device and Cove does not govern it. If that stands, nono is documented host tooling, not a Cove feature — which changes what `cove` may install, and where the profile lives.
-2. **Fourth host requirement, or a Cove-provisioned binary?** A pinned release staged under the data root is Cove-shaped but is new machinery; a Homebrew install is cheap but unpinned and leaves a system path behind.
+**Ruled 2026-10-29** (see "Operator ruling" above; recommendation unchanged):
+
+1. **Does Cove govern machine #1 at all?** **No.** ADR-018 stands. nono on this host is documented host tooling owned by the workstation lane; Cove's own seam is the Phase-3 machine containers, inside the outer boundary.
+2. **Fourth host requirement, or a Cove-provisioned binary?** **Neither.** `cove` ships no host state and no binary; the launcher fails loud when nono is absent or mismatched, and never falls back to running the agent unsandboxed.
+
+**Still open** (they shape the reopen condition, not the current decision):
+
 3. **Network: open, or allowlist?** Open egress keeps the spike's shape and keeps the delegation hole. An allowlist proxy needs a test that it can reach `.cove` names resolving to loopback, and it must decide whether the bb daemon port stays reachable (today it is, unauthenticated).
 4. **Is the forcing case untrusted PR code?** If yes, the container step-up answers it better than this seam does, and the sequencing question answers itself.
 5. **Credentials: agent-free, or brokered?** Keeping Cove service credentials and the bb token out of the sandbox is a profile change. Letting nono broker them (keyring, proxy header injection) is a much larger commitment and needs the Keychain question answered first.
-6. **Where should the profile live long-term?** A wheel resource (Cove-owned, dies on uninstall) and a signed nono pack (operator-owned, updatable, portable) are both defensible; they are different ownership models for the same file.
+6. **Where does the host profile live?** Constrained by the ruling: not a Cove artifact for this host. The remaining choice is the workstation lane's — a plain file in that repo, or a signed nono pack (updatable, portable) — and neither is Cove's to decide.
