@@ -630,6 +630,8 @@ tier is "build it once a Cloudflare credential and a verified Clef run-endpoint
 call exist", and the alternative if no credential appears is the OpenRouter
 route in Part 4, whose ZDR-on-the-decisions-route behaviour is still unknown.
 
+The self-hosted option named in §1b.2 was assessed for hardware feasibility against the fleet's actual boxes: see [2026-10-29-self-hosted-zdr-decision-tier-hardware-feasibility.md](2026-10-29-self-hosted-zdr-decision-tier-hardware-feasibility.md).
+
 ---
 
 ## Live verification record (2026-10-29)
