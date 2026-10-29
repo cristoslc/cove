@@ -52,14 +52,19 @@ the config.
 
 ### The alias name is the discovery mechanism
 
-Bifrost's OpenAI-compatible `/v1/models` listing is **empty on this deployment**
-and carries no capability field; none may be added (the config schema has no
-capability or modality field, so a hand-rolled key would be an unverified
-claim). The machine-readable discovery surface is the routing-rule API
-(`GET /api/governance/routing-rules`), where each tier is a rule whose
-`cel_expression` names the alias and whose `description` — a real, schema-defined
-field shown in the dashboard's Routing Rules list — states the capability. The
-alias NAME is what a caller reads: `vision:standard` says the tier reads images.
+The alias NAME is what a caller reads: `vision:standard` says the tier reads
+images. To surface the names on the API, each tier is declared once as a static
+key `alias` on the key of its routing rule's primary provider, and `list_models`
+is enabled on the custom providers so Bifrost's list-all fan-out includes them
+(the fan-out skips a provider that forbids it). `GET /v1/models` then advertises
+the served names (`<provider>/<tier>`) beside the wire ids, and a client that
+sends the provider-scoped name routes through the same rule as the bare name.
+
+No capability field is added: Bifrost's config schema defines none for a model
+or a routing rule, so a hand-rolled key would be an unverified claim. The
+routing rule's `description` — a real, schema-defined field the dashboard's
+Routing Rules list renders — and the machine-readable
+`GET /api/governance/routing-rules` state the capability beside each name.
 
 ## Consequences
 
@@ -68,6 +73,10 @@ alias NAME is what a caller reads: `vision:standard` says the tier reads images.
   aliases. Priorities stay unique (Bifrost requires it within a scope).
 - Clients pinned to `text:standard` / `nonstreaming:text:standard` experience no
   change: the deprecated rules resolve to the identical chains.
+- The tiers become discoverable through the API: `GET /v1/models` lists the
+  served names, and each key's `models` allowlist narrows from `*` to the exact
+  wire models its rules send it, so the listing carries no upstream-catalogue
+  noise and the keys are least-privilege.
 - The deprecated-rule **removal is a later step** and requires the client
   surfaces, the 34 bb project defaults, and the LiteLLM overlay to move first
   (ordered list in `docs/services/bifrost.md`, "Alias migration").
