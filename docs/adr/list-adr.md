@@ -11,3 +11,4 @@
 | ADR-017 | Unified Cove Admin Identity | 2026-08-12 | f654088 |
 | ADR-018 | ADE — Agentic Development Environment (bb as default harness) | 2026-09-25 | (accepted) |
 | ADR-019 | Activation Bundles for `cove up` | 2026-09-25 | (proposed) |
+| ADR-020 | Vision-Led Standard Tier Alias (ADR-008 applied) | 2026-10-29 | (accepted) |
