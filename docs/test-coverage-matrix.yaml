@@ -160,13 +160,20 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
-  - path: "Bifrost config.json ladder: 11 routing rules (9 canonical aliases + 2 deprecated text:standard aliases) with ordered fallback chains and backstop excluded from non-streaming tiers"
+  - path: "Bifrost config.json ladder: 12 routing rules (10 canonical aliases + 2 deprecated text:standard aliases) with ordered fallback chains, backstop excluded from non-streaming tiers, and the decision tier (vision:system1-classifier) carried separately with no fallback"
     blast_radius: high
     coverage:
       happy: executable
       sad: executable
       edge: executable
       corner: executable
+  - path: "Bifrost System One decision tier: the built-in ollama provider (not a custom instance; ollama is not an allowed custom base) at https://ollama.com with the required per-key ollama_key_config.url, alias vision:system1-classifier -> clef leading with the modality (Clef reads images), served on POST /v1/decisions, no fallback; a live decision request (text and a 16x16 PNG) routes to provider ollama / model clef"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
   - path: "Bifrost standard tier alias: vision:standard / nonstreaming:vision:standard are canonical and carry an image-input description, while text:standard / nonstreaming:text:standard stay as deprecated aliases on the identical chain (ADR-008 applied)"
     blast_radius: high
     coverage:
