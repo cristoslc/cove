@@ -104,6 +104,17 @@ EXPECTED_CHAINS = {
     "infinite:small:vision": [
         "syn-infinite-backstop/infinite:small:vision",
     ],
+    # System One classifier tier: a DECISION tier, not a chat tier. It is
+    # served on POST /v1/decisions (and /typesafe/v1/systemone), never on
+    # /v1/chat/completions. The built-in `ollama` provider points at Ollama
+    # Cloud and calls /v1/systemone; Clef is a 27B multimodal decision model
+    # (reads text, JSON, and images), so per ADR-008 the alias leads with the
+    # modality: vision:system1-classifier. No fallback — no second System One
+    # provider is configured, so the tier fails loudly rather than silently
+    # dropping to a chat model that cannot answer a decision question.
+    "vision:system1-classifier": [
+        "ollama/clef",
+    ],
 }
 
 EXPECTED_TARGETS = {tier: chain[0] for tier, chain in EXPECTED_CHAINS.items()}
@@ -219,13 +230,24 @@ class TestBifrostConfigValidation:
         assert auth["admin_password"] == "env.BIFROST_ADMIN_PASSWORD"
 
     def test_three_custom_instances_with_openai_type(self):
+        """The three REUSED upstreams are custom provider instances on the
+        openai base (multiple views of the same OpenAI-compatible endpoints).
+        The fourth provider is different in kind: `ollama` is the BUILT-IN
+        Ollama provider (no custom_provider_config), added for the System One
+        decision tier — a custom provider cannot carry it, because
+        `ollama` is not an allowed custom base and an openai-base custom
+        provider would speak OpenAI's /v1/decisions shape at Ollama's
+        /v1/systemone endpoint."""
         providers = _provider_names(self.config)
         assert set(providers) == {
-            "syn-subscription", "ollama-cloud", "syn-infinite-backstop"
+            "syn-subscription", "ollama-cloud", "ollama", "syn-infinite-backstop"
         }
-        for name, provider in providers.items():
+        for name in ("syn-subscription", "ollama-cloud", "syn-infinite-backstop"):
+            provider = providers[name]
             assert provider["custom_provider_config"]["base_provider_type"] == "openai"
             assert len(provider["keys"]) == 1
+        assert "custom_provider_config" not in providers["ollama"]
+        assert len(providers["ollama"]["keys"]) == 1
 
     def test_base_urls_exclude_v1_suffix(self):
         """Spike finding: per-instance base_urls must NOT carry the /v1
@@ -321,13 +343,16 @@ class TestBifrostConfigValidation:
             )
 
     def test_providers_take_part_in_the_models_listing(self):
-        """`ListAllModels` skips any provider whose `allowed_requests` forbids
-        list_models (Bifrost source, list-all fan-out). All three must allow it
-        or the tiers never reach `/v1/models`."""
-        for name in _provider_names(self.config):
-            allowed = _provider_names(self.config)[name][
-                "custom_provider_config"]["allowed_requests"]
-            assert allowed["list_models"] is True, (
+        """`ListAllModels` skips any CUSTOM provider whose `allowed_requests`
+        forbids list_models (Bifrost source, list-all fan-out). All three must
+        allow it or the tiers never reach `/v1/models`. The built-in `ollama`
+        provider has no allowed_requests gate and lists natively (its key's
+        allowlist + aliases drive its entries)."""
+        for name, provider in _provider_names(self.config).items():
+            cpc = provider.get("custom_provider_config")
+            if cpc is None:
+                continue
+            assert cpc["allowed_requests"]["list_models"] is True, (
                 f"{name} would be skipped in the /v1/models fan-out"
             )
 
@@ -427,10 +452,78 @@ class TestBifrostConfigValidation:
 
     def test_no_request_path_overrides(self):
         """Default OpenAI request paths; per-instance request-path overrides
-        proved unnecessary in the spike and are pinned absent here."""
+        proved unnecessary in the spike and are pinned absent here. Pinned
+        absent on the CUSTOM providers; the built-in ollama provider carries
+        none either."""
         for provider in _provider_names(self.config).values():
-            cpc = provider["custom_provider_config"]
+            cpc = provider.get("custom_provider_config")
+            if cpc is None:
+                continue
             assert "request_path_overrides" not in cpc
+
+    def test_system1_provider_is_builtin_ollama_at_ollama_cloud(self):
+        """The System One tier needs the BUILT-IN ollama provider, not a custom
+        instance. Bifrost's `SupportedBaseProviders` excludes `ollama`, so a
+        custom provider cannot use the Ollama protocol (and an openai-base
+        custom provider would POST OpenAI's /v1/decisions shape at Ollama's
+        /v1/systemone endpoint and mis-parse the reply). The built-in provider
+        requires a per-key `ollama_key_config.url` (verified live 2026-10-29:
+        without it the gateway logs "ollama_key_config is required, skipping
+        key" and every tier request 400s with no_key_supports_model)."""
+        provider = _provider_names(self.config)["ollama"]
+        assert "custom_provider_config" not in provider, (
+            "ollama must be the built-in provider; ollama is not a valid "
+            "custom base_provider_type"
+        )
+        assert provider["network_config"]["base_url"] == "https://ollama.com"
+        key = provider["keys"][0]
+        # Per-key URL is REQUIRED by Bifrost's ollama key validation.
+        assert key["ollama_key_config"]["url"] == "https://ollama.com"
+        assert key["value"] == "env.OLLAMA_API_KEY", (
+            "the ollama-cloud key is workstation-lane owned; cove passes it "
+            "through, never holds it"
+        )
+
+    def test_system1_classifier_alias_leads_with_the_modality(self):
+        """ADR-008 applied: Clef is a 27B multimodal decision model (Ollama's
+        library page lists input Text, Image; a live 16x16 red PNG returned
+        colour=red through this gateway 2026-10-29), so the alias must lead
+        with vision:. A text:-led name for an image-capable tier is the defect
+        class ADR-020 renamed away from, so no text: alias is added here."""
+        rules = _rules(self.config)
+        tier = "vision:system1-classifier"
+        assert tier in rules
+        assert not [t for t in rules if t.endswith("system1-classifier")
+                    and t != tier], (
+            "no text:-led alias for the same decision tier: it would "
+            "understate the modality, the mirror of the text:standard defect"
+        )
+        desc = rules[tier].get("description", "")
+        for needle in ("decision", "System One", "image"):
+            assert needle in desc, (
+                f"{tier} description must state its nature and modality: "
+                f"missing {needle!r} in {desc!r}"
+            )
+
+    def test_system1_classifier_tier_admits_wire_and_tier_name(self):
+        """The key allowlist carries BOTH the wire model the rule sends
+        (`clef`) and the served tier name, matching the syn-subscription
+        pattern: Case-A backfill surfaces `ollama/vision:system1-classifier`
+        (and `ollama/clef`) in /v1/models."""
+        key = _provider_names(self.config)["ollama"]["keys"][0]
+        assert set(key["models"]) == {"clef", "vision:system1-classifier"}
+        assert key["aliases"] == {"vision:system1-classifier": "clef"}
+
+    def test_system1_tier_has_no_chat_fallback(self):
+        """The classifier tier has NO fallback chain: no second System One
+        provider is configured, and falling back to a chat tier would silently
+        hand a decision request to a model that cannot answer it. The tier
+        therefore fails loudly instead."""
+        rule = _rules(self.config)["vision:system1-classifier"]
+        assert not rule.get("fallbacks")
+        target = rule["targets"][0]
+        assert target["provider"] == "ollama"
+        assert target["model"] == "clef"
 
 
 class TestBifrostComposeSurface:
@@ -1182,6 +1275,28 @@ def gateway(request):
             with captured_lock:
                 captured.append((auth, wire_model, stream))
             key = auth.removeprefix("Bearer ").strip()
+            # Ollama System One (decision) path: the built-in ollama provider
+            # posts the TypeSafe-shaped body to /v1/systemone and expects the
+            # TypeSafe-shaped reply. Key it on the ollama key so the test
+            # proves the decision tier routed to the ollama provider.
+            if self.path.split("?")[0].endswith("/v1/systemone"):
+                if key != self.SECONDARY_KEY_VALUE:
+                    self._send_status(401, {"error": "bad key"})
+                    return
+                if wire_model != "clef":
+                    self._send_status(400, {"error": f"unexpected model {wire_model}"})
+                    return
+                self._send_status(200, {
+                    "model": "clef",
+                    "answers": {
+                        "label": {"type": "choice", "choice": "bug",
+                                  "probabilities": {"billing": 0.01, "bug": 0.98,
+                                                    "account": 0.01},
+                                  "confidence": 0.95},
+                    },
+                    "usage": {"input_tokens": 42, "output_tokens": 0},
+                })
+                return
             # Model-keyed behavior: the vision:standard PRIMARY hop fails,
             # everything else serves (streaming via SSE).
             if key == self.PRIMARY_KEY_VALUE and wire_model == self.FAIL_WIRE_MODEL:
@@ -1238,6 +1353,14 @@ def gateway(request):
     for provider in config["providers"].values():
         provider["network_config"]["base_url"] = \
             f"http://host.docker.internal:{mock_port}"
+        # The built-in ollama provider ALSO requires a per-key
+        # ollama_key_config.url, and the per-key URL wins over network_config
+        # (ollama.go getBaseURL). Redirect it too, or the decision smoke would
+        # reach the real ollama.com instead of the mock.
+        for key in provider.get("keys", []):
+            if key.get("ollama_key_config"):
+                key["ollama_key_config"]["url"] = \
+                    f"http://host.docker.internal:{mock_port}"
     config_path = Path(tmp) / "config.json"
     config_path.write_text(json.dumps(config, indent=2))
 
@@ -1346,6 +1469,10 @@ class TestBifrostLiveSmoke:
        structurally (before any upstream call).
     5. GET /v1/models advertises the served tier names, so the aliases are
        discoverable through the API.
+    6. The System One classifier tier (vision:system1-classifier) is a
+       DECISION tier: it is served on POST /v1/decisions by the built-in
+       ollama provider, which posts the TypeSafe-shaped body to
+       /v1/systemone, and the reply is normalised into Bifrost's shape.
     """
 
     PRIMARY_KEY = "sk-primary-smoke"
@@ -1384,6 +1511,70 @@ class TestBifrostLiveSmoke:
             )
             assert resp.status_code == 200, (headers, resp.text[:200])
             assert resp.json()["choices"][0]["message"]["content"] == "ok"
+
+    def test_system1_decision_tier_serves_through_the_ollama_provider(self):
+        """vision:system1-classifier is a DECISION tier, reached on
+        POST /v1/decisions (never /v1/chat/completions). It routes to the
+        built-in ollama provider, which posts the TypeSafe-shaped body to
+        /v1/systemone against the ollama key, and the mock's TypeSafe reply is
+        normalised into Bifrost's decision shape."""
+        import requests
+        before = self._capture_count()
+        resp = requests.post(
+            f"{self._base}/v1/decisions",
+            headers={"Authorization": f"Bearer {self._token}"},
+            json={
+                "model": "vision:system1-classifier",
+                "input": "Our checkout has returned 500 errors since 9am.",
+                "questions": [
+                    {"type": "choice", "name": "label",
+                     "instructions": "Which label fits this ticket?",
+                     "choices": [
+                         {"value": "billing", "description": "Payments and refunds"},
+                         {"value": "bug", "description": "Software errors"},
+                         {"value": "account", "description": "Login and account access"},
+                     ]},
+                ],
+            },
+            timeout=60,
+        )
+        assert resp.status_code == 200, resp.text[:300]
+        answer = resp.json()["answers"][0]
+        assert answer["type"] == "choice"
+        assert answer["choice"] == "bug"
+        with self._captured_lock:
+            new = list(self._captured)[before:]
+        assert new, "the upstream mock saw no request"
+        ollama_calls = [c for c in new if c[0].endswith(self.SECONDARY_KEY)]
+        assert ollama_calls, (
+            f"the decision tier never reached the ollama provider: {new}"
+        )
+        # The served alias is rewritten to the wire model the ollama key serves.
+        assert ollama_calls[0][1] == "clef", ollama_calls
+
+    def test_decision_alias_never_reaches_a_chat_provider(self):
+        """The classifier alias names a DECISION tier. Whatever the chat route
+        does with it, the routing rule targets ONLY the ollama provider: the
+        alias must never fan out to a Synthetic chat deployment and be
+        answered as if it were a chat tier."""
+        import requests
+        before = self._capture_count()
+        requests.post(
+            f"{self._base}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self._token}"},
+            json={"model": "vision:system1-classifier",
+                  "messages": [{"role": "user", "content": "hi"}],
+                  "stream": False},
+            timeout=60,
+        )
+        with self._captured_lock:
+            new = list(self._captured)[before:]
+        assert not any(c[0].endswith(self.PRIMARY_KEY) for c in new), (
+            f"the decision alias must not reach a chat provider: {new}"
+        )
+        for call in new:
+            if call[0].endswith(self.SECONDARY_KEY):
+                assert call[1] == "clef", call
 
     def test_non_stream_falls_back_when_primary_errors(self):
         import requests
