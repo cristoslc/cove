@@ -181,6 +181,13 @@ workflow_paths:
       sad: executable
       edge: skip
       corner: skip
+  - path: "Bifrost /v1/models discovery: list_models enabled on all three custom providers, each tier declared once as a static key alias on its routing rule's primary provider (name set and value pinned to the rules), each key allowlist narrowed to the wire models its rules send it, and a live GET /v1/models advertises the tier names"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
   - path: "Bifrost custom providers: base_urls without /v1, env-only keys, chat-only allowed_requests, streaming-only backstop gate"
     blast_radius: high
     coverage:
