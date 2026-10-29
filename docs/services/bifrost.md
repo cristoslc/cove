@@ -109,10 +109,11 @@ IaC-first, with the same split as LiteLLM:
 
 - **`compose/bifrost/config.json`** (git-tracked): the governance source. It
   carries `source_of_truth: "config.json"`, the auth settings, the three
-  custom provider instances, the single virtual key, the eleven tier
-  routing rules (nine canonical aliases plus the two deprecated
-  `text:standard` aliases), and the served-name key `aliases` that
-  `/v1/models` advertises. Seeded to `~/Documents/cove-data/bifrost/config.json`
+  custom OpenAI-base provider instances **plus the built-in `ollama` provider
+  for the System One decision tier**, the single virtual key, the twelve tier
+  routing rules (ten canonical aliases — including the decision tier — plus
+  the two deprecated `text:standard` aliases), and the served-name key
+  `aliases` that `/v1/models` advertises. Seeded to `~/Documents/cove-data/bifrost/config.json`
   (first boot only; operator edits preserved, wedge-guarded).
 - **`config.db`** (SQLite runtime store): **must pre-exist before the first
   container boot** — a file-only boot cannot carry governance, and the store
@@ -154,10 +155,12 @@ IaC-first, with the same split as LiteLLM:
 
 ## The model ladder
 
-Eleven tier aliases re-express as CEL routing rules (`model == '<tier>'`)
-with ordered fallback chains. Chain order is the spend-first order:
-Synthetic subscription (1), ollama-cloud metered (2), the infinite
-backstop (3). Wire ids are unchanged from the LiteLLM configuration.
+Twelve tier aliases re-express as CEL routing rules (`model == '<tier>'`)
+with ordered fallback chains. Eleven are chat tiers whose chain order is the
+spend-first order: Synthetic subscription (1), ollama-cloud metered (2), the
+infinite backstop (3). Wire ids are unchanged from the LiteLLM configuration.
+The twelfth, `vision:system1-classifier`, is a **decision tier** and is not
+part of that ladder (see "The System One decision tier" below).
 
 The standard tier serves **DeepSeek V4.1 Flash, which accepts image input**,
 so per ADR-008 ("aliases lead with the modality") its canonical alias is
@@ -178,6 +181,41 @@ so per ADR-008 ("aliases lead with the modality") its canonical alias is
 | `infinite:small:vision` | syn-infinite-backstop directly (1 hop) |
 | `text:standard` | **deprecated alias** — same chain as `vision:standard` |
 | `nonstreaming:text:standard` | **deprecated alias** — same chain as `nonstreaming:vision:standard` |
+| `vision:system1-classifier` | **decision tier, not a chat tier** — built-in `ollama` provider `clef` on Ollama Cloud (1 hop, no fallback; served on `POST /v1/decisions`) |
+
+### The System One decision tier
+
+`vision:system1-classifier` is a **decision** tier: it answers typed questions
+on Bifrost's `POST /v1/decisions` (and the native `/typesafe/v1/systemone`
+route), never a chat completion. It is named for the capability and leads with
+the modality, per ADR-008 — Clef is a 27B multimodal decision model that reads
+text, JSON, and images.
+
+Why it needs the **built-in `ollama` provider** rather than a fourth custom
+instance: Bifrost's `SupportedBaseProviders` (the custom-provider base list)
+excludes `ollama`, and an `openai`-base custom provider would POST OpenAI's
+`/v1/decisions` request shape at Ollama's `/v1/systemone` endpoint and
+mis-parse the TypeSafe-shaped reply. The built-in provider speaks Ollama's
+protocol: it converts the normalized decision request to the System One body
+and calls `<base_url>/v1/systemone`. It **requires** a per-key
+`ollama_key_config.url` — Bifrost's key validation refuses an ollama key without
+it (`core/utils.go`: `ollama_key_config is required`), and live-verified
+2026-10-29 the gateway skips such a key at startup and every request 400s with
+`no_key_supports_model` (`network_config.base_url` is only a runtime fallback,
+so both are set).
+
+The tier is additive and reaches only the `ollama` provider — that is, it never
+fans out to a chat deployment. It has **no fallback**: no second System One
+provider is configured, and falling back to a chat tier would silently hand a
+decision request to a model that cannot answer it, so the tier fails loudly
+instead. `ollama.com` was already on the DNS allowlist (it is `ollama-cloud`'s
+configured upstream), so no egress change was needed.
+
+Capability is verified live, not assumed (2026-10-29, through this gateway):
+a `predicate` question returned `0.9941`, and a `choice` question on a 16×16
+solid-red PNG returned `colour = red` (`0.9903`) with
+`routing_info = {"provider": "ollama", "model": "clef", "requested_model":
+"vision:system1-classifier"}`.
 
 ### How a caller discovers the tiers
 
@@ -203,8 +241,10 @@ Entries are provider-scoped: `syn-subscription/vision:standard`,
 (`syn-subscription/hf:deepseek-ai/DeepSeek-V4.1-Flash`). A client that sends the
 provider-scoped tier name routes through the same routing rule as the bare
 name, because Bifrost strips the provider prefix before evaluating the rule. A
-live `GET /v1/models` against the pinned gateway returns 21 such entries and no
-foreign models.
+live `GET /v1/models` against the pinned gateway returns 22 such entries and no
+foreign models. The built-in `ollama` provider's decision tier surfaces the
+same way (its key's `aliases` backfills `ollama/vision:system1-classifier`,
+beside the allowlist entry `ollama/clef`).
 
 Bifrost's schema still defines **no capability or modality field** for a model
 or a routing rule, so `/v1/models` carries no vision flag and none is invented
