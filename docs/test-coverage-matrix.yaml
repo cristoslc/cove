@@ -160,13 +160,27 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
-  - path: "Bifrost config.json ladder: 9 tier rules with ordered fallback chains and backstop excluded from non-streaming tiers"
+  - path: "Bifrost config.json ladder: 11 routing rules (9 canonical aliases + 2 deprecated text:standard aliases) with ordered fallback chains and backstop excluded from non-streaming tiers"
     blast_radius: high
     coverage:
       happy: executable
       sad: executable
       edge: executable
       corner: executable
+  - path: "Bifrost standard tier alias: vision:standard / nonstreaming:vision:standard are canonical and carry an image-input description, while text:standard / nonstreaming:text:standard stay as deprecated aliases on the identical chain (ADR-008 applied)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "Bifrost config bundled-copy drift: the wheel's bifrost/config.json must match compose/bifrost/config.json byte-for-byte"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: skip
+      corner: skip
   - path: "Bifrost custom providers: base_urls without /v1, env-only keys, chat-only allowed_requests, streaming-only backstop gate"
     blast_radius: high
     coverage:

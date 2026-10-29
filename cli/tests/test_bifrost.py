@@ -58,6 +58,14 @@ EXPECTED_CHAINS = {
         "ollama-cloud/gpt-oss:120b",
         "syn-infinite-backstop/infinite:small:vision",
     ],
+    # Standard tier: DeepSeek V4.1 Flash accepts image input, so per ADR-008
+    # (aliases lead with the modality) the canonical name is vision:standard.
+    # text:standard survives as a deprecated alias to the identical chain.
+    "vision:standard": [
+        "syn-subscription/hf:deepseek-ai/DeepSeek-V4.1-Flash",
+        "ollama-cloud/deepseek-v4.1-flash",
+        "syn-infinite-backstop/infinite:small:vision",
+    ],
     "text:standard": [
         "syn-subscription/hf:deepseek-ai/DeepSeek-V4.1-Flash",
         "ollama-cloud/deepseek-v4.1-flash",
@@ -81,6 +89,10 @@ EXPECTED_CHAINS = {
     "nonstreaming:text:light": [
         "syn-subscription/hf:zai-org/GLM-4.7-Flash",
         "ollama-cloud/gpt-oss:120b",
+    ],
+    "nonstreaming:vision:standard": [
+        "syn-subscription/hf:deepseek-ai/DeepSeek-V4.1-Flash",
+        "ollama-cloud/deepseek-v4.1-flash",
     ],
     "nonstreaming:text:standard": [
         "syn-subscription/hf:deepseek-ai/DeepSeek-V4.1-Flash",
@@ -257,7 +269,7 @@ class TestBifrostConfigValidation:
         truthy = {k for k, v in allowed.items() if v}
         assert truthy == {"chat_completion_stream"}
 
-    def test_nine_routing_rules_match_the_ladder(self):
+    def test_routing_rules_match_the_ladder(self):
         rules = _rules(self.config)
         assert set(rules) == set(EXPECTED_CHAINS)
         for tier, rule in rules.items():
@@ -267,6 +279,38 @@ class TestBifrostConfigValidation:
                 f"chain order changed for {tier}: spend-first ordering is "
                 "load-bearing (synthetic subscription, ollama metered, "
                 "infinite backstop)"
+            )
+
+    def test_vision_standard_names_present_and_described(self):
+        """The standard tier is DeepSeek V4.1 Flash, which reads images, so
+        ADR-008 (aliases lead with the modality) names it vision:standard.
+        The rename is carried by the alias NAME — Bifrost's /v1/models listing
+        is empty and carries no capability field — and the routing-rule
+        `description` states the capability beside the name."""
+        rules = _rules(self.config)
+        for tier in ("vision:standard", "nonstreaming:vision:standard"):
+            assert tier in rules, f"canonical vision-led alias missing: {tier}"
+            desc = rules[tier].get("description", "")
+            assert "image" in desc.lower(), (
+                f"{tier} must declare image input in its routing-rule "
+                f"description (the dashboard shows it): got {desc!r}"
+            )
+
+    def test_deprecated_text_standard_aliases_resolve_to_the_same_chain(self):
+        """text:standard / nonstreaming:text:standard stay resolvable during
+        the migration, pointing at the exact same chain as the vision-led
+        names (a hard rename would break 34 project defaults on merge night)."""
+        rules = _rules(self.config)
+        for legacy, canonical in (
+            ("text:standard", "vision:standard"),
+            ("nonstreaming:text:standard", "nonstreaming:vision:standard"),
+        ):
+            assert legacy in rules, f"deprecated alias dropped: {legacy}"
+            assert _chain(rules[legacy]) == _chain(rules[canonical]), (
+                f"{legacy} must resolve to the same chain as {canonical}"
+            )
+            assert "deprecated" in rules[legacy].get("description", "").lower(), (
+                f"{legacy} must be marked deprecated in its description"
             )
 
     def test_default_target_matches_ladder_head(self):
@@ -284,7 +328,8 @@ class TestBifrostConfigValidation:
 
     def test_non_streaming_tiers_never_reach_the_backstop(self):
         rules = _rules(self.config)
-        for tier in ("nonstreaming:text:light", "nonstreaming:text:standard"):
+        for tier in ("nonstreaming:text:light", "nonstreaming:text:standard",
+                     "nonstreaming:vision:standard"):
             chain = _chain(rules[tier])
             assert not any(c.startswith("syn-infinite-backstop/") for c in chain)
 
@@ -1050,6 +1095,7 @@ def gateway(request):
     class Handler(BaseHTTPRequestHandler):
         PRIMARY_KEY_VALUE = TestBifrostLiveSmoke.PRIMARY_KEY
         SECONDARY_KEY_VALUE = TestBifrostLiveSmoke.SECONDARY_KEY
+        FAIL_WIRE_MODEL = TestBifrostLiveSmoke.FAIL_WIRE_MODEL
 
         def log_message(self, *args):  # quiet
             pass
@@ -1063,7 +1109,7 @@ def gateway(request):
             with captured_lock:
                 captured.append((auth, wire_model, stream))
             key = auth.removeprefix("Bearer ").strip()
-            # Model-keyed behavior: the text:standard PRIMARY hop fails,
+            # Model-keyed behavior: the vision:standard PRIMARY hop fails,
             # everything else serves (streaming via SSE).
             if key == self.PRIMARY_KEY_VALUE and wire_model == self.FAIL_WIRE_MODEL:
                 self._send_status(500, {"error": {"message": "primary down"}})
@@ -1207,6 +1253,7 @@ def gateway(request):
 
 
 @pytest.mark.live
+@pytest.mark.usefixtures("gateway")
 class TestBifrostLiveSmoke:
     """Self-contained container smoke against a local mock upstream.
 
@@ -1269,7 +1316,7 @@ class TestBifrostLiveSmoke:
         resp = requests.post(
             f"{self._base}/v1/chat/completions",
             headers={"Authorization": f"Bearer {self._token}"},
-            json={"model": "text:standard",
+            json={"model": "vision:standard",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": False},
             timeout=60,
@@ -1288,7 +1335,7 @@ class TestBifrostLiveSmoke:
         assert fail_calls[0][2] is False
         # The ordered chain: primary fails, the SECOND entry serves, and the
         # requested tier is preserved end to end.
-        assert secondary_calls[0][1] in ("deepseek-v4.1-flash", "text:standard")
+        assert secondary_calls[0][1] in ("deepseek-v4.1-flash", "vision:standard")
         print("bifrost routing headers:", dict(resp.headers))
 
     def test_stream_falls_back_the_same_way(self):
@@ -1296,7 +1343,7 @@ class TestBifrostLiveSmoke:
         resp = requests.post(
             f"{self._base}/v1/chat/completions",
             headers={"Authorization": f"Bearer {self._token}"},
-            json={"model": "text:standard",
+            json={"model": "vision:standard",
                   "messages": [{"role": "user", "content": "hi"}],
                   "stream": True},
             timeout=60,
@@ -1365,3 +1412,23 @@ class TestBifrostLiveSmoke:
                    ("models.dev", "getbifrost.ai", "github.com/maximhq", "telemetry"))
         ]
         print("phone-home scan:", suspects[:5] or "none observed")
+
+
+class TestBifrostResourcesSync:
+    """The shipped copy `cli/cove/resources/compose/bifrost/config.json` is a
+    gitignored build artifact produced by `cli/scripts/sync_compose_resources.py`
+    before every wheel build; the wheel is the deploy artifact (`cove up` /
+    `cove update` extract from it). Nothing regenerates the in-tree copy on
+    `git pull`, so this guard compares the wheel against the `compose/` source
+    and fails when the two config copies diverge — e.g. when a tier-alias
+    rename lands in `compose/` but never reaches the shipped copy."""
+
+    def test_bifrost_config_bundled_in_sync(self, bundled_compose):
+        rel = "bifrost/config.json"
+        assert rel in bundled_compose, (
+            "bundled resources missing bifrost/config.json — wheel packaging gap"
+        )
+        assert (BIFROST_DIR / "config.json").read_bytes() == bundled_compose[rel], (
+            "bundled bifrost/config.json is out of sync with "
+            "compose/bifrost/config.json — run cli/scripts/sync_compose_resources.py"
+        )
