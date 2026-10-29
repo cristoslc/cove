@@ -1,7 +1,8 @@
 ---
 title: "Can Bifrost carry Headroom compression, should it, or should we drop it?"
 created: 2026-10-28
-status: Draft
+status: Ruled
+ruled: 2026-10-29
 authored-by: standard:cove
 ---
 
@@ -15,9 +16,13 @@ Related: [the LiteLLM exit musing](litellm-exit.md), [the removed-claim and requ
 
 - **Can Bifrost use Headroom?** Yes, in principle, but only by chaining Headroom as an OpenAI-compatible hop (keep it in front of Bifrost so the ladder stays intact). The in-process hook path is blocked by the official Bifrost image, which is statically linked and cannot load a Go plugin. Client-side `headroom wrap` works but is per-client and bypasses the neutral `llmproxy.cove` edge.
 - **Should it?** No, not now. The only measured value is about 6.3% on real tool-heavy traffic and possibly near zero on tool-role payloads, while the two real gaps (no declared input limit, and a `400` that never cascades) remain the incident's cause and are not answered by compression or by Bifrost.
-- **Or drop it?** Yes. Stay dropped, and revisit only if a measured A/B on the existing replay harness shows a material reduction after the file-read protection gap is addressed, and after the two gaps are handled.
+- **Or drop it?** Yes, and the operator ruled it on 2026-10-29: stay dropped. Revisit only if a measured A/B on the existing replay harness shows a material reduction after the file-read protection gap is addressed, and after the two gaps have a decided policy.
 
 The honest split is: **"can" is yes, "should" is no.**
+
+## Ruling (2026-10-29)
+
+The operator accepted the drop recommendation on 2026-10-29. Compression stays dropped behind Bifrost: no reinstate, no probe, no code. The reopen condition is unchanged: a post-fix replay A/B on the existing harness must show a material reduction after the file-read protection gap is addressed, and the two request-size gaps must have a decided policy. Until both hold, this document is the record and there is nothing to build.
 
 ## What was removed, and why that matters here
 
@@ -92,9 +97,9 @@ So compression is a distraction from the two gaps, and the two gaps are more val
 
 **Cost and risk, weighed.** A second proxy hop and its latency; a resident model and RAM; a model/runtime download from `huggingface.co` and `cdn.pyke.io` that fights Cove's offline-first posture and would widen Bifrost's fail-closed DNS allowlist (currently exactly `api.synthetic.new`, `ollama.com`, and `getbifrost.ai`); telemetry on by default with a fail-open parser; Headroom's own CVE-2026-32920 and the CompressionAttack class; and a new SBOM and update-hold surface. Apache-2.0 licensing is fine and the project is very active. None of this is disqualifying on its own, but it is a lot of surface for a capability that never ran.
 
-## Recommendation
+## Recommendation (accepted 2026-10-29)
 
-**Drop it, and stay dropped for now.** Do not reinstate Headroom behind Bifrost. Point the next effort at the two gaps, not at compression. Reopen the question only when a replay A/B, run after a lossless-read fix, shows a material reduction, and when the two gaps have a decided policy.
+**Drop it, and stay dropped.** The operator accepted this recommendation on 2026-10-29. Do not reinstate Headroom behind Bifrost. Point the next effort at the two gaps, not at compression. Reopen the question only when a replay A/B, run after a lossless-read fix, shows a material reduction, and when the two gaps have a decided policy.
 
 **Strongest counter-argument.** The metered economics are real and compounding: 3,063M input tokens per 30 days is about $7.35k/yr at $0.20/1M, so even 6.3% is roughly $460/yr, and a lossless-read fix plausibly lifts the reduction into the 25% band, which is $1.8k/yr at four times current usage. Compression is also a capability unlock for the long sessions this platform runs, not only a cost saving. Headroom is maintained, Apache-2.0, and already integrated with the OpenAI and Anthropic paths, so the cost is bounded and reversible. If the operator weights the metered bill and long-session capability above the added surface, reinstating is defensible, but it should follow a measurement, not precede one.
 
@@ -126,7 +131,7 @@ The unreleased K3 prompt asked whether standalone Headroom should be used *in ad
 
 ## Certified
 
-**Recommendation:** Drop Headroom behind Bifrost for now.
+**Ruling:** Drop accepted by the operator on 2026-10-29; compression stays dropped and the reopen condition is unchanged.
 **Confidence:** medium-high on capability (the chain works), high on the "should not, yet" call given the two unaddressed gaps.
 **Key evidence:** measured 6.3% reduction with file-read tags protected ([replay](jam-sessions/2026-09-08-spike-real-session-replay.md)); the two gaps are the incident's cause ([tech-debt note](../tech-debt/litellm-headroom-and-request-size.md)); Bifrost's official image cannot load Go plugins ([guardrail-plugin README](https://github.com/go-routine-id/bifrost-guardrail-plugin)); a `400` does not cascade in Bifrost ([exit musing](litellm-exit.md)); telemetry and offline downloads are opt-out and pre-seed concerns ([README](https://github.com/headroomlabs-ai/headroom), [limitations](https://docs.headroomlabs.ai/docs/limitations)).
 **Reversibility:** high. Reinstating is one compose service plus a client-path flip; dropping needs no change.
