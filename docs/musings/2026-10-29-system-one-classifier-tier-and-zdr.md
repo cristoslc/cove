@@ -20,6 +20,11 @@ Cloud? If not, what pathways exist through Cove's services? And does Ollama
 provide zero data retention (ZDR) on decision models — what about OpenRouter,
 and any other decision-model provider with consumer ZDR?
 
+**Follow-up (added 2026-10-29):** is there a decision-model provider with real
+ZDR that could actually be added, and what does OpenRouter charge? Answers in
+Part 1b (the ZDR decision-provider shortlist) and Part 4 (OpenRouter's fees with
+arithmetic).
+
 ## Answer in one paragraph
 
 Yes, Bifrost carries it — with a shape the question did not anticipate. Bifrost
@@ -30,12 +35,15 @@ provider** pointed at `https://ollama.com`, plus a routing rule and an alias.
 The alias must lead with the modality, so the honest name is
 `vision:system1-classifier` (Clef reads images). It is a **decision tier, not a
 chat tier**: it is served on `/v1/decisions`, never `/v1/chat/completions`. It
-was proven with real requests through the running gateway on 2026-10-29. On
-ZDR: **no provider examined offers a contractual consumer ZDR guarantee for
-decision models in particular** — Ollama's terms promise transient processing
-and no training but publish no fixed retention window and no consumer opt-out,
-so it is not a ZDR guarantee; OpenRouter is the only stack-reachable gateway
-with a per-request ZDR switch. Details and citations below.
+was proven with real requests through the running gateway on 2026-10-29. On ZDR:
+no provider examined publishes a *decision-model-specific* retention policy, but
+**Cloudflare Workers AI** does publish a contractual, consumer-terms no-retention
+commitment that covers Clef, the one carryable ZDR decision provider (Part 1b);
+Ollama's terms promise transient processing and no training but publish no fixed
+retention window and no consumer opt-out, so the shipped tier is not a ZDR
+guarantee; and OpenRouter is the only stack-reachable *gateway* with a
+per-request ZDR switch, whose decision models are genuinely covered by it
+(Part 4 has its fees). Details and citations below.
 
 ---
 
@@ -185,6 +193,143 @@ description that carries the capability.
 
 ---
 
+## Part 1b — A decision provider with real ZDR (the shortlist)
+
+Two different things get conflated here, so they are separated first: a
+**gateway** with a per-request ZDR switch (OpenRouter), and an **underlying
+provider** whose terms commit to no retention. A switch with no qualifying
+endpoint behind it is not ZDR.
+
+### 1b.1 What OpenRouter's ZDR routing actually reaches
+
+OpenRouter publishes its ZDR-classified endpoints as JSON each
+([`https://openrouter.ai/api/v1/endpoints/zdr`](https://openrouter.ai/api/v1/endpoints/zdr),
+fetched 2026-10-29). As of that fetch it lists **1,089 ZDR endpoints across
+66 providers**. Decision and classification models are among them, so the
+switch is not empty for this use case:
+
+| Decision model | ZDR endpoints (providers) |
+| --- | --- |
+| `cloudflare/clef-flash` | Cloudflare, DeepInfra, Makora, PrimeIntellect |
+| `cloudflare/clef` | Cloudflare, DeepInfra, PrimeIntellect |
+| `cloudflare/clef-omni` | Cloudflare |
+| `typesafe/jev-1.13`, `typesafe/jev-1.14` | TypeSafe (2) |
+| `perplexity/pplx-decider-v1.2`, `-flash-v1.2` | Perplexity |
+| `microsoft/microsoft-decision-1` | Azure |
+| `scaledown/classify-1` | ScaleDown |
+
+So OpenRouter's no-retention routing does reach small decision models today,
+including `clef-flash` (the small, cheap one) across four providers. Two caveats
+keep this from being the clean answer: the ZDR docs describe `provider.zdr` as
+provider preferences on inference requests, and **whether that preference
+applies to OpenRouter's alpha decisions route** (`/api/alpha/decisions`) is
+unstated; and OpenRouter's classification is **OpenRouter's record of each
+provider's policy**, with special agreements where the default differs (TypeSafe
+jev is the example: TypeSafe itself sells ZDR as enterprise-only, but OpenRouter
+classifies its endpoint ZDR).
+
+### 1b.2 A provider with a contractual consumer retention commitment
+
+Checking the decision models reachable from this stack against the test
+(a fixed retention window or explicit no-retention, no training, and a named
+abuse carve-out), on **consumer** terms rather than a policy page:
+
+| Provider | Commitment | Kind | Abuse carve-out | Can Bifrost carry its decisions? |
+| --- | --- | --- | --- | --- |
+| **Cloudflare Workers AI** (Clef) | "does not retain inputs or outputs after they are no longer needed to process the request and deliver the response" | contractual (Workers AI data-usage page) | stateful features you enable; legal obligations | **yes** — built-in `cloudflare` provider, Decisions at `/accounts/{id}/ai/run/@cf/cloudflare/{model}` |
+| **Ollama Cloud** (Clef) | transient processing, no fixed window | contractual but not ZDR | fraud/abuse, no window published | yes (the tier already shipped) |
+| **TypeSafe** (Jev) | ZDR is enterprise-only on TypeSafe's own terms | DPA/enterprise | — | yes as a custom `typesafe`-base provider, but not on consumer terms |
+| **Perplexity** (Decider) | "ZDR is available only to eligible customers … under a written agreement" | gated | — | yes as a built-in provider, but not on consumer terms |
+| **DeepInfra** (hosts Clef) | "We do not log the content of your requests"; no-store/no-train by default | contractual default | none published | **no direct path** — not a Bifrost provider, and a custom `openai` base would post OpenAI's decision shape |
+| **Azure** (Microsoft-Decision-1) | enterprise | enterprise | — | yes as a built-in provider, not consumer |
+| **Self-hosted** (vLLM / SGLang running Clef Flash; Laya / Nimble) | no third party receives the prompt | by construction | none — it is our host | yes (`vllm/clef-flash`, `sgl/clef-flash`; Laya/Nimble as custom `typesafe` providers) |
+
+**The one provider that is both ZDR on consumer terms and carryable by
+Bifrost's Decisions path is Cloudflare Workers AI, serving Clef.** It is the
+same model family the Ollama tier already uses, so the tier's name and shape do
+not change; only the retention story does. The strongest retention position
+overall is self-hosting, because no third party sees the prompt at all, but it
+needs a GPU host and a new service, which is out of scope for a config change.
+
+### 1b.3 Request shape, per candidate
+
+Bifrost's Decisions capability converts one normalized request out to each
+provider, so the question is which provider *base* the decision path supports:
+
+- **System One / TypeSafe shape.** Built-in `ollama` (systemone) and
+  `cloudflare` (Clef run endpoint, converted through TypeSafe's converter), plus
+  **custom providers on the `typesafe` base** (how Laya and Nimble are added).
+  A custom provider cannot be built on the `ollama` or `cloudflare` base.
+- **OpenAI decisions shape.** The built-in `openai` provider, and custom
+  providers on the `openai` base, which forward to their upstream's
+  `/v1/decisions`.
+- **OpenRouter.** Built-in `openrouter` provider, posting to OpenRouter's
+  `/alpha/decisions` with the TypeSafe request shape
+  (`core/providers/openrouter/decision.go`). Its typed request carries no
+  `provider` preferences, so a per-request `zdr` flag is not expressible through
+  this path without the passthrough-extra-params escape hatch, which is
+  unverified for the decisions route.
+- **Self-hosted.** vLLM and SGLang are built-in providers with Decisions; Laya
+  and Nimble are System One servers added as custom `typesafe`-base providers.
+
+### 1b.4 The concrete config shape, and the evidence needed first
+
+Clef on Cloudflare is multimodal, so per ADR-008 the alias still leads with
+`vision:`. (A text-only classifier, such as `nace-ai/drex-v1.5` or
+`jaredpalmer/kev-4b`, could not take a `vision:` name.) The shape is a second
+provider plus a ZDR-led tier:
+
+```json
+"cloudflare": {
+  "keys": [{
+    "name": "cloudflare-workers-ai",
+    "value": "env.CLOUDFLARE_API_TOKEN",
+    "models": ["clef-flash", "vision:system1-classifier"],
+    "aliases": { "vision:system1-classifier": "clef-flash" },
+    "cloudflare_key_config": { "account_id": "env.CLOUDFLARE_ACCOUNT_ID" },
+    "weight": 1.0
+  }]
+}
+```
+
+with a routing rule `model == 'vision:system1-classifier'` targeting
+`cloudflare/clef-flash`, and `cloudflare` added to the virtual key's
+`provider_configs`. `cloudflare_key_config.account_id` is required, exactly as
+`ollama_key_config.url` is for the ollama provider.
+
+Two design points the shape forces, and both need a ruling rather than a
+default:
+
+- **Where the ZDR tier sits relative to the shipped Ollama tier.** Either the
+  same alias points at Cloudflare only (ZDR by construction, and the Ollama hop
+  is removed), or a separate ZDR-led alias exists beside it. A fallback from a
+  ZDR tier to a non-ZDR provider would break the guarantee silently, which is
+  the failure the tier exists to prevent, so a mixed chain is the wrong answer.
+- **Egress.** Cloudflare Workers AI is `api.cloudflare.com` (plus the per-account
+  `*.cloudflare.com` host), which is **not** on the Bifrost DNS allowlist, so
+  `compose/bifrost/dnsmasq.conf` would need a fourth documented contact.
+
+**Evidence required before writing any of it, none of which is available on this
+host (1Password is signed out; no `CLOUDFLARE_API_TOKEN` or
+`OPENROUTER_API_KEY` is present):**
+
+1. A Cloudflare API token with Workers AI permission and the account ID.
+2. A real `POST /v1/decisions` through Bifrost to `cloudflare/clef-flash`
+   returning `routing_info.provider = "cloudflare"`, and a real image decision,
+   before any alias is written.
+3. A confirmation that Cloudflare's ZDR covers the Clef run endpoint, not just
+   the Workers AI chat path (the data-usage page is product-wide, but the run
+   endpoint is a different route).
+
+If a Cloudflare credential cannot be obtained, the smallest thing that changes
+the answer is a different ZDR endpoint carrying the same model: DeepInfra hosts
+`cloudflare/clef` and `clef-flash` with no-store terms and is reachable through
+OpenRouter, but not through Bifrost's own Decisions path, so it would require
+OpenRouter as the transport and inherits the `provider.zdr`-on-decisions
+question above.
+
+---
+
 ## Part 2 — What pathways exist
 
 Part 1 says Bifrost can carry it, so the "if it cannot" options are recorded for
@@ -301,18 +446,19 @@ OpenRouter is explicit and contractual, and it has a real per-request control.
 | New wrinkle (announced Oct 27, 2026) | OpenRouter will screen **all** inference requests, **including ZDR traffic**, for CSAM; flagged content may be retained for review/reporting. This is a carve-out to ZDR itself. |
 
 **Verdict: contractual ZDR on consumer terms, with named carve-outs.** It is the
-strongest option available to this stack, but it is a *gateway* control: it
-constrains which upstream endpoints are eligible, so the guarantee is only as
-good as each provider's declared policy. Note also that OpenRouter is not
-currently in the Cove stack; adding it is new surface (key, egress allowlist,
-provider entry).
+strongest *gateway* option available to this stack, and its decision models are
+genuinely covered (Part 1b.1 shows the ZDR endpoint list includes them), but it
+is a *gateway* control: it constrains which upstream endpoints are eligible, so
+the guarantee is only as good as each provider's declared policy. Note also that
+OpenRouter is not currently in the Cove stack; adding it is new surface (key,
+egress allowlist, provider entry).
 
 ### 3.3 Other providers, especially those reachable or plausibly reachable
 
 | Provider | No-retention position | Training | Kind | Consumer usable? |
 | --- | --- | --- | --- | --- |
 | **Synthetic** (`api.synthetic.new`, the primary provider) | "We do not store model prompts or completions from the API without your explicit consent … once they are completed such data is deleted" (privacy policy) | Contractually barred (ToS §3.4) | contractual, API-only | yes, on by default |
-| **Cloudflare** (Clef's creator; Workers AI) | "For standard inference requests that do not invoke a stateful feature, Cloudflare does not retain inputs or outputs after they are no longer needed" | "does not use Customer Content processed by Workers AI to train AI models" | contractual | yes — **but only when Cloudflare serves the model**; our Clef is served by Ollama, so this does not cover this tier |
+| **Cloudflare** (Clef's creator; Workers AI) | "For standard inference requests that do not invoke a stateful feature, Cloudflare does not retain inputs or outputs after they are no longer needed" | "does not use Customer Content processed by Workers AI to train AI models" | contractual | yes — **but only when Cloudflare serves the model**; the shipped Clef tier is served by Ollama, so this does not cover it. Cloudflare is the one carryable ZDR decision provider (Part 1b) |
 | **TypeSafe** | "as long as reasonably necessary"; no fixed period published | Not on Input | ZDR is **enterprise/DPA-only** ("fill out the support request form") | no |
 | **Perplexity** (pplx-decider) | "Zero Data Retention is not default … available only to eligible customers … under a written agreement" | No training by default (API ToS) | gated | no |
 | **OpenAI** (gpt-6-luna decisions) | "retained for up to 30 days" abuse monitoring by default; ZDR by approval ("subject to prior approval by OpenAI") | No training by default | approval-gated | no |
@@ -329,18 +475,93 @@ provider entry).
 | **Moonshot / Kimi** | contract retains "while your account is active"; help-centre says no training, contract says the opposite unless enterprise | conflicting | **unknown** | unknown |
 | **Z.ai / GLM** | Individual: retained while account active; DPA no-storage clause is enterprise-context | "reserve the right to process any User Content to improve our existing Services" | marketing/DPA split; no consumer opt-out found | unknown |
 
-Two of these matter to this stack. **Synthetic** — the primary provider for every
-chat tier — has an API-only, contractual no-store/no-train term, which is the
-strongest position here and covers the chat ladder. **Cloudflare** publishing
+Two of these matter most to this stack. **Synthetic** — the primary provider for
+every chat tier — has an API-only, contractual no-store/no-train term, which is
+the strongest position here and covers the chat ladder. **Cloudflare** publishing
 contractual ZDR for Workers AI is real, but it governs Cloudflare's serving of
-Clef, not Ollama's, so it does **not** transfer to this tier.
+Clef, not Ollama's, so it does **not** transfer to the shipped tier; it is
+instead the basis of the ZDR decision tier proposed in Part 1b.
 
 ### 3.4 ZDR for decision models specifically
 
-No provider examined publishes a decision-model-specific retention policy. The
-retention statements are per-service or per-account. Anyone claiming "decision
-models get ZDR" is extrapolating. If that distinction matters, it should be
-asked of each vendor in writing rather than read from a page.
+No provider examined publishes a decision-model-*specific* retention policy. The
+retention statements are per-service or per-account, so "decision models get
+ZDR" as a category does not exist; what exists is a product-wide term that
+happens to cover a decision model. **Cloudflare Workers AI is that case**: its
+ZDR commitment is written for Workers AI as a product, and Clef runs on Workers
+AI as a decision model, so the decision model is covered by a term that was
+never written about decision models. Anyone claiming a *decision-model-specific*
+guarantee is extrapolating; if that distinction matters for a contract, it should
+be asked of each vendor in writing rather than read from a page.
+
+---
+
+## Part 4 — OpenRouter's charges, with numbers
+
+Fee lines, from OpenRouter's own pages (fetched 2026-10-29; the platform-fee
+structure is dated on the announcement and on the pricing page):
+
+| Line | Value | Applies to us? | Source |
+| --- | --- | --- | --- |
+| Platform fee on credit **purchases** | 5.5% of the order, **$0.80 minimum**, on non-crypto payments (5.0% flat, no minimum, on crypto) | yes, only when topping up credits | announcement "Simplifying Our Platform Fee" (6/9/2025, updated 6/11/2026); pricing page |
+| Inference markup | none; "Inference is billed at each provider's list price on every plan … never on individual requests" | no markup | pricing page FAQ |
+| Per-request or per-token surcharge | none beyond the provider's listed token price | no | pricing page FAQ; "How are tokens billed?" |
+| Minimum **purchase** amount | $5 minimum, $25,000 maximum per transaction | yes when buying credits | Terms of Service |
+| **BYOK** | provider bills you directly; Standard includes $25,000 of list-price inference per month with no OpenRouter fee, then 5% of list price | effectively no fee at our volume | pricing page; BYOK docs |
+| ZDR / data-policy routing | no charge; "Zero Data Retention routing is available on every plan", data-policy routing is a Standard feature | no charge | pricing page (Privacy FAQ, plan table) |
+| Failed or fallback attempts | not billed; "you pay only for the run that answers" | n/a | pricing page FAQ |
+| Streaming | same price | n/a | pricing page FAQ |
+| Business plan | 8% platform fee on credit purchases | only if upgraded to Business | pricing page plan table |
+
+**Is there a minimum charge per request that dominates the token price?** No.
+Every decision model on OpenRouter lists `completion = 0` and `request = null`
+in the models API, so a decision call is billed in **input tokens only**, at the
+listed per-million rate, with no per-call floor. The only minimum is the $0.80
+floor on a **credit purchase**, which is a platform fee on a top-up, not a
+per-call charge. Its effect is amortized: $0.80 is 5.5% of a $14.55 purchase, so
+below a $14.55 top-up the floor binds (a $5 purchase pays $0.80, about 16%), and
+at or above it the fee is exactly 5.5%.
+
+### Arithmetic
+
+Assumption: **300 input tokens per decision call and 0 output tokens**, which is
+the shape of the calls this tier serves. OpenRouter's own examples are in the
+same range (289 input tokens for a Clef Flash image call, 332 for a Clef text
+call), and my live probe on the Ollama tier used 312. So 1,000 calls is 0.3M
+input tokens.
+
+| Model (ZDR endpoint provider) | prompt $/M | $ per 1,000 calls | incl. 5.5% credit fee |
+| --- | --- | --- | --- |
+| `cloudflare/clef-flash` (Cloudflare, PrimeIntellect) | 0.038 | $0.0114 | $0.0120 |
+| `cloudflare/clef-flash` (DeepInfra) | 0.019 | $0.0057 | $0.0060 |
+| `cloudflare/clef-flash` (Makora) | 0.018 | $0.0054 | $0.0057 |
+| `cloudflare/clef-omni` (Cloudflare) | 0.15 | $0.0450 | $0.0475 |
+| `cloudflare/clef` (Cloudflare, PrimeIntellect) | 0.24 | $0.0720 | $0.0760 |
+| `cloudflare/clef` (DeepInfra) | 0.192 | $0.0576 | $0.0608 |
+| `typesafe/jev-1.14` | 0.042 | $0.0126 | $0.0133 |
+| `perplexity/pplx-decider-flash-v1.2` | 0.01 | $0.0030 | $0.0032 |
+| `perplexity/pplx-decider-v1.2` | 0.02 | $0.0060 | $0.0063 |
+| `scaledown/classify-1` | 0.04 | $0.0120 | $0.0127 |
+| `microsoft/microsoft-decision-1` | 0.042 | $0.0126 | $0.0133 |
+
+The same calls cost **the same per token through OpenRouter as direct from the
+provider** (no markup): Cloudflare's own published rates for these models are
+`@cf/cloudflare/clef-flash` $0.038/M, `clef` $0.24/M, `clef-omni` $0.15/M, and
+OpenRouter's Cloudflare endpoints list the identical figures.
+
+**BYOK.** Route through OpenRouter with your own Cloudflare key and the Cloudflare
+bill is $0.0114 per 1,000 calls (the Cloudflare rate in the table above), while
+OpenRouter charges nothing until $25,000 of list-price inference in a month. At
+1.14 cents per thousand calls that allowance is about 2.19 billion calls per
+month, so the OpenRouter fee is effectively $0 for this tier.
+
+**Direct, with no gateway in between.** Cloudflare Workers AI bills in neurons at
+$0.011 per 1,000 neurons, and its free allocation is 10,000 neurons per day.
+`clef-flash` is 3,455 neurons per million input tokens, so the free allocation
+covers about 2.9M input tokens per day, or roughly **9,650 decision calls per day
+at 300 tokens for $0**. Past that, `clef-flash` is $0.0114 per 1,000 calls. So a
+Cloudflare-backed ZDR decision tier is both the strongest retention position
+among the hosted options and free at the volume this stack would generate.
 
 ---
 
@@ -366,6 +587,13 @@ asked of each vendor in writing rather than read from a page.
 | 16 | Synthetic: API no-store/no-train, contractual | `synthetic.new/policies/privacy`, `/policies/terms-of-service` |
 | 17 | Cloudflare Workers AI: ZDR for standard inference, no training (Workers AI only) | `developers.cloudflare.com/workers-ai/platform/data-usage` (last updated 2026-10-16) |
 | 18 | TypeSafe ZDR is enterprise-only; Perplexity ZDR is not default; OpenAI 30-day default with approval-gated ZDR; Gemini free tier trains; Groq/Cerebras/DeepInfra/Baseten/Fireworks defaults; Together/Nebius off by default | Vendor legal/docs pages named in §3.3 |
+| 19 | OpenRouter's ZDR-classified endpoint set is published as JSON: 1,089 endpoints across 66 providers, and it includes decision models (Clef on 3-4 providers, Jev, the Perplexity Deciders, Microsoft-Decision-1, ScaleDown Classify-1) | `openrouter.ai/api/v1/endpoints/zdr` (fetched 2026-10-29) |
+| 20 | Cloudflare is a built-in Bifrost provider with Decisions on `/accounts/{id}/ai/run/@cf/cloudflare/{model}`; `cloudflare_key_config.account_id` is required; Clef/Clef-Flash convert through TypeSafe's converter and take images | Bifrost docs `/providers/supported-providers/cloudflare`; `core/providers/cloudflare/decision.go` — v2.3.2 |
+| 21 | Cloudflare's Workers AI pricing: $0.011 per 1,000 neurons, 10,000 free neurons/day; `@cf/cloudflare/clef-flash` $0.038/M input tokens, `clef` $0.24/M, `clef-omni` $0.15/M, all input-only | `developers.cloudflare.com/workers-ai/platform/pricing` (last updated 2026-10-20) |
+| 22 | OpenRouter's fee structure: 5.5% on credit purchases with a **$0.80 minimum** (non-crypto; 5.0% flat on crypto), no markup and no per-request charge, credit purchase $5 min / $25,000 max, Business 8% | pricing page; announcement "Simplifying Our Platform Fee" (6/9/2025, updated 6/11/2026); Terms of Service |
+| 23 | OpenRouter BYOK: Standard/Business include $25,000 of list-price inference per month with no fee, then 5% of list price | pricing page; BYOK docs |
+| 24 | OpenRouter's decision models list as 33 entries with `completion = 0` and `request = null`, so a decision call is billed in input tokens only with no per-call floor | `openrouter.ai/api/v1/models?output_modalities=decisions` (fetched 2026-10-29) |
+| 25 | Bifrost's OpenRouter decision path posts to `/alpha/decisions` with the TypeSafe request shape and carries no `provider` preferences | `core/providers/openrouter/decision.go` — v2.3.2 |
 
 ---
 
@@ -387,6 +615,20 @@ Smallest viable change (implemented in this PR):
 
 No DNS change (ollama.com was already allowlisted). No new credential. No new
 service.
+
+### Follow-up (2026-10-29): the ZDR tier is a proposal, not a change
+
+The Part 1b ZDR shortlist adds a second, **credential-gated** option: a Clef
+tier served by Cloudflare Workers AI, whose no-retention term is contractual on
+consumer terms. It is deliberately **not** implemented in this PR. Writing it
+needs a Cloudflare API token and account ID, none of which exists on this host,
+and the standing rule is that no alias points at a provider path that has not
+answered a real request. The exact config shape is in §1b.4; the four pieces of
+evidence the tier needs before it is written are listed there too. The
+recommendation for the shipped tier is unchanged; the recommendation for a ZDR
+tier is "build it once a Cloudflare credential and a verified Clef run-endpoint
+call exist", and the alternative if no credential appears is the OpenRouter
+route in Part 4, whose ZDR-on-the-decisions-route behaviour is still unknown.
 
 ---
 
@@ -426,16 +668,34 @@ gateway to the pre-change state.
    differ and is not visible here.
 3. **Decision-model-specific retention, at any provider.** No provider examined
    distinguishes decision models. Unstated everywhere.
-4. **OpenRouter's ZDR effect on the Clef-through-Ollama path.** OpenRouter lists
-   Ollama as a decision provider, but whether an OpenRouter-routed Ollama
-   endpoint is classified ZDR is not stated; the ZDR endpoint list is the
-   authority and would need a live check with an OpenRouter key.
-5. **No client speaks `/v1/decisions` today.** The tier is proven at the gateway,
+4. **OpenRouter's ZDR switch on the decisions route.** Resolved in part
+   (2026-10-29): the ZDR endpoint list is authoritative and **does** include
+   decision models, so the switch has somewhere to route. Still open: the ZDR
+   docs describe `provider.zdr` as provider preferences on inference requests,
+   and whether that preference is honoured on OpenRouter's alpha decisions route
+   (`/api/alpha/decisions`) is unstated; separately, Bifrost's OpenRouter
+   decision request carries no `provider` object, so a per-request flag is not
+   expressible through that path without the passthrough-extra-params hatch.
+   Both need a live check with an OpenRouter key.
+5. **No Cloudflare or OpenRouter credential on this host.** 1Password is signed
+   out and no `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, or
+   `OPENROUTER_API_KEY` is present in the deployed `.env` or the workstation
+   secrets. The ZDR decision tier in Part 1b is therefore a shape and an
+   evidence list, not a built and proven tier.
+6. **Whether Cloudflare's ZDR covers the Clef run endpoint.** The Workers AI
+   data-usage commitment is product-wide and Clef runs on Workers AI, but the
+   decision call travels the `/ai/run/@cf/cloudflare/{model}` route rather than
+   the chat route; that it is covered is a reasonable reading, not a quoted one.
+7. **Bifrost's decision path against Cloudflare, unproven.** Bifrost's cloudflare
+   provider is documented and present in the source, but no real decision
+   request has been made through it here, so the `routing_info.provider =
+   "cloudflare"` evidence the tier would need does not exist yet.
+8. **No client speaks `/v1/decisions` today.** The tier is proven at the gateway,
    not consumed by a caller. Whether a caller wants it is a separate decision.
-6. **`bifrost.cove` vs `llmproxy.cove` reachability.** The decision endpoint is
+9. **`bifrost.cove` vs `llmproxy.cove` reachability.** The decision endpoint is
    reachable at `bifrost.cove` (admin surface) now; it would ride
    `llmproxy.cove` only after the LiteLLM cutover flips the product-swap line.
-7. **Moonshot and Z.ai consumer positions** resolve to "unknown": their own
-   pages conflict (Moonshot) or split contractual terms from marketing (Z.ai).
-8. **Bifrost version drift.** This was read and proven at `v2.3.2`. A future
-   release could change Ollama key validation or the Decisions surface.
+10. **Moonshot and Z.ai consumer positions** resolve to "unknown": their own
+    pages conflict (Moonshot) or split contractual terms from marketing (Z.ai).
+11. **Bifrost version drift.** This was read and proven at `v2.3.2`. A future
+    release could change Ollama key validation or the Decisions surface.
