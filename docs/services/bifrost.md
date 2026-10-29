@@ -109,8 +109,9 @@ IaC-first, with the same split as LiteLLM:
 
 - **`compose/bifrost/config.json`** (git-tracked): the governance source. It
   carries `source_of_truth: "config.json"`, the auth settings, the three
-  custom provider instances, the single virtual key, and the nine tier
-  routing rules. Seeded to `~/Documents/cove-data/bifrost/config.json`
+  custom provider instances, the single virtual key, and the eleven tier
+  routing rules (nine canonical aliases plus the two deprecated
+  `text:standard` aliases). Seeded to `~/Documents/cove-data/bifrost/config.json`
   (first boot only; operator edits preserved, wedge-guarded).
 - **`config.db`** (SQLite runtime store): **must pre-exist before the first
   container boot** — a file-only boot cannot carry governance, and the store
@@ -152,22 +153,72 @@ IaC-first, with the same split as LiteLLM:
 
 ## The model ladder
 
-The nine tier aliases re-express as CEL routing rules (`model == '<tier>'`)
+Eleven tier aliases re-express as CEL routing rules (`model == '<tier>'`)
 with ordered fallback chains. Chain order is the spend-first order:
 Synthetic subscription (1), ollama-cloud metered (2), the infinite
 backstop (3). Wire ids are unchanged from the LiteLLM configuration.
 
+The standard tier serves **DeepSeek V4.1 Flash, which accepts image input**,
+so per ADR-008 ("aliases lead with the modality") its canonical alias is
+`vision:standard`. The former `text:standard` name stays resolvable as a
+**deprecated alias pointing at the identical chain** while clients migrate
+(see "Alias migration" below).
+
 | Tier id | Chain (in order) |
 | --- | --- |
 | `text:light` | syn-subscription `hf:zai-org/GLM-4.7-Flash` → ollama-cloud `gpt-oss:120b` → backstop `infinite:small:vision` |
-| `text:standard` | syn-subscription `hf:deepseek-ai/DeepSeek-V4.1-Flash` → ollama-cloud `deepseek-v4.1-flash` → backstop |
+| `vision:standard` | syn-subscription `hf:deepseek-ai/DeepSeek-V4.1-Flash` (image input) → ollama-cloud `deepseek-v4.1-flash` → backstop |
 | `text:ultra-heavy` | syn-subscription `hf:zai-org/GLM-5.3` → ollama-cloud `glm-5.3` → backstop |
 | `vision:heavy` | syn-subscription `hf:zai-org/GLM-5.3-Flash` → ollama-cloud `glm-5.3-flash` → backstop |
 | `vision:super-ultra-heavy` | syn-subscription `hf:moonshotai/Kimi-K3` → ollama-cloud `kimi-k3` → backstop |
 | `nonstreaming:text:light` | syn-subscription → ollama-cloud (2 hops, no backstop) |
-| `nonstreaming:text:standard` | syn-subscription → ollama-cloud (2 hops, no backstop) |
+| `nonstreaming:vision:standard` | syn-subscription `hf:deepseek-ai/DeepSeek-V4.1-Flash` (image input) → ollama-cloud `deepseek-v4.1-flash` (2 hops, no backstop) |
 | `syn:large:text` | syn-subscription directly (1 hop) |
 | `infinite:small:vision` | syn-infinite-backstop directly (1 hop) |
+| `text:standard` | **deprecated alias** — same chain as `vision:standard` |
+| `nonstreaming:text:standard` | **deprecated alias** — same chain as `nonstreaming:vision:standard` |
+
+### How a caller discovers the vision capability
+
+The OpenAI-compatible `/v1/models` listing is **empty on this deployment**
+(`{"data":[], ...}`, HTTP 200, with or without a credential): `list_models` is
+`false` on all three custom provider instances, and Bifrost's own config schema
+carries **no capability or modality field** for a model or a routing rule. So
+`/v1/models` cannot carry a vision flag, and none is invented for it. The
+**alias name is the discovery mechanism** — a caller reading the tier list
+sees `vision:standard` and knows the tier reads images. The machine-readable
+discovery surface is the routing-rule API the dashboard reads,
+`GET /api/governance/routing-rules`, where each tier is a rule whose
+`cel_expression` names the alias and whose `description` (a real, schema-defined
+field, rendered in the dashboard's Routing Rules list) states the capability.
+
+The capability is verified, not assumed: a 1×1 red PNG sent inline to the
+standard tier (as `text:standard`, the name it carried at probe time) through
+the running gateway returned HTTP 200 with the model answering `Red`, routed at
+order 1 to `syn-subscription` `hf:deepseek-ai/DeepSeek-V4.1-Flash`
+(`requested_model: "text:standard"`). The same wire evidence is recorded in the
+workstation repo (2026-10-22, plus Synthetic's catalogue declaring
+`input_modalities: ["text", "image"]`).
+
+### Alias migration
+
+`vision:standard` / `nonstreaming:vision:standard` are the canonical names;
+`text:standard` / `nonstreaming:text:standard` are deprecated aliases to the
+same chains, kept so the 34 bb project defaults and the client configs pinned
+to the old ids keep working on merge night. Removing the deprecated rules is a
+**later step**, and it requires all of the following first:
+
+1. Every client surface moved off `text:standard` / `nonstreaming:text:standard`
+   (the workstation-lane opencode provider config, the `omp` models template,
+   `scripts/synthetic_catalog.py`, `tests/python/test_cove_alias_modality.py`).
+2. The 34 remembered bb project defaults re-pointed to `vision:standard`.
+3. The LiteLLM overlay in `~/Documents/cove-data/` re-pointed (only while
+   LiteLLM still drains; Bifrost is the target path).
+4. The cove Bifrost cutover complete, so `vision:standard` is the live name
+   through `llmproxy.cove`.
+
+Until then the deprecated rules must stay; a hard rename would 404 every
+remembered default.
 
 The infinite backstop is a **separate custom provider instance** pointing at
 the same Synthetic endpoint, gated to `chat_completion_stream` only via
