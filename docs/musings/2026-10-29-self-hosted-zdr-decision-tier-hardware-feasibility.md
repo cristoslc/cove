@@ -55,7 +55,7 @@ those are the targets here.
 | **bulkstorage01** (VM 100, `192.168.0.18`) | unknown | 20 GB max (4 GB floor) | none | yes | No; storage role, no GPU |
 | **Hetzner bastion** (`178.105.167.223`) | 2 vCPU ARM Neoverse-N1 (CAX11) | 3 GiB | none | yes | No; it is the ingress path and has no GPU |
 | **T14** (`TBR-T14G5-202609`, `100.83.212.103`) | Ryzen 7 PRO 8840U, 16 threads | 30 GiB total, 22 available | Radeon 780M iGPU (shared memory, ~15 GiB GTT) | yes | **Yes, with care**: CPU inference has trivial headroom, the iGPU is shared with the chat models |
-| **Mac workstation** (`MBPBK-202602`, the Cove host) | Apple M3 Pro, 11-core CPU | 36 GB unified | 14-core Apple GPU | no, it sleeps | Technically the most capable; it is the daily driver and not a service host |
+| **Mac workstation** (`<hostname>`, the Cove host) | Apple M3 Pro, 11-core CPU | 36 GB unified | 14-core Apple GPU | no, it sleeps | Technically the most capable; it is the daily driver and not a service host |
 
 Where each fact comes from:
 
