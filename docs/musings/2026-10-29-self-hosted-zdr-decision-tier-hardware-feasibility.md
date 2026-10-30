@@ -140,26 +140,6 @@ Whichever provider is chosen, the tier must carry **no fallback**. A ZDR tier
 that falls back to a third party on failure is not ZDR, which is the failure the
 tier exists to prevent.
 
-### 2.4 Do the small decision models take images?
-
-A modality is the model's input side, read from its own card or serving docs, not inferred from the family it belongs to. Per model:
-
-| Model | Input | Evidence |
-| --- | --- | --- |
-| Laya (421M) | **Text only** | A ModernBERT-large encoder plus a decision head, with no vision tower; Bifrost's self-hosted-decision-models page lists its Input as "Text only" and states images are rejected with a `400` before the call |
-| `tev1:0.8b` | **Text only** | Ollama's `tev1` library page lists Input "Text" for every tag including `tev1:0.8b`; `state` is a string or JSON, and the 0.8B is a Qwen3.5-0.8B fine-tune |
-| `vllm-sr/d3` | **Text, JSON, images, videos** | Hugging Face card `vllm-sr/d3`: "multimodal foundation decision model … input (text or JSON, optionally with images and videos)", with documented `images`/`videos` fields |
-| `d1-3b` (Liquid d1-3B) | **Text, JSON, images** | Liquid AI's release lists `d1-3B` as "text + vision" on LFM2.5-VL-3B; the Ollama `d1` page lists Input "vision" and a state of "text, JSON, images" |
-| `kev-4b` | **Text only** | OpenRouter's decisions catalogue lists `jaredpalmer/kev-4b` as `input_modalities: ["text"]`; a LoRA and pointer head on Qwen3.5-4B-Base, no vision tower |
-
-One correction falls out of the table: **`vllm-sr/d3` is 27B, not a 3B model**, so it does not fit this hardware. The Decision 3.0 checkpoints that do fit are the smaller siblings — `d3-mini` (4B), `d3-nano` (2B), `d3-lite` (0.8B), and `d3-edge` (0.6B) — and all four accept images and video like the rest of the family.
-
-**Other small decision models that accept images.** Under about 4B, the image-capable set includes `d1-3b` (3.12B, text+vision), the four small Decision 3.0 siblings, Baseten's `baseten/joey-1` (2B, `text+image->decisions`), and Perplexity's `pplx-decider-flash-v1.2` (4B, `text+image`). Text-only peers are just as common: Laya, `tev1:0.8b`, `kev-4b`, Nace.AI's `drex-v1.5`/`v2.0`, and Upstage's `solar-decide`.
-
-**Alias prefix per ADR-008.** An alias leads with its modality, so an image-reading checkpoint takes `vision:` and a text-only one takes `text:`. For the models in §2.2 that fit this hardware, the honest prefix is `vision:` for `d1-3b` and the small Decision 3.0 checkpoints, and `text:` for Laya, `tev1:0.8b`, and `kev-4b`.
-
-The vision capability does not change the hardware verdict — the image-capable small checkpoints fit the same 1 to 3 GB budget as the text-only ones — it only changes the honest alias: name the tier `vision:` if it must answer image decisions the way the shipped Clef tier does, and `text:` if it only ever answers text.
-
 ## 3. Target by target
 
 **Thor, the Proxmox host.** The GPU is passed through to VM 102, so a model here
@@ -308,8 +288,3 @@ changes it is a 16 GB or larger GPU in the fleet**, or relaxed expectations from
 | 11 | Maine electricity is ~26¢/kWh all-in | Homelab `docs/musings/anonymous-infrastructure/beyond-the-hydra-autonomous-model.md` |
 | 12 | The T14 runs 23 containers and two resident local models behind llama-swap on a shared GTT pool | Homelab `docs/ARCHITECTURE.md`; `docs/musings/2026-09-13-ai-chatbot-t14-in-house-migration.md` |
 | 13 | This Mac is an Apple M3 Pro, 11-core CPU, 36 GB unified memory | `system_profiler` on the workstation |
-| 14 | Laya (421M) is a ModernBERT-large encoder plus a decision head with text/JSON input only; Bifrost rejects images with a `400` | Bifrost docs `/providers/self-hosted-decision-models`; Laya model card `convaiinnovations/laya` (Hugging Face) |
-| 15 | `tev1:0.8b` is text-only; the `tev1` family lists Input "Text" for every tag and is a Qwen3.5 fine-tune in 4B and 0.8B sizes | Ollama library `/library/tev1`; OpenRouter decisions catalogue `togethercomputer/tev1-4b-experimental` (`input_modalities: ["text"]`) |
-| 16 | `vllm-sr/d3` is a 27B multimodal decision model (text, JSON, images, videos); the fitting Decision 3.0 members are `d3-mini` (4B), `d3-nano` (2B), `d3-lite` (0.8B), `d3-edge` (0.6B), all image-capable | Hugging Face card `vllm-sr/d3`; vLLM recipes `/vllm-sr/d3` and `/vllm-sr/d3-edge`; MarkTechPost "What is Decision 3.0" |
-| 17 | Liquid `d1-3B` is a 3.12B text+vision decision model on LFM2.5-VL-3B; `kev-4b` is text-only | Liquid AI d1 release; Ollama library `/library/d1`; OpenRouter decisions catalogue `jaredpalmer/kev-4b` (`input_modalities: ["text"]`) |
-| 18 | Small image-capable decision models under ~4B include `baseten/joey-1` (2B) and `perplexity/pplx-decider-flash-v1.2` (4B), both `text+image->decisions` | OpenRouter models API `?output_modalities=decisions` (fetched 2026-10-29) |

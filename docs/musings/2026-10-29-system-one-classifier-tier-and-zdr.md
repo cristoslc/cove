@@ -217,26 +217,16 @@ switch is not empty for this use case:
 | `perplexity/pplx-decider-v1.2`, `-flash-v1.2` | Perplexity |
 | `microsoft/microsoft-decision-1` | Azure |
 | `scaledown/classify-1` | ScaleDown |
-| `baseten/joey-1`, `baseten/mammoth-1`, `baseten/elephant-1` | BaseTen |
-| `nace-ai/drex-v1.5`, `nace-ai/drex-v2.0`, `nace-ai/drex-max` | DeepInfra |
-| `inception/mercury-decide` | Inception |
-| `upstage/solar-decide`, `upstage/solar-decide-flash` | Upstage |
-| `togethercomputer/tev1-4b-experimental` | Together |
-| `jaredpalmer/kev-4b` | Phala, SiliconFlow |
-| `liquid/d1`, `liquid/d1.1`, `liquid/d1-ultra` | Liquid |
 
 So OpenRouter's no-retention routing does reach small decision models today,
-including `clef-flash` (the small, cheap one) across four providers. One provider
-is notable by its absence: **no Ollama endpoint appears in the ZDR list at all**
-— none of the 1,089 endpoints, and Ollama is not among the 66 providers — so
-anything served by Ollama cannot be made ZDR-eligible through OpenRouter's
-switch, the shipped Clef tier included. Two caveats keep this from being the
-clean answer: the ZDR docs describe `provider.zdr` as provider preferences on
-inference requests, and **whether that preference applies to OpenRouter's alpha
-decisions route** (`/api/alpha/decisions`) is unstated; and OpenRouter's
-classification is **OpenRouter's record of each provider's policy**, with special
-agreements where the default differs (TypeSafe jev is the example: TypeSafe
-itself sells ZDR as enterprise-only, but OpenRouter classifies its endpoint ZDR).
+including `clef-flash` (the small, cheap one) across four providers. Two caveats
+keep this from being the clean answer: the ZDR docs describe `provider.zdr` as
+provider preferences on inference requests, and **whether that preference
+applies to OpenRouter's alpha decisions route** (`/api/alpha/decisions`) is
+unstated; and OpenRouter's classification is **OpenRouter's record of each
+provider's policy**, with special agreements where the default differs (TypeSafe
+jev is the example: TypeSafe itself sells ZDR as enterprise-only, but OpenRouter
+classifies its endpoint ZDR).
 
 ### 1b.2 A provider with a contractual consumer retention commitment
 
@@ -251,14 +241,11 @@ abuse carve-out), on **consumer** terms rather than a policy page:
 | **TypeSafe** (Jev) | ZDR is enterprise-only on TypeSafe's own terms | DPA/enterprise | — | yes as a custom `typesafe`-base provider, but not on consumer terms |
 | **Perplexity** (Decider) | "ZDR is available only to eligible customers … under a written agreement" | gated | — | yes as a built-in provider, but not on consumer terms |
 | **DeepInfra** (hosts Clef) | "We do not log the content of your requests"; no-store/no-train by default | contractual default | none published | **no direct path** — not a Bifrost provider, and a custom `openai` base would post OpenAI's decision shape |
-| **Baseten** (hosts Base Labs `joey-1`/`mammoth-1`/`elephant-1`) | "does not store model inputs, outputs, or weights by default"; the same docs call this a "zero data retention (ZDR) policy" that "applies to synchronous inference" (async inputs queue for up to 72 hours) | contractual default | none published; the training and abuse carve-outs are unstated | **via OpenRouter only** — no built-in `baseten` provider, but its decision models are ZDR-classified by OpenRouter, so they ride the built-in `openrouter` path (Part 1b.1) |
 | **Azure** (Microsoft-Decision-1) | enterprise | enterprise | — | yes as a built-in provider, not consumer |
 | **Self-hosted** (vLLM / SGLang running Clef Flash; Laya / Nimble) | no third party receives the prompt | by construction | none — it is our host | yes (`vllm/clef-flash`, `sgl/clef-flash`; Laya/Nimble as custom `typesafe` providers) |
 
 **The one provider that is both ZDR on consumer terms and carryable by
-Bifrost's own Decisions path is Cloudflare Workers AI, serving Clef.** (Baseten
-is consumer-ZDR too, but only reachable through the OpenRouter gateway, and so
-inherits the route caveats above.) It is the
+Bifrost's Decisions path is Cloudflare Workers AI, serving Clef.** It is the
 same model family the Ollama tier already uses, so the tier's name and shape do
 not change; only the retention story does. The strongest retention position
 overall is self-hosting, because no third party sees the prompt at all, but it
@@ -479,7 +466,7 @@ egress allowlist, provider entry).
 | **Groq** | "By default, Groq does not retain customer data for inference requests"; a 30-day reliability/abuse log you can switch off | barred by contract | self-serve setting, all customers | yes |
 | **Cerebras** | "We do not retain inputs and outputs associated with our … inference … Services" | no | contractual default | yes |
 | **DeepInfra** | "We do not log the content of your requests" | no (except Google/Anthropic passthroughs) | contractual default | yes |
-| **Baseten** | "does not store model inputs, outputs, or weights by default" for synchronous inference | unstated | contractual default | yes |
+| **Baseten** | "does not store model inputs, outputs, or weights by default" for synchronous inference | no | contractual default | yes |
 | **Fireworks AI** | "Zero Data Retention by default … for any open models" | no | default for open models; account-wide enforcement is enterprise | yes (open models) |
 | **Together AI** | Stores prompts by default; ZDR is an org switch | opt-in only | setting, off by default | yes, but not ZDR by default |
 | **Nebius** | Stores inputs/outputs by default for speculative decoding; ZDR is an account switch | no | setting, off by default | yes, but not ZDR by default |
@@ -600,14 +587,13 @@ among the hosted options and free at the volume this stack would generate.
 | 16 | Synthetic: API no-store/no-train, contractual | `synthetic.new/policies/privacy`, `/policies/terms-of-service` |
 | 17 | Cloudflare Workers AI: ZDR for standard inference, no training (Workers AI only) | `developers.cloudflare.com/workers-ai/platform/data-usage` (last updated 2026-10-16) |
 | 18 | TypeSafe ZDR is enterprise-only; Perplexity ZDR is not default; OpenAI 30-day default with approval-gated ZDR; Gemini free tier trains; Groq/Cerebras/DeepInfra/Baseten/Fireworks defaults; Together/Nebius off by default | Vendor legal/docs pages named in §3.3 |
-| 19 | OpenRouter's ZDR-classified endpoint set is published as JSON: 1,089 endpoints across 66 providers, and it includes decision models (Clef on 3-4 providers, Jev, the Perplexity Deciders, Microsoft-Decision-1, ScaleDown Classify-1, BaseTen Joey/Mammoth/Elephant, the Nace.AI Drex line on DeepInfra, Inception Mercury Decide, the Upstage Solar Decides, Together Tev1 4B, Kev 4B on Phala and SiliconFlow, and the Liquid d1 family). **No Ollama endpoint is listed**, and Ollama is not one of the 66 providers | `openrouter.ai/api/v1/endpoints/zdr` (fetched 2026-10-29) |
+| 19 | OpenRouter's ZDR-classified endpoint set is published as JSON: 1,089 endpoints across 66 providers, and it includes decision models (Clef on 3-4 providers, Jev, the Perplexity Deciders, Microsoft-Decision-1, ScaleDown Classify-1) | `openrouter.ai/api/v1/endpoints/zdr` (fetched 2026-10-29) |
 | 20 | Cloudflare is a built-in Bifrost provider with Decisions on `/accounts/{id}/ai/run/@cf/cloudflare/{model}`; `cloudflare_key_config.account_id` is required; Clef/Clef-Flash convert through TypeSafe's converter and take images | Bifrost docs `/providers/supported-providers/cloudflare`; `core/providers/cloudflare/decision.go` — v2.3.2 |
 | 21 | Cloudflare's Workers AI pricing: $0.011 per 1,000 neurons, 10,000 free neurons/day; `@cf/cloudflare/clef-flash` $0.038/M input tokens, `clef` $0.24/M, `clef-omni` $0.15/M, all input-only | `developers.cloudflare.com/workers-ai/platform/pricing` (last updated 2026-10-20) |
 | 22 | OpenRouter's fee structure: 5.5% on credit purchases with a **$0.80 minimum** (non-crypto; 5.0% flat on crypto), no markup and no per-request charge, credit purchase $5 min / $25,000 max, Business 8% | pricing page; announcement "Simplifying Our Platform Fee" (6/9/2025, updated 6/11/2026); Terms of Service |
 | 23 | OpenRouter BYOK: Standard/Business include $25,000 of list-price inference per month with no fee, then 5% of list price | pricing page; BYOK docs |
 | 24 | OpenRouter's decision models list as 33 entries with `completion = 0` and `request = null`, so a decision call is billed in input tokens only with no per-call floor | `openrouter.ai/api/v1/models?output_modalities=decisions` (fetched 2026-10-29) |
 | 25 | Bifrost's OpenRouter decision path posts to `/alpha/decisions` with the TypeSafe request shape and carries no `provider` preferences | `core/providers/openrouter/decision.go` — v2.3.2 |
-| 26 | Baseten synchronous inference is no-store: "does not store model inputs, outputs, or weights by default", called a "zero data retention (ZDR) policy" that "applies to synchronous inference" (async inputs queue up to 72 hours); no training or abuse carve-out stated | `docs.baseten.co/hosting-options/cloud`, `docs.baseten.co/observability/security` (fetched 2026-10-29) |
 
 ---
 
@@ -686,11 +672,7 @@ gateway to the pre-change state.
    distinguishes decision models. Unstated everywhere.
 4. **OpenRouter's ZDR switch on the decisions route.** Resolved in part
    (2026-10-29): the ZDR endpoint list is authoritative and **does** include
-   decision models, so the switch has somewhere to route. Separately resolved:
-   **no Ollama endpoint appears in the ZDR list at all** (0 of the 1,089
-   endpoints, and Ollama is not among the 66 providers), so an OpenRouter-routed
-   Ollama endpoint is not ZDR-eligible: the switch has nowhere to route for any
-   Ollama-served model, the shipped Clef tier included. Still open: the ZDR
+   decision models, so the switch has somewhere to route. Still open: the ZDR
    docs describe `provider.zdr` as provider preferences on inference requests,
    and whether that preference is honoured on OpenRouter's alpha decisions route
    (`/api/alpha/decisions`) is unstated; separately, Bifrost's OpenRouter
