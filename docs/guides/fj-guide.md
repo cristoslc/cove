@@ -183,6 +183,36 @@ for interactive inspection.
 - Draft PRs from plans **MUST** have a `WIP: ` title prefix and be created in draft status (per AGENTS.md).
 - Every commit on a sashay PR **MUST** be immediately followed by a PR chronicle comment via `fj pr comment`.
 
+## Merge rule on `main`
+
+`main` carries a Forgejo branch protection rule with two enforced settings, both applying to admins (`apply_to_admins: true`):
+
+| Rule | Setting | What it stops |
+|---|---|---|
+| No direct pushes | `enable_push: false` | `git push origin main` |
+| Required status check | `status_check_contexts: ["no-pii / no-pii-gate (pull_request)"]` | merging a PR whose head has no successful `no-pii` run |
+
+A refused direct push reads:
+
+```
+remote: Forgejo: Not allowed to push to protected branch main
+! [remote rejected] HEAD -> main (pre-receive hook declined)
+```
+
+A refused merge reads `not allowed to merge [reason: Not all required status checks successful]`. Merges through the pull request path are unaffected by `enable_push: false`; only the direct push is. Release tags are also unaffected, because a tag push is not a branch push and `scripts/release.sh` pushes tags only.
+
+`.forgejo/workflows/no-pii.yml` runs `cli/tests/test_no_pii.py` on every pull request into `main`. The reported context is `no-pii / no-pii-gate (pull_request)`, built from the workflow name, the job name, and the event.
+
+### Reviving a branch that predates the workflow
+
+Forgejo reads the workflow files from the pull request head. A branch created before `.forgejo/workflows/no-pii.yml` reached `main` has no `no-pii` run at all, so the required check is missing and the merge is refused. Rebaseline that branch from `main`, or press "Update branch" on the pull request, so the workflow exists on the head and a run fires. Do not copy the workflow into a feature branch by hand.
+
+### Known limitation: `.github/workflows` runs on Forgejo too
+
+Forgejo executes workflows from both `.forgejo/workflows/` and `.github/workflows/`. So `.github/workflows/release.yml`, written for GitHub (`actions/setup-python`, `gh release ...` with `GH_TOKEN`), also fires on every Forgejo tag push and fails at the `gh` steps. The long run of failing `wheel-release` task records on `git.cove` is that, not a broken runner. Releases still land on both hosts because `scripts/release.sh` publishes from the operator machine.
+
+A workflow that must not run on Forgejo needs a GitHub-only location or an early guard such as `if: github.server_url == 'https://github.com'`.
+
 ## Troubleshooting
 
 ### `fj repo create` AlphaDashDot validation error
