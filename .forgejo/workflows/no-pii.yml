@@ -1,0 +1,54 @@
+# No-PII gate: a REQUIRED, blocking check on every pull request into main.
+#
+# Why this exists: PR #125 merged to main at 097b93a carrying the operator's
+# real hostname in
+# docs/musings/2026-10-29-self-hosted-zdr-decision-tier-hardware-feasibility.md
+# line 58, even though cli/tests/test_no_pii.py already matched that exact
+# string and already scanned docs/. Nothing ran the test on pull requests:
+# the repo shipped only .github/workflows/release.yml, which is tag-triggered.
+# Detection was not broken, the merge rule was.
+#
+# Scope: exactly one test module, so the check is fast and unambiguous. If a
+# pattern is genuinely missing, widen cli/tests/test_no_pii.py; do not widen
+# this workflow.
+#
+# Runner label: `ubuntu-latest`. The registered runner
+# (cove-forgejo-runner, id 2) declares
+#   labels = ['ubuntu-latest:docker://gitea/runner-images:ubuntu-latest',
+#             'docker:docker://gitea/runner-images:ubuntu-latest']
+# so `runs-on: ubuntu-latest` maps to the gitea/runner-images:ubuntu-latest
+# container. That image ships git 2.55, CPython 3.12 and pip3; it does NOT
+# ship uv, so the step below installs it (cli/pyproject.toml has
+# requires-python >=3.11, so the image's interpreter is used as-is and no
+# managed CPython download is needed).
+#
+# Verify the label mapping yourself:
+#   python3 -c "import json;print(json.load(open('$HOME/Documents/cove-data/forgejo-runner/.runner'))['labels'])"
+#   # or: docker exec cove-forgejo-runner cat /data/.runner
+#
+# Required-check enforcement lives in Forgejo branch protection, not here:
+# Settings -> Branches -> protect `main` with "require status checks" listing
+# the context `no-pii-gate` (the `name:` of the job below, which is the
+# context Forgejo reports on the commit).
+
+name: no-pii
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  no-pii-gate:
+    name: no-pii-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        run: pip3 install --quiet uv
+
+      - name: Run the no-PII gate
+        run: uv run --directory cli pytest tests/test_no_pii.py -x -q
