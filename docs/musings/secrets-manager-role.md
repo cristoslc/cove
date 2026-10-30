@@ -65,7 +65,7 @@ path "secret/metadata/cove/*" {
 
 Absence is denial. A thread in another project gets the same document with its own prefix, and cannot construct a request that crosses the boundary because the path prefix is the boundary.
 
-- **Tokens.** Minted per consumer with a TTL: `bao token create -policy=cove-thread -ttl=8h` for a thread, longer for launchd, and no token for the seal path at all. Renewal belongs to whoever minted it, which is the spawner for threads and the CLI for operator sessions.
+- **Tokens.** Minted per consumer with a TTL: `bao token create -policy=cove-thread -ttl=8h` for a thread, longer for launchd, and no token for the seal path at all. Renewal belongs to whoever minted it, which is the launcher's broker for threads and the CLI for operator sessions.
 - **Prefixes versus mounts.** A prefix plus a correct policy is the cheap option and is sufficient for a single-operator fleet. A mount per project is the hard option: cross-project reads become structurally impossible rather than policy-dependent, at the cost of mount bookkeeping, per-mount tuning and more code in provisioning. Take prefixes now. Move a project to its own mount if it ever holds material whose exposure would be a reportable incident.
 - **Namespaces are a third tier and are not available on the current pin.** OpenBao ships namespaces in its open-source build; Vault's namespaces are an Enterprise feature, so the current 1.20 OSS pin cannot express them. That is one of the reasons the vendor ruling in section 11 is coupled to this document rather than independent of it.
 
@@ -80,7 +80,7 @@ Where a boundary already exists, it swaps a credential down. Each swap has a nam
 | Agent to `llmproxy.cove` | A Cove client token goes in; the edge proves it against an exact-match map, replaces the client's `Authorization` header, and injects the active upstream provider key before `proxy_pass`. The provider key never reaches the client, and the client's own header is never forwarded | Shipped in 0.15.12 (`compose/nginx/default.conf.j2`, `llmproxy` server block; `cli/cove/llmproxy.py`) |
 | Agent or tool to a broker | A scoped grant to use a shared upstream credential (Synthetic, ollama-cloud, a virtual key carrying a model allowlist and a budget) without ever copying the credential in. The broker performs the call and records who asked | Not built. The LLM edge is the first instance of the shape, restricted to one credential |
 | Consumer to the manager | A short-lived token minted per consumer, which reads only its own prefix. Any service that needs secrets at runtime gets one too, as ToolHive's Phase 2 plan already assumes | The gap: `cli/cove/vault_cache.py` resolves `cove/vault/root-token` from the keystore for every read and write, so every consumer is the operator |
-| Spawner to thread | A turn-bounded, project-scoped token instead of ambient `.env` values. bb already knows project, thread and environment at spawn | Not built |
+| Launcher to thread | A turn-bounded, project-scoped token instead of ambient `.env` values. bb knows project, thread and environment at spawn; a launcher at the ACP seam asks a local broker, and the daemon never mints anything | Not built |
 
 The residual is decided rather than hypothetical. Agent processes keep the docker socket and the bb daemon port (operator ruling, 2026-10-29). They run as the operator's user, `docker` works from an agent turn because the orchestrator itself uses it, and the daemon's API and terminal stay reachable on loopback. From that position an agent can read any container's environment through `docker inspect`, any mounted volume, any image, and any file the operator can read, whichever token it holds. So until the capability set is reduced, **token work buys attribution, not containment**, and that sentence is the honest description of every step in section 9 that does not also remove a capability.
 
@@ -113,11 +113,19 @@ Which of Cove's current secrets belong in each class:
 
 The Bifrost row is the honest one. The gateway already supports more than one virtual key with its own policy, and Cove mints exactly one and hands it to every client, which means the LLM edge has an identity mechanism and no identities. Fixing that is the smallest complete demonstration of the model, and it needs no new component.
 
-## 6. The spawner is the broker, and the sandbox is the other half
+## 6. The launch seam is the broker, and the sandbox is the other half
 
-bb already knows which project and which worktree a thread belongs to, and it already injects context into the environment. The credential design should use that: at spawn, mint a token for that project and that thread, hand it to the process as `VAULT_TOKEN` with a TTL bounded by the session, and revoke on archive. The thread then reads what its project owns and nothing else, and the token's identity is the attribution key for section 7. Note the asymmetry this creates and accept it deliberately: the daemon becomes a credential authority, so its compromise is now a credential compromise. That is a real trade, not a free win, and it is the first open question in section 12.
+bb knows which project and which worktree a thread belongs to, and it already injects context into the environment. It should hand that context to a launcher rather than mint the credential itself.
 
-The other half is filesystem scope, and its state is stated in section 4: it does not exist yet, and a token model is inert without it. That is why the spawner step in section 9 is the point where containment starts, not the point where a nicer token format arrives.
+The ruling (2026-10-29) is that the thread token is minted by a broker reached from the ACP launch seam, not by bb. The reasoning is this document's own argument turned on the harness: bb already carries the strongest bypass surface on the machine, because its API and terminal can execute commands and read files, and the sandbox spike demonstrated exactly that from inside a sandbox. Giving the same process the authority to mint credentials would concentrate the one risk the token model exists to reduce.
+
+The launch seam is the right boundary for four reasons that compound. It is per-thread. It already knows the project and worktree from the spawn context. It exists today: bb spawns an ACP agent by command, and the spike proved a wrapper can sit there with no bb change. And it is where the sandbox wrapper has to go anyway, so token scope and path scope get installed at one seam instead of two.
+
+Mechanically, the launcher asks a local broker for a project-scoped token, carrying project, worktree and thread as the identity and a TTL tied to the turn. It injects the result into the agent's environment as `VAULT_TOKEN`, which `cli/cove/vault_cache.py` already prefers over the keystore, so the client side needs no change. At turn end the token is revoked, or simply expires. Every spawn stays non-interactive and the daemon never touches the secret path.
+
+The broker itself stays swappable. Today it can be a small local service; later it can be a per-consumer identity issued by the manager, and the launcher does not change because it only ever asks for a grant.
+
+The other half is filesystem scope, and its state is stated in section 4: it does not exist yet, and a token model is inert without it. That is why the launcher step in section 9 is the point where containment starts, not the point where a nicer token format arrives.
 
 ## 7. Attribution and audit
 
@@ -142,7 +150,7 @@ The order is deliberate: a capability without a boundary mostly increases the nu
 
 1. **Now: declare one cache of record and enable audit.** Cheap, reversible, and it makes every later step measurable. Without it, per-consumer tokens would produce records that cannot be trusted to reflect reality.
 2. **Next: identity, prefixes, and the first real swap.** Move the KV layout under project prefixes, write one policy per consumer class, mint tokens for the CLI and the two launchd agents, and stop the CLI from using the root token for task work. The swap principle ships alongside this step rather than after it: identity without a swap leaves the root token in place, and a swap without identity has nothing to swap to.
-3. **Then: the spawner issues turn-bounded tokens,** paired with a filesystem scope for agent threads. This is where containment starts: before this step the boundary is theatre, because the agent still holds docker and the daemon, and it is also where the daemon becomes a credential authority, so the sandbox work has to land alongside it.
+3. **Then: the ACP launch seam issues turn-bounded tokens,** paired with a filesystem scope for agent threads. This is where containment starts: before this step the boundary is theatre, because the agent still holds docker and the daemon, and it is also where the launcher sits, so the broker and the sandbox wrapper install at the same seam.
 4. **Then: brokerage for shared provider keys.** Start with per-client virtual keys on the LLM edge, because the mechanism exists and the identities do not. Generalize only when a second credential needs the same treatment.
 5. **Later: dynamic credentials and PKI.** Database leases for the Postgres instances and a PKI engine for TLS remain worthwhile. They moved down, not out, for one reason: a lease is still a credential, and issuing short-lived credentials to an identity that can read everything just rotates the same exposure more often. PKI additionally removes the CA private key from disk, which is a genuine gain, and it still only matters once the requester has a name.
 
@@ -163,8 +171,8 @@ So the two rulings should be taken together: decide the role first, then the pro
 
 ## 12. Open questions
 
-1. **Does the daemon get to be a credential authority?** Per-thread tokens require bb, or a hook beside it, to mint and revoke them. The alternative is operator-issued tokens, which keeps the daemon out of the secret path but makes every thread spawn an interactive step.
-2. **Is the project the right boundary, or the repository?** A worktree of the same repository is the same project in bb's model, so this is mostly settled. The open part is whether two repositories that share deploy targets should share a prefix.
-3. **What does the audit log hold, and who rotates it?** A file device under the data root with a size cap and a retention rule is the simple answer; the operator needs to accept that the log may contain path names and timestamps, and decide whether payload logging is ever on.
-4. **Do the per-client LLM virtual keys land now or after scoping?** They are the cheapest demonstration of the model, and they also require a decision about which project name each client key carries.
-5. **Which project prefixes exist at cutover?** The working vocabulary is the six project names in section 3. The operator should read that list once and confirm it before any policy is written, since a rename later costs a path move.
+1. **Is the project the right boundary, or the repository?** A worktree of the same repository is the same project in bb's model, so this is mostly settled. The open part is whether two repositories that share deploy targets should share a prefix.
+2. **What does the audit log hold, and who rotates it?** A file device under the data root with a size cap and a retention rule is the simple answer; the operator needs to accept that the log may contain path names and timestamps, and decide whether payload logging is ever on.
+3. **Do the per-client LLM virtual keys land now or after scoping?** They are the cheapest demonstration of the model, and they also require a decision about which project name each client key carries.
+
+Two questions that were open here are settled. The thread token is minted by a broker at the ACP launch seam, not by the daemon (section 6, operator ruling 2026-10-29). And the six project names in section 3 stand unless the operator corrects them; the definitive set is declared at cutover.
