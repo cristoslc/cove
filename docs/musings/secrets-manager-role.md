@@ -1,0 +1,170 @@
+---
+title: "The secrets manager's real job in Cove: scoping, not storage"
+created: 2026-10-29
+status: Draft
+---
+
+# The secrets manager's real job in Cove: scoping, not storage
+
+A secrets manager is usually described by what it stores: a vault, a cache, a rotation engine, a certificate authority. That description misses the property that actually matters here. A secrets manager is an authorization boundary, and everything it stores is downstream of who is allowed to reach it.
+
+Scope is the problem. Today every consumer on this machine shares one identity: the operator's. One root token reads the whole store, one `.env` feeds every container, one cache file holds every resolved reference, and one OS user is both the human and every agent thread. A thread working in any project can therefore read every other project's credentials, and nothing in the stack would notice or record it.
+
+Two rules organize everything that follows. The first is scope: a grant names one project and one consumer, and never spans either. The second is custody: **no model-directed process ever holds a true secret.** Where a boundary exists, it swaps a broad credential for a narrower one, so an agent holds a grant while the secret stays behind the boundary.
+
+Secret reuse across projects is the second problem, and it cannot be solved by fragmentation. Providers do not all issue per-project keys, and a rotation-per-project regime multiplies the secrets an operator must chase. The answer is brokerage: the upstream credential stays in one custody point and each consumer receives a scoped, attributable, revocable grant to use it. Scoping is permission to use, never possession.
+
+The rest of this document works out what those two rules require, in that order: scope first, because a swap needs an identity to swap to.
+
+## 1. The attack path, as it exists in this repo
+
+Three paths lead from a thread to another project's secrets, and all three are open today.
+
+- **The Vault API.** `cli/cove/vault_cache.py` resolves one token: `VAULT_TOKEN` if set, otherwise the root token from the OS keystore (`_vault_token`, lines 71 to 102). That root token has unrestricted authority, and the UI user is not much narrower: `compose/provision_vault_user.yml` writes an `admins` policy of `path "*"` with `sudo` for it. Any process that can read the keystore or the environment reads every mount.
+- **The local cache.** `~/.cache/cove/op-cache.json` holds every resolved `op://` value in plaintext, at mode 0600, owned by the operator. An agent thread runs as the operator, so it reads this file without touching Vault at all (`cli/cove/local_cache.py`).
+- **The compose `.env`.** Fourteen credential names reach containers through it (`CREDENTIAL_ENV_NAMES` in `cli/cove/credential_env.py`), and the file is readable by anything running as the operator. `cove serve` and `cove update auto` run as the operator too, at login, precisely because the unseal keys live in the login keychain (`cli/cove/serve.py` docstring).
+
+A fourth path is delegation rather than reading: the sandbox brief measured that the bb daemon answers command execution and file reads over its loopback API without authentication, so an agent that is denied a file can ask the daemon for it (`docs/musings/nono-ade-sandbox.md`, "Agent asks the harness to do the work"). Filesystem policy alone cannot close that, which is why section 6 treats the two boundaries as one design.
+
+There is no audit device. `compose/vault/vault.hcl` configures storage, one listener, addresses and the UI, and nothing else; nothing in `cli/` or `compose/` calls `sys/audit`. Even if it were enabled, a single root token makes each record a statement about "the operator", not about a consumer.
+
+## 2. The consumers that need identity
+
+The fleet has more consumers than the architecture admits. Each row is a distinct principal whether or not the stack models it that way.
+
+| Consumer | Identity today | What it can reach today | What it should hold |
+|---|---|---|---|
+| Operator CLI (`cove creds`, `cove tunnel`, `cove litellm`, `cove bifrost`, `cove speedtest`) | Root token from the keystore, plus the local cache | Every project's cached secrets | A project-scoped token for the project the command is acting on; root authority only for stack lifecycle verbs |
+| `cove vault unseal` and the unseal path inside `cove up` | Root token plus Shamir shares from the keystore | Seal state, and by extension everything | Seal material only. This is the bootstrap exception, and it should never be the identity a task runs under |
+| launchd `app.cove.serve` | Operator at login, keychain unlocked | The whole store, every project | A stack-lifecycle token: read the stack's own `.env` projection, unseal, nothing project-specific |
+| launchd `app.cove.update` (auto-update) | Operator at login | The whole store | A converge token: read pins and the stack projection, write nothing |
+| Each bb agent thread | The operator, ambient environment and filesystem | Everything the operator can read, including other projects | A turn-bounded, project-scoped token, plus a filesystem scope that matches it |
+| Each service container (Forgejo, ADE, LiteLLM or Bifrost, Speedtest, ToolHive, runner, pages) | Its slice of the shared `.env`, decided at start | Its own variables, but the file it came from is shared | Only its own projection, or a broker-issued, short-lived credential |
+
+Two properties make this tractable. First, the consumer set is finite and mostly known to bb already: `BB_PROJECT_ID`, `BB_THREAD_ID` and `BB_ENVIRONMENT_ID` are injected into every thread environment automatically (`bb guide`), and `bb status` resolves project plus environment. The information needed for a project-scoped grant is present at spawn time and is currently unused.
+
+Second, the client already accepts an injected token. `_vault_token()` prefers `VAULT_TOKEN` over the keystore, so a per-consumer token becomes effective with no change to `vault_cache.py`. What is missing is issuance, policy, and a revocation story, not a client rewrite.
+
+## 3. The boundary rule
+
+One rule, applied everywhere: **a grant never spans projects.** Everything else is implementation.
+
+- **Layout.** Each project owns a path prefix in the one KV v2 mount: `secret/data/cove/...` for this repository, one prefix per other project. The vocabulary comes from the project list the orchestrator can already enumerate, which on 2026-10-29 reads `cove`, `hattrick`, `hal`, `trimline`, `bv-brain2`, `houseops`; branch names such as `kepler/` or `sashay/` are branch scopes inside a project, not projects, and get no prefix of their own. The definitive set is declared at cutover from that list, and adding a project later means adding one prefix and one policy, never editing another project's. The current cache moves under the project that owns the references, so `secret/data/op-cache/...` becomes `secret/data/cove/op-cache/...`. References that serve the stack rather than a project (the stack's own admin credentials, the tunnel token, the LLM edge credential) live under a `stack` prefix that only the lifecycle consumers may read.
+- **Policies.** One policy per consumer class, not per person, and no wildcard paths:
+
+```
+# cove-thread: what an agent thread working in the cove project may read
+path "secret/data/cove/*" {
+  capabilities = ["read"]
+}
+path "secret/metadata/cove/*" {
+  capabilities = ["list"]
+}
+# deliberately absent: any grant on secret/data/<other-project>/ or secret/stack/
+```
+
+Absence is denial. A thread in another project gets the same document with its own prefix, and cannot construct a request that crosses the boundary because the path prefix is the boundary.
+
+- **Tokens.** Minted per consumer with a TTL: `bao token create -policy=cove-thread -ttl=8h` for a thread, longer for launchd, and no token for the seal path at all. Renewal belongs to whoever minted it, which is the spawner for threads and the CLI for operator sessions.
+- **Prefixes versus mounts.** A prefix plus a correct policy is the cheap option and is sufficient for a single-operator fleet. A mount per project is the hard option: cross-project reads become structurally impossible rather than policy-dependent, at the cost of mount bookkeeping, per-mount tuning and more code in provisioning. Take prefixes now. Move a project to its own mount if it ever holds material whose exposure would be a reportable incident.
+- **Namespaces are a third tier and are not available on the current pin.** OpenBao ships namespaces in its open-source build; Vault's namespaces are an Enterprise feature, so the current 1.20 OSS pin cannot express them. That is one of the reasons the vendor ruling in section 11 is coupled to this document rather than independent of it.
+
+## 4. No agent holds a true secret
+
+The second rule is blunt: a process a model can direct never holds a real credential. That covers every bb thread, every ACP agent, and anything those spawn. The Synthetic provider key, the ollama-cloud key, the LiteLLM master key, the Bifrost admin and encryption keys, the local CA private key, and every 1Password-sourced value stay out of an agent's environment, argv, working tree and readable paths. What the agent gets instead is a grant that names it, scopes it, and expires.
+
+Where a boundary already exists, it swaps a credential down. Each swap has a name and a direction:
+
+| Swap | What crosses it | State |
+|---|---|---|
+| Agent to `llmproxy.cove` | A Cove client token goes in; the edge proves it against an exact-match map, replaces the client's `Authorization` header, and injects the active upstream provider key before `proxy_pass`. The provider key never reaches the client, and the client's own header is never forwarded | Shipped in 0.15.12 (`compose/nginx/default.conf.j2`, `llmproxy` server block; `cli/cove/llmproxy.py`) |
+| Agent or tool to a broker | A scoped grant to use a shared upstream credential (Synthetic, ollama-cloud, a virtual key carrying a model allowlist and a budget) without ever copying the credential in. The broker performs the call and records who asked | Not built. The LLM edge is the first instance of the shape, restricted to one credential |
+| Consumer to the manager | A short-lived token minted per consumer, which reads only its own prefix. Any service that needs secrets at runtime gets one too, as ToolHive's Phase 2 plan already assumes | The gap: `cli/cove/vault_cache.py` resolves `cove/vault/root-token` from the keystore for every read and write, so every consumer is the operator |
+| Spawner to thread | A turn-bounded, project-scoped token instead of ambient `.env` values. bb already knows project, thread and environment at spawn | Not built |
+
+The residual is decided rather than hypothetical. Agent processes keep the docker socket and the bb daemon port (operator ruling, 2026-10-29). They run as the operator's user, `docker` works from an agent turn because the orchestrator itself uses it, and the daemon's API and terminal stay reachable on loopback. From that position an agent can read any container's environment through `docker inspect`, any mounted volume, any image, and any file the operator can read, whichever token it holds. So until the capability set is reduced, **token work buys attribution, not containment**, and that sentence is the honest description of every step in section 9 that does not also remove a capability.
+
+The sandbox brief measured this shape rather than imagining it: the spike's own grant list handed a sandboxed agent the compose `.env` (LiteLLM master key, UI and Speedtest passwords, provider keys, Bifrost keys), the local CA private key at `~/.config/cove/pki/rootCA-key.pem`, decrypted SOPS variables inside the checkout, and `~/.ssh` through a symlink whose target sat in a granted directory. Separately, from inside that sandbox the agent reached the bb API and asked the harness to do what its own process could not (`docs/musings/nono-ade-sandbox.md`, "Policy and grant model", thread `thr_wxg7pg9ubc`).
+
+The pairing rule follows: **the two halves land together or the boundary is theatre.** Token scope and path scope are one control. A per-thread token protects nothing while the plaintext cache and `.env` remain readable, and a sandbox without a scoped credential still hands the agent a key that opens every project.
+
+One consequence should be designed rather than asserted. A service that needs a provider key at boot, such as LiteLLM or Bifrost, keeps that key in its environment, because a broker cannot serve a process that must hold the key to answer requests. The boundary is not that the key is absent from the machine. It is that an agent cannot read that environment or exec into that container, and today it can: `docker inspect` prints a container's environment, so no container boundary is real while agents keep the socket. Making the sentence true means removing the socket from agent processes, removing the daemon command surface from their reach, and dropping any standing grant on the compose directory. Until that happens, the provider key is on the same side of the boundary as the agent, and the honest label for the arrangement is attribution. The same logic covers the manager's seal material, which lives in the OS keystore and is read by a launchd job at login, not by anything a model directs.
+
+Reuse makes this mandatory rather than optional. Where a provider issues one key for all projects, the key cannot be split, so every project's access to it is a grant to use a shared credential, and the broker is the only place that grant can be enforced.
+
+## 5. Reuse: broker the credential, grant the use
+
+The pattern is brokerage, and its failure mode has a name. Splitting one shared upstream credential into twelve project-shaped copies creates twelve custody problems and solves none, because a copy is still a secret and the operator still has to rotate all twelve.
+
+Cove already runs the correct pattern on the LLM path, and it should be read as the template rather than as a one-off. Since v0.15.12, `llmproxy.cove` is an authentication edge: clients hold a Cove-owned client token, the edge proves it with an exact-match map and then replaces the client's `Authorization` header with the active backend credential before `proxy_pass` (`compose/nginx/default.conf.j2`, the `llmproxy` server block; `cli/cove/llmproxy.py`). Backend keys never reach a client, and a backend swap changes one upstream line.
+
+The generalization is a **broker**: a process that holds the upstream secret, authenticates the caller, decides whether this caller may use this credential for this purpose, performs the call, and records who did it. The caller holds a grant, never the secret. Scope lives in the grant, so a shared credential is not the same thing as a shared permission.
+
+Which of Cove's current secrets belong in each class:
+
+| Secret | Class | Where it must live | Who uses it | Grant shape |
+|---|---|---|---|---|
+| Synthetic provider key (`SYNTHETIC_API_KEY`) | Brokered | The LLM edge or gateway (`local.env`, 0600) | Every LLM client across every project | Per-client virtual key with a model allowlist; the key itself never leaves the edge |
+| ollama-cloud key (`OLLAMA_API_KEY`) | Brokered | The same edge, and per the workstation-lane ruling it is not Cove's to custody long-term | Same | Same shape; the edge is a pass-through, not an owner |
+| Bifrost client virtual key (`BIFROST_CLIENT_VIRTUAL_KEY`) | Grant, not secret | Generated by the gateway, projected into `.env` | Every LLM client | Today one key for everyone; the gateway can mint several, each with policy and its own identity in the logs |
+| Forgejo admin password, Speedtest admin identity and `APP_KEY`, Zrok account token | Stack-held | 1Password, projected into `.env` for the service that needs it | Stack lifecycle only | Service-scoped projection; no project thread needs any of them |
+| LiteLLM master key, Bifrost admin and encryption keys | Stack-held | `.env` and 1Password | The stack itself | Lifecycle token only, never a thread token |
+| Vault root token and Shamir shares | Held, by exception | OS keystore | Unseal, emergency administration | No grant exists. A token that can read everything cannot be scoped, so it must not travel |
+
+The Bifrost row is the honest one. The gateway already supports more than one virtual key with its own policy, and Cove mints exactly one and hands it to every client, which means the LLM edge has an identity mechanism and no identities. Fixing that is the smallest complete demonstration of the model, and it needs no new component.
+
+## 6. The spawner is the broker, and the sandbox is the other half
+
+bb already knows which project and which worktree a thread belongs to, and it already injects context into the environment. The credential design should use that: at spawn, mint a token for that project and that thread, hand it to the process as `VAULT_TOKEN` with a TTL bounded by the session, and revoke on archive. The thread then reads what its project owns and nothing else, and the token's identity is the attribution key for section 7. Note the asymmetry this creates and accept it deliberately: the daemon becomes a credential authority, so its compromise is now a credential compromise. That is a real trade, not a free win, and it is the first open question in section 12.
+
+The other half is filesystem scope, and its state is stated in section 4: it does not exist yet, and a token model is inert without it. That is why the spawner step in section 9 is the point where containment starts, not the point where a nicer token format arrives.
+
+## 7. Attribution and audit
+
+Audit is the payoff of identity, not a separate feature. With one root token, an audit device would record that "the operator" read a path, which cannot distinguish a careless thread from a deliberate act, and cannot answer which project's secret was touched. With per-consumer tokens, the same records answer who, which project, and when, and a revocation story becomes provable rather than asserted.
+
+Concretely this needs three things Cove does not have: an audit device enabled on the server (a file device under the data root, rotated), tokens whose identity survives into the record, and a decision about what the log may contain. The third is the hard one, because Vault-family audit devices log request and response payloads in some configurations, and a secrets store's audit log is itself a secret store if it is written carelessly.
+
+## 8. One cache of record
+
+A value can currently exist in four places: the 1Password item, the Vault KV entry, `~/.cache/cove/op-cache.json`, and for some secrets the compose `.env`. Two of those are caches with equal authority, which is not a tidiness problem. The stale-cache defect behind issue #93 was exactly this: a read path served a cached value after an upstream rotation, because two caches disagreed and neither was declared authoritative.
+
+The target is one custody point and one runtime cache:
+
+- **1Password is custody of record.** It is where a secret is created, rotated and audited for the human.
+- **The manager's KV is the runtime cache of record.** It is what the platform reads when 1Password is locked or offline.
+- **The local file cache becomes a latency cache.** It either disappears, or it gains a TTL and a provenance stamp and stops being readable as authoritative. It must not be the thing `cove creds vault-get` trusts first, which is what it is today.
+- **The `.env` becomes a projection.** Derived from the cache of record at converge time, with the values it carries hashed and compared, never a source that a later read trusts.
+
+## 9. Roadmap, reordered
+
+The order is deliberate: a capability without a boundary mostly increases the number of places a leak can start.
+
+1. **Now: declare one cache of record and enable audit.** Cheap, reversible, and it makes every later step measurable. Without it, per-consumer tokens would produce records that cannot be trusted to reflect reality.
+2. **Next: identity, prefixes, and the first real swap.** Move the KV layout under project prefixes, write one policy per consumer class, mint tokens for the CLI and the two launchd agents, and stop the CLI from using the root token for task work. The swap principle ships alongside this step rather than after it: identity without a swap leaves the root token in place, and a swap without identity has nothing to swap to.
+3. **Then: the spawner issues turn-bounded tokens,** paired with a filesystem scope for agent threads. This is where containment starts: before this step the boundary is theatre, because the agent still holds docker and the daemon, and it is also where the daemon becomes a credential authority, so the sandbox work has to land alongside it.
+4. **Then: brokerage for shared provider keys.** Start with per-client virtual keys on the LLM edge, because the mechanism exists and the identities do not. Generalize only when a second credential needs the same treatment.
+5. **Later: dynamic credentials and PKI.** Database leases for the Postgres instances and a PKI engine for TLS remain worthwhile. They moved down, not out, for one reason: a lease is still a credential, and issuing short-lived credentials to an identity that can read everything just rotates the same exposure more often. PKI additionally removes the CA private key from disk, which is a genuine gain, and it still only matters once the requester has a name.
+
+## 10. Non-goals
+
+- **Not a config store.** Non-secret configuration stays in IaC: compose files, `bringup.yml`, `group_vars`, seeds. A secrets manager that also holds tuning knobs becomes a second, undeclared configuration surface.
+- **Not a replacement for the workstation lane's SOPS custody.** Those keys remain the workstation lane's. Only pass-through projections cross the boundary, and the `OLLAMA_API_KEY` ruling from the LiteLLM exit is the precedent: Cove does not take custody of what it only forwards.
+- **Never a network dependency for container boot.** A container must start from its `.env` projection and its image without reaching the manager, or a sealed or restarting manager becomes a stack outage.
+
+## 11. What this does to the vendor ruling
+
+The OpenBao decision currently open in `docs/musings/openbao-vs-vault.md` is not independent of this document, and it should not be decided first.
+
+- **If the manager becomes the authorization boundary described here,** then license, governance, release cadence, audit support and namespace isolation all carry weight, and they point at OpenBao: MPL-2.0 instead of a BSL relicensing vendor, signed and SBOM'd releases, an actual patch cadence, and namespaces in the open-source build.
+- **If the manager stays a cache,** then the honest description of the current Vault is "a local key-value store with a UI", a full manager is overkill for that job, and migrating is cosmetic churn with a real migration cost.
+
+So the two rulings should be taken together: decide the role first, then the product. Taking the product first would pick a vendor for a job the operator has not yet defined, and the migration work would then be aimed at the wrong target either way.
+
+## 12. Open questions
+
+1. **Does the daemon get to be a credential authority?** Per-thread tokens require bb, or a hook beside it, to mint and revoke them. The alternative is operator-issued tokens, which keeps the daemon out of the secret path but makes every thread spawn an interactive step.
+2. **Is the project the right boundary, or the repository?** A worktree of the same repository is the same project in bb's model, so this is mostly settled. The open part is whether two repositories that share deploy targets should share a prefix.
+3. **What does the audit log hold, and who rotates it?** A file device under the data root with a size cap and a retention rule is the simple answer; the operator needs to accept that the log may contain path names and timestamps, and decide whether payload logging is ever on.
+4. **Do the per-client LLM virtual keys land now or after scoping?** They are the cheapest demonstration of the model, and they also require a decision about which project name each client key carries.
+5. **Which project prefixes exist at cutover?** The working vocabulary is the six project names in section 3. The operator should read that list once and confirm it before any policy is written, since a rename later costs a path move.
