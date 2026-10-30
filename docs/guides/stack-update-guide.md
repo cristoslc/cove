@@ -16,6 +16,8 @@ Major-bump responses are loud on purpose: the audit script emits a warning block
 
 Two cross-cutting rules apply to all classes: a new third-party release waits **48-72 hours** after release before the bump PR is opened (supply-chain hold, borrowed from the [LiteLLM upgrade procedure](../services/litellm-proxy.md)), and security advisories against a pinned current version override the wait and the SLA class (fix ships as a patch-class bump immediately).
 
+The hold and the merge gate are now mechanical, not aspirational: [Renovate on Forgejo](renovate.md) runs the age gate (48 h security, 7 d patch, 14 d minor, never major) and the SLA clock above starts when the gate opens a PR for merge, not when upstream published the release. A release that a gate holds has not missed its SLA; a release the gate has cleared and nobody merged has.
+
 Evidence required in every bump PR body, so the reviewer automation can judge it mechanically: upstream release or changelog link, old pin → new pin with old and new digest, SLA classification (patch/minor/major), and the SBOM delta (`sbom/` diff for the touched image). The PR body template lives at `scripts/version-audit/templates/bump-pr-body.md`.
 
 ## Pin inventory
@@ -74,12 +76,27 @@ Cove takes its SBOM as part of development, not as a runtime product:
 
 `cove upgrade` is an alias, because both spellings are natural.
 
-## Automated audit (R5 design)
+## Automated audit
 
-Two cooperating parts, neither of which runs ad-hoc commands in a container:
+Three cooperating parts, none of which runs ad-hoc commands in a container:
 
-- **Forgejo Actions `version-audit` workflow** (planned path `.forgejo/workflows/version-audit.yml`; not active yet — activation needs a runner token secret, see below): resolves every pin from `python -m cove.pins --json` against its upstream registry, classifies patch/minor/major, and for patch/minor opens a `bump/*` PR carrying the evidence block; for major files the gap-analysis issue instead. Until the workflow lands, the audit is manual against this runbook. The runner service itself is the existing `cove-runner` stack service.
-- **BB reviewer automation** (scheduled thread, 2-4x daily): reads open `bump/*` PRs via the Forgejo API, checks the evidence block, SLA age, and unit-gate status, and approves compliant PRs. Merge and release require the tier-2 staging gate to have passed; non-compliant or stuck PRs produce an ntfy alert rather than a merge. Merge rights for the automation are restricted to `bump/*` PRs by branch filter so a runaway bump cannot escalate its own permissions.
+- **Renovate on Forgejo** (`.forgejo/workflows/renovate.yml`, daily 08:15 UTC on
+  the existing runner) is the detection and pull-request layer. It resolves
+  every pin it can see against its registry, classifies the change, and opens a
+  PR carrying the age-gate marker. It never automerges. Coverage and the
+  surfaces it cannot see are listed in [Renovate on Forgejo](renovate.md).
+- **The bb age gate** (`scripts/renovate/age_gated_merge.py`, daily 06:00
+  America/New_York) merges what is old enough and green, then cuts one coalesced
+  release for both hosts. It holds every `compose/` change, every major, and
+  anything outside `cli/` and `.forgejo/workflows/`; held items appear in its
+  report rather than being merged quietly.
+- **The operator** owns the classes that must not be automated yet: image pins
+  (staging E2E plus the SBOM delta plus the `.env` re-sync from the digest-pinning
+  plan), the LiteLLM and ADE build pins, the zrok2 per-arch map, and the ToolHive
+  registry refs. Each is named in the Renovate guide's gap table.
+
+Major bumps stay loud: the automation reports them and never merges them, and the
+gap analysis is still required before a major bump PR is opened.
 
 ## Related docs
 
