@@ -1,0 +1,109 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+
+  "timezone": "America/New_York",
+  "schedule": ["before 5am"],
+
+  "automerge": false,
+  "platformAutomerge": false,
+  "prConcurrentLimit": 5,
+  "prHourlyLimit": 2,
+  "separateMajorMinor": true,
+
+  "osvVulnerabilityAlerts": true,
+  "minimumReleaseAge": "7 days",
+  "minimumReleaseAgeBehaviour": "timestamp-optional",
+
+  "pinDigests": true,
+
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 5am on monday"]
+  },
+
+  "labels": ["dependencies"],
+
+  "prBodyNotes": [
+    "<!-- cove-age-gate:v1 {{#each upgrades}}datasource={{datasource}} package={{packageName}} version={{newVersion}} type={{updateType}} released={{releaseTimestamp}} vulnerability={{isVulnerabilityAlert}};{{/each}} -->"
+  ],
+
+  "docker-compose": {
+    "managerFilePatterns": [
+      "/(^|/)(?:docker-)?compose[^/]*\\.ya?ml$/",
+      "/(^|/)tunnel\\.ya?ml$/"
+    ]
+  },
+
+  "vulnerabilityAlerts": {
+    "addLabels": ["security"],
+    "minimumReleaseAge": "2 days"
+  },
+
+  "packageRules": [
+    {
+      "description": "Vault is tag+digest in group_vars/all.yml and the two must move together. Renovate cannot derive a digest from a tag, so a tag-only bump would leave a digest that no longer matches the tag and the pull would fail. Operator-runbook path until the pin collapses to one line.",
+      "matchPackageNames": ["hashicorp/vault"],
+      "enabled": false
+    },
+    {
+      "description": "Locally built images have no upstream to look up; their build base is covered by the dockerfile manager instead.",
+      "matchPackageNames": ["cove-litellm", "cove-ade", "cove-bifrost-dns"],
+      "enabled": false
+    },
+    {
+      "description": "forgejo and nginx live in compose/group_vars/all.yml, which has no digest field for forgejo. Digest pinning these two is deferred to docs/musings/digest-pinning-plan.md so the compose default and the Ansible var cannot drift apart.",
+      "matchPackageNames": ["codeberg.org/forgejo/forgejo", "nginx"],
+      "pinDigests": false
+    },
+    {
+      "description": "One PR per ecosystem's patch-level churn instead of one per package.",
+      "matchUpdateTypes": ["patch", "pin", "digest", "pinDigest"],
+      "groupName": "patch dependencies"
+    },
+    {
+      "description": "Minor updates stay separate so a bad minor is one revert away from a known-good patch state.",
+      "matchUpdateTypes": ["minor"],
+      "addLabels": ["minor"]
+    },
+    {
+      "description": "Major updates are never auto-merged by the age gate; the label is the human signal.",
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["major"]
+    },
+    {
+      "description": "Hold new PyPI releases for a week. PyPI serves an upload timestamp for every version.",
+      "matchDatasources": ["pypi"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Hold new container tags for a week where the registry reports a push time (Docker Hub). Codeberg, data.forgejo.org, ghcr and lscr do not, so there the hold is the merge automation's PR-age fallback, not this setting.",
+      "matchDatasources": ["docker"],
+      "minimumReleaseAge": "7 days",
+      "minimumReleaseAgeBehaviour": "timestamp-optional"
+    },
+    {
+      "description": "Hold new action tags for a week.",
+      "matchDatasources": ["github-tags", "github-releases"],
+      "minimumReleaseAge": "7 days"
+    }
+  ],
+
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Forgejo image tag in the Ansible vars. group_vars/all.yml is what the first-boot compose .env is rendered from, so bumping only the compose default would not reach a fresh install.",
+      "managerFilePatterns": ["/^compose\\/group_vars\\/all\\.yml$/"],
+      "matchStrings": ["forgejo_image_tag:\\s*\"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "codeberg.org/forgejo/forgejo",
+      "datasourceTemplate": "docker"
+    },
+    {
+      "customType": "regex",
+      "description": "nginx image in the Ansible vars (same first-boot .env reason as forgejo).",
+      "managerFilePatterns": ["/^compose\\/group_vars\\/all\\.yml$/"],
+      "matchStrings": ["nginx_image:\\s*\"(?<depName>[a-z0-9./_-]+):(?<currentValue>[^\"]+)\""],
+      "datasourceTemplate": "docker"
+    }
+  ]
+}

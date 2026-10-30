@@ -1,0 +1,92 @@
+# Renovate against the Forgejo instance (git.cove), not GitHub.
+#
+# Why a scheduled Actions job rather than an external Renovate:
+#   - The canonical remote and the required check live on Forgejo, which is
+#     LAN-only. A Renovate pointed at github.com would open PRs on the mirror
+#     nobody merges, with no branch protection and no no-pii gate.
+#   - The existing runner already reaches git.cove (http://forgejo:3000) and has
+#     outbound egress to every registry and package index Renovate reads.
+#   - `container.network: cove_default` on the runner puts job containers on the
+#     compose network, so the API is reachable by service name. The canonical
+#     hostname `git.cove.local` is NOT resolvable from a job container (measured:
+#     it resolves to 127.0.0.1), so `RENOVATE_GIT_URL=endpoint` makes Renovate
+#     clone over `http://forgejo:3000/...` instead of the URL the API reports.
+#
+# Authentication: the Actions-provided `github.token` CANNOT run Renovate. In
+# this repo it authenticates as `forgejo-actions`, can push a branch, but gets
+# `404 Can't read pulls or can't read UnitTypeCode` when creating a pull request
+# (measured 2026-10-30 on PR #141). Renovate needs pulls read/write, so the job
+# requires the `RENOVATE_TOKEN` secret holding a real bot account's token. See
+# docs/guides/renovate.md for the exact account and where the token lives.
+#
+# Dry by default: `COVE_RENOVATE_MODE` stays `dry-run` until the operator has
+# reviewed the plan in docs/guides/renovate.md. The nightly run then prints the
+# PR plan and changes nothing. Flip that one value to `live` to enable writes.
+#
+# Version pin: Renovate is pinned deliberately. It is the tool that decides what
+# dependency changes get proposed, so a silent major-version jump in Renovate
+# itself is a supply-chain decision, not a routine update. Bump it by hand.
+
+name: renovate
+
+on:
+  schedule:
+    # 08:15 UTC. The runner schedules in UTC; this is 04:15 EDT / 03:15 EST.
+    # Chosen so PRs exist before the 06:00 local age-gate run.
+    - cron: "15 8 * * *"
+  workflow_dispatch:
+
+jobs:
+  renovate:
+    name: renovate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      COVE_RENOVATE_MODE: dry-run
+      RENOVATE_VERSION: "44.198.2"
+      RENOVATE_PLATFORM: forgejo
+      RENOVATE_ENDPOINT: http://forgejo:3000/api/v1
+      RENOVATE_GIT_URL: endpoint
+      RENOVATE_REPOSITORIES: cristos/cove
+      RENOVATE_ONBOARDING: "false"
+      RENOVATE_REQUIRE_CONFIG: required
+      RENOVATE_TOKEN: ${{ secrets.RENOVATE_TOKEN }}
+      # Optional: github.com lookups (action pins, release notes). Without it
+      # Renovate warns and skips those, leaving `.forgejo/workflows/` pins stale.
+      GITHUB_COM_TOKEN: ${{ secrets.GITHUB_COM_TOKEN }}
+      # The OSV database is downloaded per run; keep it for a week at most.
+      OSV_OFFLINE_MAX_AGE: 7d
+      LOG_LEVEL: info
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight the bot token
+        run: |
+          set -eu
+          if [ -z "${RENOVATE_TOKEN}" ]; then
+            echo "::error::RENOVATE_TOKEN is unset. Renovate cannot open PRs with the Actions token; create the bot account and secret described in docs/guides/renovate.md."
+            exit 1
+          fi
+          who=$(curl -sS -H "Authorization: token ${RENOVATE_TOKEN}" "${RENOVATE_ENDPOINT}/user" \
+            | python3 -c 'import json,sys;print(json.load(sys.stdin).get("login",""))' || true)
+          if [ -z "${who}" ]; then
+            echo "::error::RENOVATE_TOKEN was rejected by ${RENOVATE_ENDPOINT}/user."
+            exit 1
+          fi
+          # Measured: the Actions token authenticates as this account and cannot
+          # read the pulls unit, so Renovate would fail on its first PR lookup.
+          if [ "${who}" = "forgejo-actions" ]; then
+            echo "::error::RENOVATE_TOKEN is the Actions token (forgejo-actions). It can push but cannot read or create pull requests. Set the secret to the renovate bot's personal access token."
+            exit 1
+          fi
+          echo "Renovate will act as: ${who} (mode: ${COVE_RENOVATE_MODE})"
+
+      - name: Run Renovate
+        run: |
+          set -eu
+          if [ "${COVE_RENOVATE_MODE}" = "dry-run" ]; then
+            echo "Dry run: producing the PR plan without writing anything."
+            exec npx --yes --package "renovate@${RENOVATE_VERSION}" renovate --dry-run=full
+          fi
+          echo "Live: branch and PR writes are enabled."
+          exec npx --yes --package "renovate@${RENOVATE_VERSION}" renovate
