@@ -201,17 +201,29 @@ remote: Forgejo: Not allowed to push to protected branch main
 
 A refused merge reads `not allowed to merge [reason: Not all required status checks successful]`. Merges through the pull request path are unaffected by `enable_push: false`; only the direct push is. Release tags are also unaffected, because a tag push is not a branch push and `scripts/release.sh` pushes tags only.
 
+Emergency recovery, if a direct push to `main` is genuinely required: set `enable_push` back to `true` on the rule (`PATCH /api/v1/repos/cristos/cove/branch_protections/main` with `{"enable_push":true}`), push, then set it to `false` again.
+
 `.forgejo/workflows/no-pii.yml` runs `cli/tests/test_no_pii.py` on every pull request into `main`. The reported context is `no-pii / no-pii-gate (pull_request)`, built from the workflow name, the job name, and the event.
 
 ### Reviving a branch that predates the workflow
 
 Forgejo reads the workflow files from the pull request head. A branch created before `.forgejo/workflows/no-pii.yml` reached `main` has no `no-pii` run at all, so the required check is missing and the merge is refused. Rebaseline that branch from `main`, or press "Update branch" on the pull request, so the workflow exists on the head and a run fires. Do not copy the workflow into a feature branch by hand.
 
-### Known limitation: `.github/workflows` runs on Forgejo too
+### Workflow directory precedence: `.forgejo/workflows` wins
 
-Forgejo executes workflows from both `.forgejo/workflows/` and `.github/workflows/`. So `.github/workflows/release.yml`, written for GitHub (`actions/setup-python`, `gh release ...` with `GH_TOKEN`), also fires on every Forgejo tag push and fails at the `gh` steps. The long run of failing `wheel-release` task records on `git.cove` is that, not a broken runner. Releases still land on both hosts because `scripts/release.sh` publishes from the operator machine.
+Forgejo runs the workflow files under `.forgejo/workflows/` when that directory exists, and falls back to `.github/workflows/` only when it does not. The two directories are not merged: a workflow that lives only under `.github/workflows/` is never executed on `git.cove` once `.forgejo/workflows/` is present.
 
-A workflow that must not run on Forgejo needs a GitHub-only location or an early guard such as `if: github.server_url == 'https://github.com'`.
+Observed on the Forgejo 15 instance on 2026-10-30, after this repo gained `.forgejo/workflows/`:
+
+- Before that directory existed, every `v*` tag push ran `.github/workflows/release.yml` on `git.cove` and failed at its GitHub-only `gh` steps. That is the whole story behind the 54 failing `wheel-release` task records, and it was never a broken runner.
+- After `.forgejo/workflows/no-pii.yml` landed in `b698236`, a `v*` tag push produced no `release.yml` run at all.
+- A probe workflow placed under `.github/workflows/` on the same commit never ran, while a probe under `.forgejo/workflows/` on that commit did.
+
+Consequences:
+
+- `.github/workflows/release.yml` no longer fires on `git.cove`, so the failing records stop. The GitHub release path is untouched, because the file itself is unchanged.
+- A workflow that must run on `git.cove` belongs under `.forgejo/workflows/`. One placed only under `.github/workflows/` runs on GitHub and silently does nothing on Forgejo.
+- This is precedence, not a merge, so it is not a durable way to keep a GitHub-only workflow out. It stays out only while `.forgejo/workflows/` exists. If a Forgejo upgrade changes the rule, a GitHub-only job needs a guard such as `if: github.server_url == 'https://github.com'`, which was verified to evaluate false on Forgejo where the context value is `http://forgejo:3000`.
 
 ## Troubleshooting
 
