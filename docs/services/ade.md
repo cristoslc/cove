@@ -93,8 +93,8 @@ drift.
 |---|---|---|
 | `ade_port` (Ansible: group_vars / host_vars) | `38886` | **Live-path knob.** Change this and re-run `cove up`; it drives the nginx upstream and the `.env` `ADE_PORT`. |
 | `ade_container_name` (Ansible) | `cove-ade-server` | Container name; re-synced into `.env` `ADE_CONTAINER_NAME` on `cove up`. |
-| `ADE_BB_APP_VERSION` | `0.44.0` | Pinned `bb-app` npm version. **Wheel default** (Dockerfile/bringup). `cove ade update` writes an override into the compose `.env`, which persists across `cove up`; `cove ade status` warns on drift between the wheel default and the `.env` pin. |
-| `ADE_IMAGE` | `cove-ade:0.44.0` | Built image tag. Managed alongside the pin by `cove ade update` (prefix preserved — staging uses `cove-ade-staging`). |
+| `ADE_BB_APP_VERSION` | `0.44.0` | Pinned `bb-app` npm version. **Wheel default** (Dockerfile/bringup). `cove ade update` writes an override into the compose `.env`, which persists across `cove up` because the two ADE keys are on the `cove_image_env_operator_overrides` allowlist; `cove ade status` warns on drift between the wheel default and the `.env` pin. |
+| `ADE_IMAGE` | `cove-ade:0.44.0` | Built image tag. Managed alongside the pin by `cove ade update` (prefix preserved — staging uses `cove-ade-staging`). Also on the override allowlist. |
 | `ADE_MEM_LIMIT` | `2G` | Container memory limit. |
 | `ADE_PORT` (compose `.env`) | `38886` | Container `BB_SERVER_PORT` and healthcheck; **derived from `ade_port` and rewritten on every `cove up`** — do not edit it by hand as a durable override. |
 
@@ -126,11 +126,14 @@ cove ade update --version 0.44.0   # explicit pin / rollback to a previous versi
 - **Clients follow the server.** Update the server first; enrolled machines
   self-update to its protocol, then the desktop app updates normally.
 - **Pin drift is visible.** `cove ade update` writes `ADE_BB_APP_VERSION` /
-  `ADE_IMAGE` into the compose `.env` (the supported runtime override —
-  bringup deliberately does not rewrite those two keys). `cove ade status`
-  prints the running version and warns when it diverges from the `.env` pin.
-  The wheel's *default* pin is realigned by ordinary pin-bump PRs, so a fresh
-  machine gets the same currency without overrides.
+  `ADE_IMAGE` into the compose `.env`. Those two keys are the built-in entry on
+  `cove_image_env_operator_overrides` (see the [stack update
+  runbook](../guides/stack-update-guide.md#how-an-image-pin-reaches-an-existing-host)),
+  so the per-converge image-pin re-sync leaves them alone; every other image
+  key is wheel-authoritative. `cove ade status` prints the running version and
+  warns when it diverges from the `.env` pin. The wheel's *default* pin is
+  realigned by ordinary pin-bump PRs, so a fresh machine gets the same currency
+  without overrides.
 
 ## Isolated staging E2E
 
