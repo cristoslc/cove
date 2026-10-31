@@ -76,7 +76,7 @@ dependencies.
 | `cli/pyproject.toml`, `cli/uv.lock` | `pep621` | yes, 10 deps | `uv.lock` maintenance is enabled (Mondays). Most runtime deps are lower-bound only, so the lock refresh is the real update channel. |
 | `compose/docker-compose.yml` | `docker-compose` | yes, 10 deps | `${VAR:-image:tag}` is parsed and only the default inside the braces is rewritten. |
 | `compose/tunnel.yml` | `docker-compose` | yes, after `managerFilePatterns` | the filename does not match Renovate's default compose pattern. |
-| `compose/group_vars/all.yml` | custom regex | yes, forgejo tag + nginx image | group_vars is what the first-boot `.env` is rendered from, so a compose-only bump would not reach a fresh install. |
+| `compose/group_vars/all.yml` | custom regex | yes, forgejo tag + nginx image | group_vars is what the `.env` is rendered from and re-synced from on every converge, so a compose-only bump would not reach a fresh install or an existing host. |
 | `compose/*/Dockerfile` `FROM` | `dockerfile` | yes, 18 deps | `apt`/`apk` installs are extracted then skipped (`unspecified-version`, `unknown-registry`). |
 | `.forgejo/workflows/*.yml`, `.github/workflows/*.yml` | `github-actions` | yes, 6 deps | needs `GITHUB_COM_TOKEN` for github.com lookups; without it those updates are skipped with a warning. |
 | `compose/requirements.yml` | `ansible-galaxy` | yes, 1 dep | `community.docker`. |
@@ -246,10 +246,12 @@ and said exactly what was missing instead of quietly doing nothing.
   operator's `cove update` is the delivery step for the host, and the release is
   the delivery step for the wheel. Keeping them separate keeps a failed release
   from half-updating the running stack.
-- Image pin releases are out of scope here for the reason in the gaps table: the
-  `.env` written on first boot wins over the wheel's pin, so a merged image bump
-  would report success and apply nothing. Until Phase 0 of the digest-pinning
-  plan lands, that class stays with the operator, and the report says so.
+- Image pin releases stay with the operator because the age gate holds every
+  `compose/` change and the class needs a staging E2E plus an SBOM delta. The
+  `.env` delivery defect is fixed (Phase 0 of the digest-pinning plan):
+  bringup re-syncs the wheel's image pins into the deployed `.env` on every
+  converge, so a merged image bump now applies on an existing host instead of
+  reporting success and doing nothing.
 
 ## Dry-run proof (2026-10-30)
 

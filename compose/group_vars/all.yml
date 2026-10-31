@@ -42,6 +42,22 @@ repo_name: "cove"
 
 pod_pull_policy: missing
 
+# --- Image pin .env contract ---
+# Every image key the compose set interpolates (FORGEJO_IMAGE, NGINX_IMAGE,
+# ...) is authoritative from the wheel and re-synced into the deployed compose
+# .env on every converge. This allowlist is the only way an operator-owned
+# value survives that re-sync. Add a key here deliberately; an unlisted .env
+# edit is overwritten by design. Set this list in
+# host_vars/<hostname>.yml (never overwritten by `cove up`) rather than editing
+# the deployed copy of this file, which the wheel replaces on promote.
+#
+# ADE is the one built-in exception: `cove ade update` writes ADE_IMAGE /
+# ADE_BB_APP_VERSION into .env as the supported runtime override
+# (docs/services/ade.md). The wheel's ADE default is what a fresh machine gets.
+cove_image_env_operator_overrides:
+  - ADE_IMAGE
+  - ADE_BB_APP_VERSION
+
 # --- Tailscale ---
 # Overridden at runtime by bringup.yml when tailscale is active.
 ts_dns_name: "localhost"

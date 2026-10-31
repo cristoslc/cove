@@ -360,8 +360,9 @@ def _do_update(check: bool, quiet: bool) -> None:
         # it changes something AND the stack is running (operator decision
         # 2026-10-13): updates never resurrect stopped services and never run
         # bring-up on a converged stack. Quiet mode is the scheduled path: no
-        # TTY, no 1Password, no provisioning; floating tags are force-re-pulled
-        # so they actually receive upstream patches.
+        # TTY, no 1Password, no provisioning. The forced tag-era re-pull only
+        # refreshes floating tags; a changed wheel pin arrives through bringup's
+        # per-converge `.env` re-sync, not through the pull.
         _converge(check=False, quiet=quiet, wheel_path=wheel_path)
     finally:
         # The pin-compare has read the installed wheel (issue #80): the temp
