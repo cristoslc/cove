@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Optional
 
 VAULT_ADDR_DEFAULT = "https://vault.cove.local/"
-KEYSTORE_PREFIX = "cove/vault"
 KEYSTORE_ACCOUNT = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
 KEYSTORE_THRESHOLD = 3
 
@@ -110,9 +109,12 @@ def ensure_unsealed() -> dict:
     if status not in (200, 204):
         raise RuntimeError(f"Failed to reset unseal progress: {status}")
 
+    from cove.constants import vault_keystore_prefix
+
+    prefix = vault_keystore_prefix()
     keys = []
     for i in range(1, KEYSTORE_THRESHOLD + 1):
-        keys.append(_read_keystore(f"{KEYSTORE_PREFIX}/unseal-{i}"))
+        keys.append(_read_keystore(f"{prefix}/unseal-{i}"))
 
     for key in keys:
         status, body = _vault_post("v1/sys/unseal", {"key": key})

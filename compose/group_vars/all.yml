@@ -14,10 +14,13 @@ forgejo_api_url: "https://127.0.0.1:{{ nginx_https_port }}/"
 forgejo_ssh_domain: git.cove.local
 forgejo_webhook_allowed_host_list: "loopback"
 
-# --- Vault ---
-vault_image_tag: "1.20"
-vault_image_digest: "sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10"
-vault_image: "hashicorp/vault:{{ vault_image_tag }}@{{ vault_image_digest }}"
+# --- Secrets server (OpenBao, service and hosts still `vault`) ---
+# OpenBao 2.7.x, MPL-2.0. Digest is the multi-arch OCI index
+# (linux/amd64 + linux/arm64). OpenBao supports the newest minor only:
+# bump this pin roughly quarterly, not once-and-forget.
+vault_image_tag: "2.7.2"
+vault_image_digest: "sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f"
+vault_image: "openbao/openbao:{{ vault_image_tag }}@{{ vault_image_digest }}"
 vault_container_name: cove-vault
 vault_port: 8200
 vault_addr: "https://127.0.0.1:{{ nginx_https_port }}"

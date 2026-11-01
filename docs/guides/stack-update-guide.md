@@ -29,7 +29,7 @@ Single source of truth for image pins is `compose/` (bundled into the `cove` whe
 | Forgejo | `codeberg.org/forgejo/forgejo:15` | `compose/group_vars/all.yml` (`forgejo_image_tag`) | Major-line tag; **digest empty today, drift risk** |
 | nginx | `nginx:1.27-alpine` | `compose/group_vars/all.yml` (`nginx_image`) | Minor-line tag |
 | dnsproxy (DoH) | `adguard/dnsproxy:v0.86.0@sha256:4d65bafbf246b206a1af35d4263a86c35451d957458c7836304199f1cd2c1535` | `compose/docker-compose.yml` | Tag + digest |
-| Vault | `hashicorp/vault:1.20@sha256:268bb80aa9c6d13d65fcfa05c0c268caca068952240a8087291a6ce0b66e3a10` | `compose/group_vars/all.yml` (`vault_image_tag` + `vault_image_digest`) | Tag + digest |
+| OpenBao (secrets) | `openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f` | `compose/group_vars/all.yml` (`vault_image_tag` + `vault_image_digest`) | Tag + digest; **newest minor only** (see cadence note) |
 | Postgres (litellm-db) | `postgres:16-alpine` | `compose/docker-compose.yml` | Major-line tag; **no digest, drift risk** |
 | Forgejo runner | `data.forgejo.org/forgejo/runner:11` | `compose/docker-compose.yml` (`FORGEJO_RUNNER_IMAGE`) | Major-line tag |
 | Speedtest Tracker | `lscr.io/linuxserver/speedtest-tracker:v1.15.1-ls177` | `compose/docker-compose.yml` (`SPEEDTEST_IMAGE`) | Tag |
@@ -41,6 +41,8 @@ Single source of truth for image pins is `compose/` (bundled into the `cove` whe
 | Config resolver podlets | `npx`-invoked, no image pin | `compose/toolhive/registry.json` | Per-server refs pinned by tag in registry |
 
 **Known drift risks to close** (tracked for the next audit cycle): `forgejo_image_digest` is empty, `postgres:16-alpine` has no digest, and the two major-line runner pins (`forgejo:15`, `runner:11`) rely on Codeberg and data.forgejo.org not retagging.
+
+**Secrets server cadence (OpenBao).** OpenBao supports the newest minor only, and its own support policy asks reporters to reproduce on the latest release. A minor bump is therefore mandatory within the 3-day SLA, not optional, and the quarterly-ish bump is a standing line item. Bumps within OpenBao are ordinary in-place upgrades: revert the pin to roll back. Only the Vault 1.20 to OpenBao transition was a fresh init, because storage compatibility across the fork is not offered. See [the OpenBao service doc](../services/openbao.md).
 
 ## Upgrade procedure
 
