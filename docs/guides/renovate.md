@@ -198,7 +198,8 @@ gate.
 Per run it:
 
 1. Resolves a Forgejo token (`FORGEJO_TOKEN`, else `cove creds vault-get
-   forgejo-token`), and fails loud naming both when neither exists.
+   forgejo-token`, which resolves to `op://Private/Renovate Bot (git.cove)/token`),
+   and fails loud naming both when neither exists.
 2. Lists open pull requests and keeps the ones whose head branch starts with
    `renovate/` or whose body carries the marker. Author name is not trusted;
    a fork cannot fake the branch prefix in this repo, and the marker is the
@@ -289,16 +290,33 @@ rate-limited without `GITHUB_COM_TOKEN`).
 
 ## Operator action before anything is enabled
 
-1. **Create the Renovate bot account and token.** In Forgejo, as admin, create
-   user `renovate-bot`, then sign in as it and create an access token with
-   repository read/write (`Settings → Applications → Access tokens`). Store it
-   in 1Password as item `Renovate Bot (git.cove)`, field `token`. Two consumers,
-   same value:
+1. **Create the Renovate bot account and token.** In Forgejo, as admin, create a
+   non-admin user `renovate-bot`, add it to `cristos/cove` as a collaborator with
+   `write`, then mint an access token for it with
+   `write:repository,write:issue,read:user,read:organization`. The admin CLI
+   inside the Forgejo container mints one without a password:
+   `docker exec --user git cove-forgejo forgejo --config /data/gitea/conf/app.ini
+   admin user generate-access-token --username renovate-bot --token-name
+   renovate-bot-<date> --scopes ... --raw`. Store it in 1Password as item
+   `Renovate Bot (git.cove)`, field `token`. Two consumers, same value:
    - repo Actions secret `RENOVATE_TOKEN` (so the workflow can act as the bot):
      `PUT /api/v1/repos/cristos/cove/actions/secrets/RENOVATE_TOKEN` with
      `{"data": "<token>"}`; and
-   - `cove creds vault-put forgejo-token` (so the merge automation can call the
-     API). Never paste the value into an issue, a PR body, or a shell argument.
+   - the Vault cache read by `cove creds vault-get forgejo-token`, filled once
+     with `cove creds vault-put forgejo-token`. That name resolves to
+     `op://Private/Renovate Bot (git.cove)/token` through `OP_REFS` in
+     `cli/cove/creds.py`. `vault-put` always re-reads 1Password by contract, so
+     the 1Password CLI must be signed in (`op signin`) and the item must exist
+     before the first `vault-put`; afterwards the value lives in Vault and a
+     cleared local cache is harmless.
+
+   The resolver order is `FORGEJO_TOKEN` first, then `forgejo-token`, so an
+   environment variable still overrides the durable store. `forgejo_token` is
+   excluded from `cove creds batch-pull` (`BATCH_PULL_EXCLUDED`), which keeps
+   `cove up` working on a machine that never runs the merge automation and never
+   signed in to that 1Password item.
+
+   Never paste the value into an issue, a PR body, or a shell argument.
 2. **Optional: `GITHUB_COM_TOKEN`.** A classic GitHub PAT with no scopes, stored
    as the repo Actions secret of that name. Without it, action pins and release
    notes are skipped on github.com lookups.
@@ -332,6 +350,17 @@ rate-limited without `GITHUB_COM_TOKEN`).
 - **`docs/guides/stack-update-guide.md` carries a 1-day patch SLA.** The age gate
   makes that SLA the post-hold clock, not the release clock. The guide now says
   so; the two documents must not drift apart again.
+- **Follow-up: the merge half belongs in a workflow, not a scheduled agent
+  script.** Today the age-gate script holds a personal token so it can act as
+  `renovate-bot` from the operator's machine. The same token is already the repo
+  secret `RENOVATE_TOKEN`, so the merge step could run inside an Actions job and
+  read it from the job environment: no stored personal credential, and the merge
+  happens where the required check reports. The blocker is the split: the script
+  ends by cutting a release with `gh` and `fj`, and those run from the operator
+  machine. A clean split would be a workflow that only merges (and writes the
+  age-gate report as a commit or a job artifact) plus a local command that reads
+  the report and releases; the merge decisions stay in one module so the two
+  halves do not fork. Not started; this section is the reminder.
 
 ## Related
 
