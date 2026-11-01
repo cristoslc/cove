@@ -6,6 +6,9 @@ related:
   - renovate.json
   - .forgejo/workflows/renovate.yml
   - scripts/renovate/age_gated_merge.py
+  - scripts/renovate/threat_eval.py
+  - scripts/renovate/threat_eval.config.json
+  - docs/guides/renovate-threat-eval.md
   - cli/tests/test_renovate_automation.py
   - docs/musings/digest-pinning-plan.md
   - docs/guides/stack-update-guide.md
@@ -116,6 +119,28 @@ they exist. Nothing in the merge automation depends on them: it classifies from
 the PR-body marker and the `security` label only *shortens* a wait. Creating the
 labels is an operator step, listed below.
 
+## The threat gate
+
+Age is necessary and not sufficient. Before the age window is evaluated, the
+automation runs `scripts/renovate/threat_eval.py` on every otherwise-eligible
+pull request. It reads OSV, GitHub advisories, NVD enrichment, the registry's
+own metadata, upstream issues where an API resolves the repository, and a
+bounded search over GitHub issues and HN Algolia. A light model generates the
+search queries and summarises the hits; a standard-tier model weighs the
+evidence into `proceed`, `hold`, or `block`.
+
+The combined rule is **aged AND threat-checked proceed**. A missing verdict, an
+unreachable source, a model error, a budget exhaustion, a stale check, a hold,
+or a block all hold the pull request. The verdict, its evidence links, its cost,
+and its gaps are posted on the pull request with a `threat:*` label. A human can
+override with the `threat-override` label plus a `cove-threat-override: <reason>`
+comment, and the override is recorded.
+
+The full design, the evidence table, the reachability probes, the model roles,
+the token caps, the verdict schema, and the honest limits are in
+[Renovate threat evaluation](renovate-threat-eval.md). This page keeps the age
+numbers and the release flow.
+
 ## The age gate
 
 The operator's words were "soon enough to protect zero-days, long enough to
@@ -203,23 +228,30 @@ Per run it:
    `renovate/` or whose body carries the marker. Author name is not trusted;
    a fork cannot fake the branch prefix in this repo, and the marker is the
    contract Renovate renders.
-3. Applies the age gate to each, and holds:
+3. Applies the cheap prechecks to each, and holds:
    - majors (never),
    - anything touching `compose/` (staging E2E, SBOM delta and the `.env`
      re-sync are prerequisites, and a merged pin provably does not reach an
      existing host until Phase 0 lands),
    - anything outside `cli/` and `.forgejo/workflows/`,
-   - drafts and `WIP:` titles,
-   - pull requests whose required check is missing or not success,
-   - pull requests behind `main` (it asks Forgejo to update the branch, then
-     holds them until the re-run check is green; it never pushes or
-     force-pushes).
-4. Squash-merges the rest in security-first, then oldest-first order, with
+   - drafts and `WIP:` titles.
+4. Runs the threat evaluation on the rest, before the age window. A missing
+   verdict, a `hold`, a `block`, an unreachable source, a model failure, or an
+   exhausted token budget holds the pull request. A fresh `proceed` marker on
+   the same head is reused; a new commit forces a new check. The verdict and
+   its evidence links are posted on the pull request, and a human override is
+   read and recorded there.
+5. Applies the age window. The combined rule is **aged AND threat-checked
+   proceed**, so a threat `proceed` on a fresh release still waits.
+6. Holds pull requests whose required check is missing or not success, and pull
+   requests behind `main` (it asks Forgejo to update the branch, then holds
+   them until the re-run check is green; it never pushes or force-pushes).
+7. Squash-merges the rest in security-first, then oldest-first order, with
    `head_commit_id` set so a race cannot merge a commit it did not inspect.
    A refused merge is a hard failure with Forgejo's own message, so
    `not allowed to merge [reason: Not all required status checks successful]`
    surfaces verbatim.
-5. Runs the unit gate on `main`. **Only then** cuts the release.
+8. Runs the unit gate on `main`. **Only then** cuts the release.
 
 ### Fail-loud
 
@@ -304,22 +336,30 @@ rate-limited without `GITHUB_COM_TOKEN`).
 2. **Optional: `GITHUB_COM_TOKEN`.** A classic GitHub PAT with no scopes, stored
    as the repo Actions secret of that name. Without it, action pins and release
    notes are skipped on github.com lookups.
-3. **Create the labels** `dependencies`, `security`, `minor`, `major` (repo
+3. **Recommended: `GITHUB_TOKEN` for the threat check.** The merge automation
+   reads it from its environment (not the repository) for GitHub advisory and
+   issue queries. Without it, the unauthenticated allowance may rate-limit and
+   the verdict is `hold`, which is safe but noisy. Verify every source with
+   `python3 scripts/renovate/threat_eval.py probe` before enabling the live
+   gate; the expected output and the runner caveat are in
+   [renovate-threat-eval.md](renovate-threat-eval.md#reachability-measured-2026-10-31).
+4. **Create the labels** `dependencies`, `security`, `minor`, `major` (repo
    Settings → Labels, or the API). Optional for correctness, useful for humans.
    Provisioning them in `compose/provision_forgejo.yml` is the IaC-correct
-   follow-up.
-4. **Turn Renovate live** once the plan above is accepted: change
+   follow-up. The `threat:*` and `threat-override` labels are created on demand
+   by the threat publisher.
+5. **Turn Renovate live** once the plan above is accepted: change
    `COVE_RENOVATE_MODE: dry-run` to `live` in
    `.forgejo/workflows/renovate.yml`. Until that commit, the nightly run only
    prints the plan.
-5. **Start the merge automation** after a useful first run:
+6. **Start the merge automation** after a useful first run:
    ```
    bb automation run auto_nmp9tuczxyu --project proj_7k2wuv6nbq
    bb automation update auto_nmp9tuczxyu --project proj_7k2wuv6nbq \
      --env-json '{"COVE_RENOVATE_LIVE":"1"}'
    bb automation resume auto_nmp9tuczxyu --project proj_7k2wuv6nbq
    ```
-6. **Accept the Phase 0 consequence.** Until image pins are re-synced into the
+7. **Accept the Phase 0 consequence.** Until image pins are re-synced into the
    compose `.env` on converge, no image bump can reach a running host. The
    automation holds every `compose/` change for that reason and says so in its
    report.
