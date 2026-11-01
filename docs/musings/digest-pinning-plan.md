@@ -18,6 +18,8 @@ related:
 
 Planning document only. No pin changed, no compose edited, no container touched. The work it describes runs after the Renovate task lands; this document assumes Renovate is the discovery and PR layer and the tagged-release flow is the apply layer.
 
+> **Status (2026-10-31).** Phase 0, the delivery fix, has landed. Bringup now re-syncs every image pin into the deployed `.env` on every converge (`compose/scripts/sync_env.py`, task "Sync image pins into the compose .env (wheel authoritative)"), with `cove_image_env_operator_overrides` as the only operator-owned exception. The analysis below is retained as the rationale; digest pinning, the Renovate digest coverage, and the pull-policy change are still ahead.
+
 ## Decision in one paragraph
 
 Pin every externally sourced image as `tag@sha256:<index digest>`, and digest-pin every `FROM` line in the Dockerfiles cove builds. Keep the tag in the reference for readability. Renovate proposes digest changes, the age gate and the release flow apply them, and `cove update` converges the stack. The `--pull always` converge stops being an update mechanism and becomes a no-op for pinned images. One defect must be fixed before any pin lands on an existing host: image pins in the wheel do not reach the deployed stack, because `compose/bringup.yml` writes the image variables into `.env` on first boot only and never re-syncs them (see "The delivery defect that outranks the pin format").

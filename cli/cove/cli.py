@@ -471,8 +471,10 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
             bringup_profiles.append(profile)
     if bringup_profiles:
         base_cmd.extend(["-e", f"cove_profiles={','.join(bringup_profiles)}"])
-    # Scheduled updates force re-pull so floating tags (forgejo:15, nginx)
-    # actually receive new upstream patches instead of freezing at first pull.
+    # COVE_PULL_POLICY is a tag-era refresh only: floating tags (forgejo:15,
+    # nginx) get upstream patches while they still float. It is NOT the pin
+    # delivery path. Bringup re-syncs the wheel's image pins into the deployed
+    # compose .env on every converge, and a digest pin makes this pull a no-op.
     pull_policy = os.environ.pop("COVE_PULL_POLICY", None)
     if pull_policy:
         base_cmd.extend(["-e", f"pod_pull_policy={pull_policy}"])
