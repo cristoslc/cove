@@ -25,6 +25,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - **The dead Headroom compression claim**: LiteLLM 1.84.0 has no Headroom integration (it ships as a `guardrails:` entry in 1.92 and later), so the former `headroom_settings:` block was silently ignored. The sidecar's counters showed one request in its lifetime and zero compression jobs, and its published `4001` mapped a port nothing listened on. The inert setting, the sidecar service, its bringup environment, the `cove status` tuple, and the CLI's compression promise are removed. A negative guard fails if the setting returns without the supported form and a pin that implements it. Compression is not lost: it was never running, and the approved Bifrost cutover does not carry it. Evidence and the two independent request-size gaps are in `docs/tech-debt/litellm-headroom-and-request-size.md`.
 
+## 0.15.13 (2026-10-31)
+
+### Added
+- **Renovate on Forgejo with an age-gated merge and release automation** ([#143](../../pulls/143)) - a nightly Renovate job on the existing runner (dry-run until a token exists), `renovate.json` covering uv/Python, Dockerfile bases, compose image pins and action pins, and `scripts/renovate/age_gated_merge.py`, which merges eligible updates only when the age window elapses (48h security-labelled, 7d patch/pin/digest, 14d minor, never major), the required no-PII check is green, and the branch is rebaselined; releases coalesce into one version bump per run. 26 tests.
+
+### Fixed
+- **Wheel image pins now reach existing hosts** ([#145](../../pulls/145)) - the deployed compose `.env` previously took image keys on first boot only, so a pin change in the wheel was silently dropped while `--pull always` masked it. A new bringup task re-syncs every wheel-authoritative image key on each converge through `compose/scripts/sync_env.py` (atomic 0600 write, allowlist for operator-owned keys such as the ADE pin). 13 tests.
+
+### Changed
+- **The dead Headroom compression claim is removed** ([#117](../../pulls/117)) - the compression stage never ran (wrong port, silent fallback), so the service, endpoint, SBOM, help text and misleading test are gone; the two request-size gaps are recorded in `docs/tech-debt/`.
+- **The no-PII gate is a required pull request check** ([#133](../../pulls/133), [#139](../../pulls/139), [#140](../../pulls/140)) - `.forgejo/workflows/no-pii.yml` runs the scan on every PR, `main` requires the `no-pii / no-pii-gate (pull_request)` context, and direct pushes to `main` are refused for everyone including admins.
+
+### Docs
+- Decision briefs merged: digest pinning for every image ([#142](../../pulls/142)), secrets custody as a scope boundary with project-scoped grants ([#128](../../pulls/128), [#131](../../pulls/131), [#144](../../pulls/144)), nono kernel sandbox ruling ([#116](../../pulls/116), [#121](../../pulls/121)), OpenBao versus Vault ([#126](../../pulls/126)), and the Bifrost x Headroom ruling ([#118](../../pulls/118), [#120](../../pulls/120)).
+
 ## 0.15.12 (2026-10-27)
 
 ### Added
