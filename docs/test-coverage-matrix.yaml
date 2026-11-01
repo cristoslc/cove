@@ -496,6 +496,13 @@ workflow_paths:
       sad: executable
       edge: skip
       corner: skip
+  - path: "bringup re-syncs every wheel image pin into the deployed compose .env on every converge; the named override allowlist survives and an unlisted operator edit is overwritten; first boot still renders a complete .env"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable
   - path: "cove runner up"
     blast_radius: high
     coverage:

@@ -58,6 +58,8 @@ The compose `.env` is rendered **on first boot only** (`compose/bringup.yml`, "R
 
 On an existing deployment, changing `forgejo_webhook_allowed_host_list` in `compose/group_vars/all.yml` does not rewrite the persistent `.env`. Resource re-extraction preserves `.env` to protect operator overrides, so a promote will not carry this setting into an existing environment file. Do not delete `.env` to force a re-render; use the approved configuration recovery path for an existing installation. The compose-level `:-loopback` default still applies whenever the variable is absent from `.env`.
 
+Image pins are the exception: `FORGEJO_IMAGE` (and every other image key) is re-synced from the wheel into `.env` on every converge, so a pin bump in `group_vars` does reach an existing host. Non-image settings such as the webhook allowlist remain first-boot-only. The full authoritative-versus-overridable list is in the [stack update runbook](../guides/stack-update-guide.md#how-an-image-pin-reaches-an-existing-host).
+
 ### Promote path (wheel is the source of truth)
 
 `compose/` in this repo is **dev-time source**. The setting reaches running stacks only via the post-merge promote: sync compose resources into the wheel, build, and reinstall `cove`. After a reinstall, recreate the forgejo container so it picks up the new env:

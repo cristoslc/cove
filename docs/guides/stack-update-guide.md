@@ -76,6 +76,28 @@ Cove takes its SBOM as part of development, not as a runtime product:
 
 `cove upgrade` is an alias, because both spellings are natural.
 
+### How an image pin reaches an existing host
+
+The wheel is authoritative for image pins. It ships `compose/group_vars/all.yml`, the compose files, and `compose/bringup.yml`; `cove update` installs the new wheel, `cove up` re-extracts the compose tree, and bringup then renders the pins through Ansible. Three layers deliver a pin, and only the last one survives re-extraction:
+
+1. **The wheel's compose refs** (`image:` lines written directly in a compose file) are replaced when the compose tree is re-extracted.
+2. **The wheel's Ansible vars** (`forgejo_image`, `nginx_image`, `vault_image`, and the `*_image` defaults in the `cove_image_env_pins` map) are rendered by bringup.
+3. **The deployed `.env`** is preserved across re-extraction (`RUNTIME_PRESERVED_FILES`), so bringup re-syncs every key in `cove_image_env_pins` into `~/.config/cove/compose/.env` on *every* converge (`compose/scripts/sync_env.py`, task "Sync image pins into the compose .env (wheel authoritative)"). A converge that finds every pin already matching does not rewrite the file.
+
+That third layer is the one that makes a pin bump actually apply. Before it existed, a pin bump changed only the compose fallback (`${FORGEJO_IMAGE:-...}`) while Compose kept interpolating the first-boot `.env` value; `cove update` reported success and applied nothing. `--pull always` is **not** the pin delivery path: it exists only to refresh floating tags while tags still float, and on a digest pin it fetches the exact digest already named (a no-op). The merged wheel pin plus the per-converge `.env` re-sync is the delivery path.
+
+**Authoritative from the wheel** (re-synced on every converge):
+
+- `FORGEJO_IMAGE`, `VAULT_IMAGE`, `NGINX_IMAGE`, `LITELLM_IMAGE`, `SPEEDTEST_IMAGE`, `TOOLHIVE_IMAGE`, `BIFROST_IMAGE`, `BIFROST_DNS_IMAGE`, `FORGEJO_RUNNER_IMAGE`, `TUNNEL_IMAGE`
+
+**Operator-overridable** (the named allowlist in `compose/group_vars/all.yml`):
+
+- `cove_image_env_operator_overrides` defaults to `ADE_IMAGE` and `ADE_BB_APP_VERSION` because `cove ade update` writes that pin at runtime (see [ADE](../services/ade.md)).
+- Add a key to that list in `host_vars/<hostname>.yml` if an operator-owned value must survive a converge. `cove up` never overwrites `host_vars`. A hand-edit to any image key not on the list is overwritten by the next converge, by design.
+- Prefer overriding the Ansible var itself (`nginx_image: private.example/nginx:...` in `host_vars`) when the intent is a per-host image source: it flows through the sync as the authoritative value and keeps the `.env` contract intact.
+
+`TUNNEL_IMAGE` has one runtime exception: `cove tunnel up` selects a per-architecture digest and sets `TUNNEL_IMAGE` in the Compose process environment, which outranks `.env` for that command. The `.env` value is the wheel's declared tag.
+
 ## Automated audit
 
 Three cooperating parts, none of which runs ad-hoc commands in a container:
@@ -91,9 +113,10 @@ Three cooperating parts, none of which runs ad-hoc commands in a container:
   anything outside `cli/` and `.forgejo/workflows/`; held items appear in its
   report rather than being merged quietly.
 - **The operator** owns the classes that must not be automated yet: image pins
-  (staging E2E plus the SBOM delta plus the `.env` re-sync from the digest-pinning
-  plan), the LiteLLM and ADE build pins, the zrok2 per-arch map, and the ToolHive
-  registry refs. Each is named in the Renovate guide's gap table.
+  (staging E2E plus the SBOM delta; the `.env` delivery defect is fixed, but
+  the age gate still holds every `compose/` change), the LiteLLM and ADE build
+  pins, the zrok2 per-arch map, and the ToolHive registry refs. Each is named in
+  the Renovate guide's gap table.
 
 Major bumps stay loud: the automation reports them and never merges them, and the
 gap analysis is still required before a major bump PR is opened.
