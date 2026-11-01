@@ -81,6 +81,18 @@ def _batch_refs() -> list[str]:
     ]
 
 
+def _excluded_name_for(op_ref: str) -> str:
+    """The CLI name of an operator-only ref, or "" when batch-pull covers it.
+
+    Keeps the not-cached error from sending an operator to `batch-pull`, which
+    deliberately skips these references.
+    """
+    for key, template in OP_REFS.items():
+        if key in BATCH_PULL_EXCLUDED and "{" not in template and template == op_ref:
+            return key.replace("_", "-")
+    return ""
+
+
 @click.group()
 def creds():
     """Manage credentials.
@@ -176,6 +188,12 @@ def vault_get(op_ref: str):
         lc.put(op_ref, value)
         sys.stdout.write(value)
         return
+    excluded = _excluded_name_for(op_ref)
+    if excluded:
+        raise click.ClickException(
+            f"{op_ref} is not cached. Run `cove creds vault-put {excluded}` "
+            "first (it needs a signed-in 1Password CLI and the item)."
+        )
     raise click.ClickException(
         f"{op_ref} is not cached. Run `cove creds batch-pull` first."
     )
