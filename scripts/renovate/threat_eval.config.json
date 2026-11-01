@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "enabled": true,
+  "proxy_url": "https://llmproxy.cove/v1",
+  "token_env": "COVE_LLM_PROXY_CLIENT_KEY",
+  "token_op_ref": "op://Private/Cove LLM Proxy Client Key/client_key",
+  "models": {
+    "research": "text:light",
+    "judge": "vision:standard"
+  },
+  "limits": {
+    "per_check_tokens": 12000,
+    "per_run_tokens": 60000,
+    "summarize_max_tokens": 1800,
+    "judge_max_tokens": 1600,
+    "http_timeout_s": 20.0,
+    "check_deadline_s": 120.0,
+    "search_results": 5,
+    "search_window_days": 90,
+    "reuse_minutes_proceed": 1440,
+    "reuse_minutes_hold": 60,
+    "reuse_minutes_block": 1440
+  },
+  "prices_usd_per_mtok": {
+    "research": { "input": 0.10, "output": 0.30 },
+    "judge": { "input": 0.30, "output": 1.20 }
+  },
+  "search_providers": ["github_issues", "hn_algolia"],
+  "github_token_env": "GITHUB_TOKEN",
+  "brave_key_env": "COVE_THREAT_SEARCH_KEY",
+  "sources": {
+    "proxy": "https://llmproxy.cove/v1",
+    "osv": "https://api.osv.dev/v1/query",
+    "github_advisories": "https://api.github.com/advisories",
+    "github_issues": "https://api.github.com/search/issues",
+    "nvd": "https://services.nvd.nist.gov/rest/json/cves/2.0",
+    "pypi": "https://pypi.org/pypi",
+    "npm": "https://registry.npmjs.org",
+    "codeberg": "https://codeberg.org/api/v1",
+    "hn_algolia": "https://hn.algolia.com/api/v1/search_by_date",
+    "brave": "https://api.search.brave.com/res/v1/web/search"
+  }
+}
