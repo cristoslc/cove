@@ -846,3 +846,17 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "Renovate threat evaluation: deterministic OSV/registry blocks outrank the judge, a missing source/model/verdict or an exhausted token budget holds, the judge cannot cite a URL the tool did not supply, and a same-head proceed verdict is reused within its TTL"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "Renovate combined merge rule: aged AND threat-checked proceed; a missing, hold, or block verdict holds, a human override needs the threat-override label plus a recorded cove-threat-override reason, and the override does not bypass the age or path gates"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip

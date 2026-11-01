@@ -124,6 +124,7 @@ def test_decision_merges_a_week_old_patch(gate):
         files=["cli/uv.lock"],
         pr_created_at=NOW - timedelta(days=1),
         now=NOW,
+        threat_verdict="proceed",
     )
     assert decision.merge is True
     assert decision.reason == "eligible"
@@ -136,6 +137,7 @@ def test_decision_holds_a_fresh_patch(gate):
         files=["cli/uv.lock"],
         pr_created_at=NOW - timedelta(days=1),
         now=NOW,
+        threat_verdict="proceed",
     )
     assert decision.merge is False
     assert "age" in decision.reason
@@ -148,6 +150,7 @@ def test_decision_never_merges_a_major(gate):
         files=["compose/docker-compose.yml"],
         pr_created_at=NOW - timedelta(days=90),
         now=NOW,
+        threat_verdict="proceed",
     )
     assert decision.merge is False
     assert decision.reason.startswith("major")
@@ -160,6 +163,7 @@ def test_decision_holds_a_compose_change_even_when_old(gate):
         files=["compose/docker-compose.yml"],
         pr_created_at=NOW - timedelta(days=30),
         now=NOW,
+        threat_verdict="proceed",
     )
     assert decision.merge is False
     assert "staging" in decision.reason
@@ -172,6 +176,7 @@ def test_decision_takes_the_security_window_from_a_label(gate):
         files=["compose/docker-compose.yml"],
         pr_created_at=NOW - timedelta(days=1),
         now=NOW,
+        threat_verdict="proceed",
     )
     # The label shortens the wait but does not bypass the compose hold.
     assert decision.merge is False
@@ -185,6 +190,7 @@ def test_decision_merges_an_osv_update_after_48_hours(gate):
         files=["cli/uv.lock"],
         pr_created_at=NOW - timedelta(days=3),
         now=NOW,
+        threat_verdict="proceed",
     )
     assert decision.merge is True
 
@@ -197,6 +203,7 @@ def test_decision_holds_a_lockfile_maintenance_pr_until_it_is_a_week_old(gate):
         pr_created_at=NOW - timedelta(days=2),
         now=NOW,
         branch="renovate/lock-file-maintenance",
+        threat_verdict="proceed",
     )
     assert decision.merge is False
     assert "age" in decision.reason
@@ -225,6 +232,195 @@ def test_status_verdict_requires_the_check_to_have_run(gate):
     ok, why = gate.status_verdict([{"id": 1, "context": "some-other-check", "status": "success"}])
     assert ok is False
     assert "has not run" in why
+
+
+def test_decision_holds_when_the_threat_check_did_not_run(gate):
+    decision = gate.decide(
+        body=_marker(
+            "datasource=pypi package=idna version=3.16 rel=2026-10-01T00:00:00.000Z type=patch vulnerability=false;"
+        ),
+        label_names=[],
+        files=["cli/uv.lock"],
+        pr_created_at=NOW - timedelta(days=1),
+        now=NOW,
+        threat_verdict=None,
+    )
+    assert decision.merge is False
+    assert "threat evaluation missing" in decision.reason
+
+
+def test_decision_holds_on_a_threat_hold(gate):
+    decision = gate.decide(
+        body=_marker(
+            "datasource=pypi package=idna version=3.16 rel=2026-10-01T00:00:00.000Z type=patch vulnerability=false;"
+        ),
+        label_names=[],
+        files=["cli/uv.lock"],
+        pr_created_at=NOW - timedelta(days=30),
+        now=NOW,
+        threat_verdict="hold",
+        threat_reason="an open regression report mentions 3.16",
+    )
+    assert decision.merge is False
+    assert "threat evaluation hold" in decision.reason
+    assert "regression" in decision.reason
+
+
+def test_decision_holds_on_a_threat_block(gate):
+    decision = gate.decide(
+        body=_marker(
+            "datasource=pypi package=idna version=3.16 rel=2026-10-01T00:00:00.000Z type=patch vulnerability=false;"
+        ),
+        label_names=[],
+        files=["cli/uv.lock"],
+        pr_created_at=NOW - timedelta(days=30),
+        now=NOW,
+        threat_verdict="block",
+    )
+    assert decision.merge is False
+    assert "block" in decision.reason
+
+
+def test_decision_merges_only_when_aged_and_threat_proceed(gate):
+    decision = gate.decide(
+        body=_marker(
+            "datasource=pypi package=idna version=3.16 rel=2026-10-01T00:00:00.000Z type=patch vulnerability=false;"
+        ),
+        label_names=[],
+        files=["cli/uv.lock"],
+        pr_created_at=NOW - timedelta(days=30),
+        now=NOW,
+        threat_verdict="proceed",
+    )
+    assert decision.merge is True
+
+
+def test_a_threat_proceed_does_not_bypass_the_age_window(gate):
+    decision = gate.decide(
+        body=_marker(
+            "datasource=pypi package=idna version=3.16 rel=2026-10-29T00:00:00.000Z type=patch vulnerability=false;"
+        ),
+        label_names=[],
+        files=["cli/uv.lock"],
+        pr_created_at=NOW - timedelta(hours=1),
+        now=NOW,
+        threat_verdict="proceed",
+    )
+    assert decision.merge is False
+    assert "age gate" in decision.reason
+
+
+def test_a_threat_verdict_outside_the_schema_holds(gate):
+    decision = gate.decide(
+        body=_marker(
+            "datasource=pypi package=idna version=3.16 rel=2026-10-01T00:00:00.000Z type=patch vulnerability=false;"
+        ),
+        label_names=[],
+        files=["cli/uv.lock"],
+        pr_created_at=NOW - timedelta(days=30),
+        now=NOW,
+        threat_verdict="probably-fine",
+    )
+    assert decision.merge is False
+    assert "unknown threat verdict" in decision.reason
+
+
+def test_precheck_stops_a_major_before_the_threat_check(gate):
+    decision = gate.precheck(
+        body=_marker(
+            "datasource=docker package=postgres version=18 rel=2026-01-01T00:00:00.000Z type=major vulnerability=false;"
+        ),
+        label_names=["major"],
+        files=["compose/docker-compose.yml"],
+    )
+    assert decision is not None
+    assert decision.merge is False
+    assert decision.reason.startswith("major")
+
+
+def test_cached_verdict_is_reused_for_the_same_head_within_ttl(gate):
+    verdict = gate.threat_eval.Verdict(
+        verdict="proceed",
+        confidence=0.9,
+        evidence=[],
+        model_used="vision:standard",
+        cost_usd=0.001,
+        tokens=100,
+        rationale="clean",
+        errors=[],
+        checked_at=NOW - timedelta(hours=1),
+        head_sha="abc",
+        packages=["pypi/idna@3.16"],
+    )
+    cached = gate._cached_verdict([{"body": verdict.marker()}], "abc")
+    assert cached is not None
+    assert cached.verdict == "proceed"
+    assert gate._verdict_fresh(cached, gate.threat_eval.Limits(), NOW)
+
+
+def test_cached_verdict_is_not_reused_for_a_new_head_or_after_the_ttl(gate):
+    verdict = gate.threat_eval.Verdict(
+        verdict="proceed",
+        confidence=0.9,
+        evidence=[],
+        model_used="vision:standard",
+        cost_usd=0.0,
+        tokens=10,
+        rationale="clean",
+        errors=[],
+        checked_at=NOW - timedelta(hours=25),
+        head_sha="abc",
+        packages=["pypi/idna@3.16"],
+    )
+    assert gate._cached_verdict([{"body": verdict.marker()}], "def") is None
+    assert gate._verdict_fresh(verdict, gate.threat_eval.Limits(), NOW) is False
+
+
+def test_a_missing_threat_config_produces_a_hold_not_permission(gate):
+    report = gate.Report()
+    verdict = gate._threat_for_pr(
+        None,
+        {"number": 1, "head": {"sha": "abc"}, "title": "x"},
+        [
+            gate.Upgrade(
+                datasource="pypi",
+                package="idna",
+                version="3.16",
+                update_type="patch",
+                released=NOW,
+                vulnerability=False,
+            )
+        ],
+        [],
+        config=None,
+        config_error="threat evaluation config not found",
+        budget=None,
+        feeds=None,
+        model=None,
+        live=False,
+        report=report,
+    )
+    assert verdict.verdict == "hold"
+    assert "not found" in verdict.rationale
+
+
+def test_a_lockfile_maintenance_pr_without_packages_holds(gate):
+    report = gate.Report()
+    verdict = gate._threat_for_pr(
+        None,
+        {"number": 2, "head": {"sha": "abc"}, "title": "lock file maintenance"},
+        [],
+        [],
+        config=gate.threat_eval.Config(),
+        config_error="",
+        budget=None,
+        feeds=None,
+        model=None,
+        live=False,
+        report=report,
+    )
+    assert verdict.verdict == "hold"
+    assert "no per-package marker" in verdict.rationale
 
 
 def test_renovate_config_never_automeres():
