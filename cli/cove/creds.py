@@ -23,7 +23,19 @@ OP_REFS = {
     "cove_admin_username": "op://Private/Cove Admin/username",
     "cove_admin_password": "op://Private/Cove Admin/password",
     "speedtest_app_key": "op://Private/Speedtest Tracker/app_key",
+    # Durable store for the Renovate merge automation's Forgejo token. The
+    # resolver in scripts/renovate/age_gated_merge.py reads FORGEJO_TOKEN first,
+    # then `cove creds vault-get forgejo-token`; this entry is what makes that
+    # second path resolve to a real reference. The token belongs to the
+    # `renovate-bot` Forgejo account (docs/guides/renovate.md).
+    "forgejo_token": "op://Private/Renovate Bot (git.cove)/token",
 }
+
+# Credentials only operator automation needs. batch-pull runs on every
+# `cove up`, so pulling one of these on a machine that never runs that
+# automation would fail the whole converge when its 1Password item is absent.
+# They stay resolvable by name for vault-get/vault-put, and out of batch-pull.
+BATCH_PULL_EXCLUDED = frozenset({"forgejo_token"})
 
 USERNAME = os.environ.get("USER", "")
 
@@ -35,6 +47,38 @@ def _hostname() -> str:
     not spawn `scutil` for commands that never touch credentials.
     """
     return detect_hostname()
+
+
+def resolve_ref(ref: str) -> str:
+    """Return an op:// reference for a credential name or pass a ref through.
+
+    `cove creds vault-get forgejo-token` is the documented read path for the
+    Renovate merge automation, so a bare name is a first-class spelling of the
+    reference in OP_REFS. Placeholders are filled only when the template has
+    one, which keeps a placeholder-free lookup from spawning `scutil`.
+    """
+    if ref.startswith("op://"):
+        return ref
+    key = ref.strip().lower().replace("-", "_")
+    template = OP_REFS.get(key)
+    if template is None:
+        names = ", ".join(sorted(name.replace("_", "-") for name in OP_REFS))
+        raise ValueError(
+            f"unknown credential name: {ref!r}. Use an op:// reference or one "
+            f"of: {names}"
+        )
+    if "{" in template:
+        return template.format(hostname=_hostname(), username=USERNAME)
+    return template
+
+
+def _batch_refs() -> list[str]:
+    """The references batch-pull pulls: OP_REFS minus the operator-only ones."""
+    return [
+        (t.format(hostname=_hostname(), username=USERNAME) if "{" in t else t)
+        for key, t in OP_REFS.items()
+        if key not in BATCH_PULL_EXCLUDED
+    ]
 
 
 @click.group()
@@ -86,8 +130,14 @@ def vault_put(op_ref: str, force_refresh: bool):
 
         cove creds vault-put 'op://Private/Forgejo MacBook Admin/password'
 
+        cove creds vault-put forgejo-token
+
         cove creds vault-put 'op://Private/My Secret/password'
     """
+    try:
+        op_ref = resolve_ref(op_ref)
+    except ValueError as e:
+        raise click.ClickException(str(e))
     try:
         value = vault_cache.vault_put_op_ref(op_ref, force_refresh=force_refresh)
     except (ValueError, RuntimeError) as e:
@@ -104,10 +154,16 @@ def vault_get(op_ref: str):
 
         cove creds vault-get 'op://Private/Forgejo MacBook Admin/password'
 
+        cove creds vault-get forgejo-token
+
         cove creds vault-get 'op://Private/Vault MacBook user/password'
     """
     from cove import local_cache as lc
 
+    try:
+        op_ref = resolve_ref(op_ref)
+    except ValueError as e:
+        raise click.ClickException(str(e))
     value = lc.get(op_ref)
     if value is not None:
         sys.stdout.write(value)
@@ -208,17 +264,13 @@ def batch_pull_op(force_refresh: bool):
     """
     from cove import local_cache as lc
 
+    refs = _batch_refs()
     if not force_refresh:
-        cached = 0
-        for ref_template in OP_REFS.values():
-            ref = ref_template.format(hostname=_hostname(), username=USERNAME)
-            if lc.get(ref) is not None:
-                cached += 1
-        if cached == len(OP_REFS):
+        cached = sum(1 for ref in refs if lc.get(ref) is not None)
+        if cached == len(refs):
             click.echo("All refs already in local cache. Use --force-refresh to repull.")
             return
 
-    refs = [t.format(hostname=_hostname(), username=USERNAME) for t in OP_REFS.values()]
     try:
         result = lc.batch_pull(refs)
     except RuntimeError as e:

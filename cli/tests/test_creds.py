@@ -98,3 +98,107 @@ def test_vault_put_op_read_failure_exits_nonzero_and_leaves_cache_intact(monkeyp
     assert mock_vault_write.call_count == 0
     assert mock_local_put.call_count == 0
     assert SECRET not in result.output
+
+# Short-name resolution: `cove creds vault-get forgejo-token` is the documented
+# read path for the Renovate merge automation (docs/guides/renovate.md). Before
+# this, a bare name reached vault_cache.parse_op_ref and died with "Not an
+# op:// reference", so the documented vault-put could never create the entry.
+
+RENOVATE_REF = "op://Private/Renovate Bot (git.cove)/token"
+
+
+def test_resolve_ref_maps_the_short_name_without_a_hostname_lookup(monkeypatch):
+    from cove import creds
+
+    def boom():
+        raise AssertionError("a placeholder-free ref must not spawn scutil")
+
+    monkeypatch.setattr(creds, "_hostname", boom)
+    assert creds.resolve_ref("forgejo-token") == RENOVATE_REF
+
+
+def test_resolve_ref_passes_an_op_ref_through():
+    from cove import creds
+
+    assert creds.resolve_ref(OP_REF) == OP_REF
+
+
+def test_resolve_ref_formats_hostname_placeholders(monkeypatch):
+    from cove import creds
+
+    monkeypatch.setattr(creds, "_hostname", lambda: "MBP")
+    monkeypatch.setattr(creds, "USERNAME", "cristos")
+    assert creds.resolve_ref("forgejo-admin") == "op://Private/Forgejo MBP Admin/password"
+
+
+def test_resolve_ref_rejects_an_unknown_name():
+    import pytest
+
+    from cove import creds
+
+    with pytest.raises(ValueError) as excinfo:
+        creds.resolve_ref("not-a-credential")
+    assert "not-a-credential" in str(excinfo.value)
+    assert "forgejo-token" in str(excinfo.value)
+
+
+def test_vault_get_resolves_the_short_name_before_the_cache(monkeypatch):
+    from cove import creds, local_cache
+
+    seen = {}
+
+    def fake_get(key):
+        seen["key"] = key
+        return SECRET
+
+    monkeypatch.setattr(local_cache, "get", fake_get)
+    result = CliRunner().invoke(creds.vault_get, ["forgejo-token"])
+    assert result.exit_code == 0, result.output
+    assert seen["key"] == RENOVATE_REF, "the cache must be keyed by the op ref"
+    assert result.output == SECRET
+
+
+def test_vault_put_resolves_the_short_name_and_stays_masked(monkeypatch):
+    from cove import creds, vault_cache
+
+    seen = {}
+
+    def fake_put(op_ref, force_refresh=False):
+        seen["ref"] = op_ref
+        return SECRET
+
+    monkeypatch.setattr(vault_cache, "vault_put_op_ref", fake_put)
+    result = CliRunner().invoke(creds.vault_put, ["forgejo-token"])
+    assert result.exit_code == 0, result.output
+    assert seen["ref"] == RENOVATE_REF
+    assert SECRET not in result.output
+
+
+def test_vault_get_rejects_an_unknown_name_loudly(monkeypatch):
+    from cove import creds, local_cache
+
+    monkeypatch.setattr(local_cache, "get", lambda key: SECRET)
+    result = CliRunner().invoke(creds.vault_get, ["not-a-credential"])
+    assert result.exit_code != 0
+    assert "not-a-credential" in result.output
+    assert SECRET not in result.output
+
+
+def test_batch_pull_leaves_the_operator_only_ref_alone(monkeypatch):
+    """batch-pull runs on every `cove up`. A machine that never runs the merge
+    automation must not see `cove up` fail because the Renovate Bot 1Password
+    item is absent."""
+    from cove import creds, local_cache
+
+    seen = {}
+
+    def fake_batch(refs):
+        seen["refs"] = list(refs)
+        return {ref: "x" for ref in refs}
+
+    monkeypatch.setattr(local_cache, "get", lambda key: None)
+    monkeypatch.setattr(local_cache, "batch_pull", fake_batch)
+    result = CliRunner().invoke(creds.batch_pull_op, [])
+    assert result.exit_code == 0, result.output
+    assert RENOVATE_REF not in seen["refs"]
+    assert "op://Private/Speedtest Tracker/app_key" in seen["refs"]
