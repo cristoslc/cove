@@ -202,3 +202,16 @@ def test_batch_pull_leaves_the_operator_only_ref_alone(monkeypatch):
     assert result.exit_code == 0, result.output
     assert RENOVATE_REF not in seen["refs"]
     assert "op://Private/Speedtest Tracker/app_key" in seen["refs"]
+
+
+def test_vault_get_missing_operator_ref_points_at_vault_put(monkeypatch):
+    """batch-pull deliberately skips this ref, so the not-cached error must not
+    send the operator to a command that will never fill it."""
+    from cove import creds, local_cache, vault_cache
+
+    monkeypatch.setattr(local_cache, "get", lambda key: None)
+    monkeypatch.setattr(vault_cache, "vault_get_cached", lambda ref: None)
+    result = CliRunner().invoke(creds.vault_get, ["forgejo-token"])
+    assert result.exit_code != 0
+    assert "cove creds vault-put forgejo-token" in result.output
+    assert "batch-pull" not in result.output
