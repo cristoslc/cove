@@ -179,6 +179,64 @@
       delay: 2
       until: post_install_version.status in [200, 403]
 
+    # Token hygiene. The mint below names each token with the run's epoch
+    # because Forgejo token names are unique per user, so a fixed name fails on
+    # the second converge. Nothing revoked the predecessor, though, so every
+    # `cove up` left one more write:admin credential behind: 102 epoch-named
+    # `cove-provision-*` tokens had accumulated by 2026-11-01.
+    #
+    # Reuse was the first preference and is not available here: `cove creds`
+    # has no command that writes an arbitrary value to Vault (vault-put is a
+    # 1Password to Vault bridge and needs an op:// item), and the git
+    # credential store holds one secret per (protocol, host, username), a slot
+    # `cove-push` already owns. Revoking needs only the admin password the play
+    # already caches, so the sweep runs BEFORE the mint: by construction it can
+    # only delete tokens from earlier runs and can never revoke the one this
+    # run is about to use. The pattern is anchored to digits on purpose, so
+    # `cove-provision-pages` (pages provisioning) and the legacy bare
+    # `cove-provision` are never touched.
+    - name: List access tokens to find provisioning tokens from earlier converges
+      ansible.builtin.uri:
+        url: "{{ forgejo_api_url }}api/v1/users/{{ admin_username }}/tokens"
+        headers:
+          Host: git.cove
+        url_username: "{{ admin_username }}"
+        url_password: "{{ admin_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [200]
+      register: forgejo_access_tokens
+      no_log: true
+
+    - name: Select provisioning tokens minted by earlier converges
+      ansible.builtin.set_fact:
+        stale_provision_tokens: >-
+          {{ forgejo_access_tokens.json | map(attribute='name')
+             | select('match', '^cove-provision-[0-9]+$') | list }}
+
+    - name: Report the stale provisioning tokens this converge will revoke
+      ansible.builtin.debug:
+        msg: >-
+          {{ stale_provision_tokens | length }} stale cove-provision token(s)
+          will be revoked before minting:
+          {{ stale_provision_tokens | join(', ') if stale_provision_tokens | length else '(none)' }}
+
+    - name: Revoke provisioning tokens from earlier converges (before minting this run's)
+      ansible.builtin.uri:
+        url: "{{ forgejo_api_url }}api/v1/users/{{ admin_username }}/tokens/{{ item | urlencode }}"
+        method: DELETE
+        headers:
+          Host: git.cove
+        url_username: "{{ admin_username }}"
+        url_password: "{{ admin_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [204, 404]
+      loop: "{{ stale_provision_tokens }}"
+      loop_control:
+        label: "{{ item }}"
+      no_log: true
+
     - name: Generate provisioning API token (unique name avoids collisions)
       ansible.builtin.command:
         argv:
