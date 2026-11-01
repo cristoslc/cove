@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
-"""Age-gated merge and republish for Renovate pull requests on Forgejo.
+"""Age-gated, threat-checked merge and republish for Renovate pull requests on Forgejo.
 
-Renovate answers "is there a new version". This answers "is it old enough, is
-it green, and may it land" and then ships one coalesced release.
+Renovate answers "is there a new version". This answers "is it safe, is it old
+enough, is it green, and may it land" and then ships one coalesced release.
 
 The split is deliberate:
 
 * Renovate never automerges (``automerge: false`` in ``renovate.json``). The
   merge gate lives here, in one reviewable place, with the age numbers named.
+* Before the age window is evaluated, ``threat_eval`` reads the deterministic
+  advisory and registry feeds, researches the open-web gap with a light model,
+  and asks a standard-tier model for a verdict. The combined rule is
+  "aged AND threat-checked proceed". A missing verdict, a hold, a block, an
+  unreachable source, a model error, or a budget exhaustion holds. Only a
+  recorded human override clears the threat half, and it clears nothing else.
 * This script never pushes to ``main`` and never force-pushes. It merges only
   through the pull request API, so Forgejo branch protection (no direct push,
   required ``no-pii-gate`` context) stays in force for every merge it makes.
@@ -17,15 +23,18 @@ The split is deliberate:
   as held, never claimed as applied.
 
 Exit code is 0 for a completed run (including "nothing eligible"), non-zero for
-a hard failure (auth, API, check, merge, release). A non-zero exit is the
-automation's visible failure; stdout carries the report either way.
+a hard failure (auth, API, check, merge, release, or a missing threat config on
+a live run). A non-zero exit is the automation's visible failure; stdout
+carries the report either way.
 
 Usage (bb automation: script mode, ``--working-directory project``):
 
     COVE_RENOVATE_LIVE=1 python3 scripts/renovate/age_gated_merge.py
 
 Without ``COVE_RENOVATE_LIVE=1`` the run is a dry run: it reports the same
-decisions and changes nothing.
+decisions and changes nothing. It still evaluates threat evidence (read-only)
+so the dry run shows the same verdicts, but it posts no comment, label, or
+override record.
 """
 
 from __future__ import annotations
@@ -39,9 +48,14 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+_SCRIPT_DIR = Path(__file__).resolve().parent
+if str(_SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_DIR))
+import threat_eval  # noqa: E402  (operator script beside this one)
 
 MARKER_VERSION = "cove-age-gate:v1"
 MARKER_RE = re.compile(r"<!--\s*(cove-age-gate:\S+)\s*(.*?)-->", re.S)
@@ -198,6 +212,33 @@ def _classify_paths(files: list[str]) -> tuple[bool, str]:
     return True, "eligible"
 
 
+def precheck(*, body: str, label_names: list[str], files: list[str]) -> Decision | None:
+    """Everything that must hold before a threat check is worth paying for.
+
+    This is the pure, no-network half of :func:`decide`: major updates and path
+    policy. The age window is evaluated after the threat check, because "aged
+    AND threat-checked proceed" is the combined rule.
+    """
+    try:
+        upgrades = parse_markers(body)
+    except MarkerError as exc:
+        return Decision(False, f"unreadable age-gate marker: {exc}")
+
+    if upgrades:
+        update_type = strongest([u.update_type for u in upgrades]).update_type
+    else:
+        # Lock file maintenance has no per-dependency upgrades.
+        update_type = "patch"
+
+    if update_type == "major":
+        return Decision(False, "major update: never auto-merged (operator session)")
+
+    paths_ok, path_reason = _classify_paths(files)
+    if not paths_ok:
+        return Decision(False, path_reason)
+    return None
+
+
 def decide(
     *,
     body: str,
@@ -206,8 +247,14 @@ def decide(
     pr_created_at: datetime,
     now: datetime,
     branch: str = "",
+    threat_verdict: str | None = None,
+    threat_reason: str = "",
 ) -> Decision:
-    """The whole gate, in one place, with no network access."""
+    """The whole gate, in one place, with no network access.
+
+    ``threat_verdict`` is required. ``None`` means the threat check did not run,
+    which is a hold: the gate never treats a missing verdict as permission.
+    """
     try:
         upgrades = parse_markers(body)
     except MarkerError as exc:
@@ -232,6 +279,19 @@ def decide(
     paths_ok, path_reason = _classify_paths(files)
     if not paths_ok:
         return Decision(False, path_reason)
+
+    if threat_verdict is None:
+        return Decision(False, "threat evaluation missing; holding (fail closed)")
+    if threat_verdict not in threat_eval.VERDICTS:
+        return Decision(
+            False, f"unknown threat verdict {threat_verdict!r}; holding (fail closed)"
+        )
+    if threat_verdict != "proceed":
+        return Decision(
+            False,
+            f"threat evaluation {threat_verdict}: "
+            f"{threat_reason or 'see the threat comment on the pull request'}",
+        )
 
     window = required_age(update_type, vulnerability)
     assert window is not None  # major returned above
@@ -350,6 +410,116 @@ def _pr_files(api: Api, number: int) -> list[str]:
     files = api.get(f"/repos/{owner}/{name}/pulls/{number}/files?limit=100")
     assert isinstance(files, list)
     return [item.get("filename", "") for item in files]
+
+
+def _pr_comments(api: Api, number: int) -> list[dict]:
+    owner, name = _repo().split("/", 1)
+    comments = api.get(f"/repos/{owner}/{name}/issues/{number}/comments?limit=50")
+    return comments if isinstance(comments, list) else []
+
+
+def _cached_verdict(comments: list[dict], head_sha: str) -> threat_eval.Verdict | None:
+    for comment in reversed(comments):
+        try:
+            verdict = threat_eval.parse_verdict_marker(str(comment.get("body") or ""))
+        except threat_eval.MarkerError:
+            continue
+        if verdict is not None and verdict.head_sha == head_sha:
+            return verdict
+    return None
+
+
+def _verdict_fresh(
+    verdict: threat_eval.Verdict, limits: threat_eval.Limits, now: datetime
+) -> bool:
+    minutes = {
+        "proceed": limits.reuse_minutes_proceed,
+        "hold": limits.reuse_minutes_hold,
+        "block": limits.reuse_minutes_block,
+    }[verdict.verdict]
+    age = now - verdict.checked_at
+    return timedelta(0) <= age <= timedelta(minutes=minutes)
+
+
+def _hold_for(request: threat_eval.CheckRequest, reason: str) -> threat_eval.Verdict:
+    return threat_eval.Verdict(
+        verdict="hold",
+        confidence=0.0,
+        evidence=[],
+        model_used="none",
+        cost_usd=0.0,
+        tokens=0,
+        rationale=reason,
+        errors=[reason],
+        checked_at=datetime.now(timezone.utc),
+        head_sha=request.head_sha,
+        packages=[pkg.label() for pkg in request.packages],
+    )
+
+
+def _threat_for_pr(
+    api: Api,
+    pr: dict,
+    upgrades: list[Upgrade],
+    comments: list[dict],
+    *,
+    config: threat_eval.Config | None,
+    config_error: str,
+    budget: threat_eval.Budget | None,
+    feeds: threat_eval.Feeds | None,
+    model: threat_eval.ProxyModel | None,
+    live: bool,
+    report: Report,
+) -> threat_eval.Verdict:
+    """Return the verdict for one PR, reusing a fresh marker when present.
+
+    A missing configuration or a package list the marker cannot name is a
+    synthetic hold. It is never permission.
+    """
+    number = int(pr["number"])
+    head_sha = str(pr.get("head", {}).get("sha", ""))
+    packages = [
+        threat_eval.PackageRef(
+            datasource=upgrade.datasource,
+            package=upgrade.package,
+            version=upgrade.version,
+            ecosystem=threat_eval.ecosystem_for(upgrade.datasource),
+        )
+        for upgrade in upgrades
+    ]
+    request = threat_eval.CheckRequest(
+        packages=packages,
+        head_sha=head_sha,
+        pr_number=number,
+        pr_title=str(pr.get("title", "")),
+    )
+    if config is None:
+        return _hold_for(request, config_error or "threat evaluation is not configured")
+    if not packages:
+        return _hold_for(
+            request,
+            "the pull request carries no per-package marker (lock file maintenance), "
+            "so the threat check cannot name what changed; review or override",
+        )
+    cached = _cached_verdict(comments, head_sha)
+    if cached is not None and _verdict_fresh(cached, config.limits, datetime.now(timezone.utc)):
+        report.notes.append(
+            f"#{number} threat {cached.verdict} reused from an earlier check "
+            f"({_human(datetime.now(timezone.utc) - cached.checked_at)} old)."
+        )
+        return cached
+    assert budget is not None and feeds is not None and model is not None
+    verdict = threat_eval.Evaluator(
+        config=config, feeds=feeds, model=model, budget=budget
+    ).evaluate(request)
+    report.notes.append(
+        f"#{number} threat {verdict.verdict} "
+        f"(${verdict.cost_usd:.4f}, {verdict.tokens} tokens, {verdict.model_used})."
+    )
+    if live:
+        owner, name = _repo().split("/", 1)
+        threat_eval.publish_verdict(api, f"{owner}/{name}", number, verdict, live=True)
+    return verdict
 
 
 def status_verdict(statuses: list[dict]) -> tuple[bool, str]:
@@ -502,16 +672,18 @@ def _notify(report: str, failed: bool) -> None:
 
 def _render(report: Report, live: bool, failures: list[str]) -> str:
     lines = []
-    head = "Renovate age gate — " + datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    head = "Renovate threat and age gate: " + datetime.now(timezone.utc).strftime(
+        "%Y-%m-%d %H:%M UTC"
+    )
     lines.append(f"## {head}{'' if live else ' (dry run)'}")
     lines.append("")
     if report.rows:
-        lines.append("| PR | Title | Class | Age signal | Decision |")
-        lines.append("|---|---|---|---|---|")
+        lines.append("| PR | Title | Class | Age signal | Threat | Decision |")
+        lines.append("|---|---|---|---|---|---|")
         for row in report.rows:
             lines.append(
                 f"| #{row['number']} | {row['title'][:60]} | {row['class']} | "
-                f"{row['age']} | {row['decision']} |"
+                f"{row['age']} | {row.get('threat', 'not run')} | {row['decision']} |"
             )
         lines.append("")
     else:
@@ -552,6 +724,22 @@ def main() -> int:
             _git(repo, "merge", "--ff-only", "origin/main")
         main_sha = _main_sha(api)
         prs = [pr for pr in _prs(api) if _is_renovate_pr(pr)]
+
+        threat_config: threat_eval.Config | None = None
+        threat_error = ""
+        try:
+            threat_config = threat_eval.Config.load()
+        except threat_eval.ConfigError as exc:
+            threat_error = str(exc)
+            report.notes.append(f"Threat evaluation: {exc}")
+            if live:
+                raise GateError(
+                    f"{exc} The live gate refuses to merge without a threat check."
+                ) from exc
+        threat_budget = threat_eval.Budget(threat_config.limits) if threat_config else None
+        threat_feeds = threat_eval.Feeds(threat_config) if threat_config else None
+        threat_model = threat_eval.ProxyModel(threat_config) if threat_config else None
+
         eligible: list[dict] = []
         for pr in prs:
             number = int(pr["number"])
@@ -560,7 +748,13 @@ def main() -> int:
             files = _pr_files(api, number)
             created = _parse_ts(str(pr.get("created_at", ""))) or datetime.now(timezone.utc)
             branch = str(pr.get("head", {}).get("ref", ""))
-            marker_upgrades = parse_markers(str(pr.get("body") or "")) if MARKER_VERSION in str(pr.get("body") or "") else []
+            body_text = str(pr.get("body") or "")
+            try:
+                marker_upgrades = (
+                    parse_markers(body_text) if MARKER_VERSION in body_text else []
+                )
+            except MarkerError:
+                marker_upgrades = []
             if marker_upgrades:
                 classification = strongest([u.update_type for u in marker_upgrades])
                 update_class = classification.update_type
@@ -570,28 +764,79 @@ def main() -> int:
             else:
                 update_class = "maintenance"
                 signal, source = created, "pull request age"
-            decision = decide(
-                body=str(pr.get("body") or ""),
-                label_names=labels,
-                files=files,
-                pr_created_at=created,
-                now=datetime.now(timezone.utc),
-                branch=branch,
+
+            pre = precheck(body=body_text, label_names=labels, files=files)
+            draft = str(pr.get("title", "")).upper().startswith("WIP:") or bool(
+                pr.get("draft")
             )
+            threat_status = "not run"
+            if pre is not None:
+                decision = pre
+            elif draft:
+                decision = Decision(False, "draft PR")
+            else:
+                comments = _pr_comments(api, number)
+                verdict = _threat_for_pr(
+                    api,
+                    pr,
+                    marker_upgrades,
+                    comments,
+                    config=threat_config,
+                    config_error=threat_error,
+                    budget=threat_budget,
+                    feeds=threat_feeds,
+                    model=threat_model,
+                    live=live,
+                    report=report,
+                )
+                threat_status = verdict.verdict
+                if verdict.verdict != "proceed":
+                    override = threat_eval.parse_override(comments, labels)
+                    if override is not None:
+                        if live:
+                            threat_eval.record_override(
+                                api,
+                                f"{owner}/{name}",
+                                number,
+                                verdict,
+                                override,
+                                live=True,
+                            )
+                        report.notes.append(
+                            f"#{number} threat {verdict.verdict} overridden by "
+                            f"{override.login}: {override.reason}"
+                        )
+                        verdict = replace(
+                            verdict,
+                            verdict="proceed",
+                            rationale=(
+                                f"human override by {override.login}: {override.reason}"
+                            ),
+                            model_used="human override",
+                        )
+                        threat_status = "override"
+                decision = decide(
+                    body=body_text,
+                    label_names=labels,
+                    files=files,
+                    pr_created_at=created,
+                    now=datetime.now(timezone.utc),
+                    branch=branch,
+                    threat_verdict=verdict.verdict,
+                    threat_reason=verdict.rationale,
+                )
             report.rows.append(
                 {
                     "number": number,
                     "title": title,
                     "class": update_class,
                     "age": f"{_human(datetime.now(timezone.utc) - signal)} via {source}",
+                    "threat": threat_status,
                     "decision": decision.reason if decision.merge else f"hold: {decision.reason}",
                 }
             )
             if not decision.merge:
                 report.held.append((number, decision.reason))
-                continue
-            if str(pr.get("title", "")).upper().startswith("WIP:") or pr.get("draft"):
-                report.held.append((number, "draft PR"))
                 continue
 
             base_sha = str(pr.get("base", {}).get("sha", ""))
