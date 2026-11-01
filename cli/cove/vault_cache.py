@@ -17,7 +17,6 @@ from cove import local_cache
 VAULT_ADDR_DEFAULT = "https://vault.cove.local/"
 VAULT_KV_MOUNT = "secret"
 VAULT_OP_CACHE_PREFIX = "op-cache"
-KEYSTORE_TOKEN_SERVICE = "cove/vault/root-token"
 
 
 def parse_op_ref(ref: str) -> tuple[str, str, str]:
@@ -72,6 +71,9 @@ def _vault_token() -> str:
     tok = os.environ.get("VAULT_TOKEN")
     if tok:
         return tok
+    from cove.constants import vault_keystore_prefix
+
+    token_service = f"{vault_keystore_prefix()}/root-token"
     user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
     if platform.system() == "Darwin":
         cmd = [
@@ -80,7 +82,7 @@ def _vault_token() -> str:
             "-a",
             user,
             "-s",
-            KEYSTORE_TOKEN_SERVICE,
+            token_service,
             "-w",
         ]
     else:
@@ -88,7 +90,7 @@ def _vault_token() -> str:
             "secret-tool",
             "lookup",
             "service",
-            KEYSTORE_TOKEN_SERVICE,
+            token_service,
             "account",
             user,
         ]

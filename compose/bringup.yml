@@ -846,6 +846,8 @@
           FORGEJO_WEBHOOK_ALLOWED_HOST_LIST={{ forgejo_webhook_allowed_host_list | default('loopback') }}
           VAULT_IMAGE={{ vault_image }}
           VAULT_CONTAINER_NAME={{ vault_container_name }}
+          VAULT_UID={{ ansible_user_uid }}
+          VAULT_GID={{ ansible_user_gid }}
           NGINX_IMAGE={{ nginx_image }}
           NGINX_CONTAINER_NAME={{ nginx_container_name }}
           NGINX_CONF_DIR={{ nginx_conf_dir }}
@@ -1093,7 +1095,8 @@
         msg: |
           Containers are up.
             Forgejo: https://git.cove.local/ (TLS via cove certs)
-            Vault  : https://vault.cove.local/ (TLS via cove certs)
+            OpenBao: https://vault.cove.local/ (TLS via cove certs; the
+                     compose service and host stay named `vault`)
             SSH    : 0.0.0.0:{{ forgejo_ssh_port }}
 
           Bootstrap new devices: http://{{ ansible_default_ipv4.address }}:{{ nginx_http_port }}/config/

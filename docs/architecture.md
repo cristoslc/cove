@@ -95,7 +95,7 @@ The source of truth for secrets at rest. Caches credentials from 1Password so pi
 | Language | secret, mount, path, token, unseal, shamir, policy |
 | Storage | Raft (on-disk, `~/Documents/cove-data/vault/data/`) |
 | Entry point | `https://vault.cove/` (via nginx) |
-| Implementation | HashiCorp Vault 1.20 |
+| Implementation | OpenBao 2.7.2 (the compose service is still named `vault`) |
 
 ### Runtime Context
 
@@ -169,9 +169,9 @@ The single entry point for all HTTP/HTTPS traffic. Terminates TLS on port 443 (h
 
 Codeberg Forgejo v15 container. SQLite backend. TLS handled by nginx; Forgejo itself listens on port 3000. SSH port 2222 published to `0.0.0.0:2222` directly, bypassing the proxy.
 
-### Secrets Vault (HashiCorp Vault)
+### Secrets Vault (OpenBao)
 
-Vault 1.20 with Raft storage. Accessible only through nginx at `https://vault.cove/` — no host port mapping. Shamir unseal with 5 shares / 3 threshold. Unseal keys and root token stored in the host OS keychain. KV v2 engine at `secret/`.
+OpenBao 2.7.2 with Raft storage, served as the compose service `vault` and reachable only through nginx at `https://vault.cove/` (no host port mapping). Shamir unseal with 5 shares / 3 threshold. Unseal keys and root token are stored in the host OS keychain under `cove/vault/`. KV v2 engine at `secret/`. The image runs as the operator's uid/gid with the raft data at `/openbao/data`, and the service is the drop-in API replacement for the former Vault 1.20 pin. See [the OpenBao service doc](services/openbao.md).
 
 ### Static Pages Server
 

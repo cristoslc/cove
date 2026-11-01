@@ -34,6 +34,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "secrets server runs the digest-pinned OpenBao 2.7.x image with the repo's raft/listener config shape (no disable_mlock, /openbao data path, operator-uid compose user, bao healthcheck) and the CLI's Vault API calls (health, seal-status, KV v2 op-cache paths, userpass, UI) behave unchanged against it"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: manual
   - path: "cove down"
     blast_radius: high
     coverage:

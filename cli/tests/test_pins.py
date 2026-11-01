@@ -80,6 +80,7 @@ def test_inventory_parses_real_compose():
     assert pins[("vault", "image")].classified == "tag+digest"
     # group_vars is authoritative: digest comes from there, location reflects it
     assert pins[("vault", "image")].location == "group_vars/all.yml"
+    assert pins[("vault", "image")].ref.startswith("openbao/openbao:2.7.")
     assert pins[("forgejo", "image")].location == "group_vars/all.yml"
     assert pins[("litellm", "image")].classified == "built"
     assert pins[("ade", "image")].classified == "built"

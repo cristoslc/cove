@@ -118,27 +118,32 @@ services:
       - ${COVE_DATA_ROOT}/certs/cove.local-key.pem:/certs/cove.local-key.pem:ro
 
   vault:
-    image: ${VAULT_IMAGE:-hashicorp/vault:1.20}
+    image: ${VAULT_IMAGE:-openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f}
+    # Container name is kept as cove-vault so status, resource-drift, and
+    # teardown guards keep working; the service is still named `vault`.
     container_name: ${VAULT_CONTAINER_NAME:-cove-vault}
     restart: unless-stopped
-    # IPC_LOCK added even though disable_mlock=true to maintain the
-    # capability in case mlock is re-enabled on this single-node setup.
-    cap_add:
-      - IPC_LOCK
+    # The OpenBao image runs as the non-root `openbao` user (100:1000) and
+    # expects its own uid to own /openbao/{config,logs,file}. Run it as the
+    # operator instead, the same way Forgejo runs as FORGEJO_UID:GID, so the
+    # bind-mounted data dir stays operator-owned. SKIP_CHOWN turns off the
+    # entrypoint's chown pass, which cannot succeed as a non-root uid.
+    user: "${VAULT_UID:-1000}:${VAULT_GID:-1000}"
     environment:
-      VAULT_ADDR: "https://vault.cove.local/"
-      VAULT_API_ADDR: "http://127.0.0.1:8200"
+      BAO_ADDR: "https://vault.cove.local/"
+      BAO_API_ADDR: "http://127.0.0.1:8200"
+      SKIP_CHOWN: "1"
     command: ["server"]
     volumes:
-      - ${COVE_DATA_ROOT}/vault/data:/vault/data
-      - ${COVE_DATA_ROOT}/vault/logs:/vault/logs
-      - ./vault/vault.hcl:/vault/config/vault.hcl:ro
+      - ${COVE_DATA_ROOT}/vault/data:/openbao/data
+      - ${COVE_DATA_ROOT}/vault/logs:/openbao/logs
+      - ./vault/vault.hcl:/openbao/config/vault.hcl:ro
     deploy:
       resources:
         limits:
           memory: 512M
     healthcheck:
-      test: ["CMD", "vault", "status", "-address=http://127.0.0.1:8200"]
+      test: ["CMD", "bao", "status", "-address=http://127.0.0.1:8200"]
       interval: 10s
       start_period: 15s
       retries: 5

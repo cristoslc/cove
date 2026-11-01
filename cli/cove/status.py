@@ -176,6 +176,13 @@ def _check_vault() -> CheckResult:
             )
             if resp.status_code == 200:
                 return CheckResult(name="Vault API", ok=True, detail="initialized, unsealed")
+            if resp.status_code == 429:
+                # Unsealed but standing by. OpenBao single-node returns this
+                # for a few seconds after unseal while raft elects a leader;
+                # the old fall-through reported it as "Connection refused".
+                return CheckResult(
+                    name="Vault API", ok=False, detail="initialized, standby"
+                )
             if resp.status_code == 501:
                 return CheckResult(name="Vault API", ok=False, detail="not initialized")
             if resp.status_code == 503:
