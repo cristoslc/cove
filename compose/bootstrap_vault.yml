@@ -1,4 +1,4 @@
-- name: Bootstrap local Vault and store unseal keys in OS keystore
+- name: Bootstrap local OpenBao (the `vault` service) and store unseal keys in OS keystore
   hosts: localhost
   gather_facts: true
   vars:
@@ -228,7 +228,7 @@
     - name: Print summary
       ansible.builtin.debug:
         msg: |
-          Vault {{ post_unseal_health.json.version | default('?') }} ready at {{ vault_addr }}
+          OpenBao {{ post_unseal_health.json.version | default('?') }} ready at {{ vault_addr }}
           Initialized: {{ post_unseal_health.json.initialized }}
           Sealed: {{ post_unseal_health.json.sealed }}
 
@@ -246,5 +246,5 @@
           {% endif %}
             export VAULT_ADDR={{ vault_addr }}
 
-          Re-running this playbook is safe: it detects an initialized+sealed Vault
+          Re-running this playbook is safe: it detects an initialized+sealed OpenBao
           and unseals using keys from the OS keystore.
