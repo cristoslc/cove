@@ -21,8 +21,10 @@ fj whoami                    # Error: not logged in
 
 ```
 fj auth add-key cristos
-new key: 3632690a299c3579b1475f31c8953dddaf86eea1
+new key: <redacted-forgejo-token>
 ```
+
+*The value above was rotated on 2026-11-02 and is redacted here; the literal is no longer valid.*
 
 `add-key` also infers `git.cove` from git remotes → creates entry in keys.json with token. But `fj`'s **default host** (when no git remote inference applies, or for `whoami`) is `github.com` — this is documented in the [forgejo-cli wiki](https://codeberg.org/Cyborus/forgejo-cli/wiki/Authentication) and confirmed by a [blog post](https://blog.n-daisuke897.com/posts/2026-02-01-operating-self-hosted-forgejo-via-cli-a-forgejo-cli-guide-2/): "Note that you must specify the host with `-H git.example.com`; otherwise, it defaults to `github.com`."
 
@@ -39,7 +41,7 @@ The keys.json on disk tells the real story:
 {
   "hosts": {
     "codeberg.org": { "type": "OAuth", "name": "cristoslc", "token": "eyJ..." },
-    "cove.local:8443": { "type": "Application", "name": "cristos", "token": "3632690a299c3579b1475f31c8953dddaf86eea1" },
+    "cove.local:8443": { "type": "Application", "name": "cristos", "token": "<redacted-forgejo-token>" },
     "git.cove": { "type": "Application", "name": "cristos", "token": "" }
   },
   "aliases": {
@@ -49,8 +51,10 @@ The keys.json on disk tells the real story:
 }
 ```
 
+*The value above was rotated on 2026-11-02 and is redacted here; the literal is no longer valid.*
+
 Key observations:
-- `cove.local:8443` has the valid token `3632690a299c3579b1475f31c8953dddaf86eea1`
+- `cove.local:8443` has the valid token `<redacted-forgejo-token>`
 - `git.cove` has an **empty token** — the user pressed Enter at the "new key:" prompt on the second `add-key` call
 - `fj auth list` shows `cristos@git.cove` despite the empty token — it doesn't validate, just reads stored entries
 - `fj whoami` also doesn't validate the token — it reads the stored username from the matched entry
