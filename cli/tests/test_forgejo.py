@@ -467,3 +467,152 @@ class TestProvisionTokenHygiene:
             assert task.get("no_log") is True, (
                 f"{fragment!r} carries the admin password and must set no_log"
             )
+
+
+class TestCheckModePreview:
+    """`--check` must preview the play, not die on a healthy Vault.
+
+    `ansible.builtin.uri` and `ansible.builtin.command` declare
+    `supports_check_mode=False`, so Ansible skips them under `--check` and
+    their registers stay undefined. The seal guard then read
+    `vault_health.json.sealed | default(true)` as "sealed", so no preview of
+    this play was possible: the operator about to run it against the live
+    instance could not dry-run it at all.
+
+    Read-only probes now set `check_mode: false`; mutating steps keep the
+    default (skipped), and the play ends the preview before the token mint,
+    which is a write every later task depends on.
+    """
+
+    PROBES = (
+        "Check Vault seal status",
+        "Check if tailscale is up",
+        "Check 1P forgejo admin item cached",
+        "Read admin password from the Vault cache",
+        "Detect whether Forgejo is in install mode",
+        "List access tokens to find provisioning tokens",
+    )
+    MUTATING = (
+        "Generate provisioning API token",
+        "Revoke provisioning tokens from earlier converges",
+        "Complete Forgejo install",
+        "Cache admin password in Vault",
+        "Generate dedicated ed25519 SSH key",
+        "Register forgejo-runner",
+    )
+
+    def test_read_only_probes_run_under_check_mode(self):
+        tasks = _provision_tasks()
+        for fragment in self.PROBES:
+            task = _task_named(tasks, fragment)
+            assert task.get("check_mode") is False, (
+                f"{fragment!r} must set `check_mode: false`: it is a read-only "
+                "probe, and without it `--check` skips the task, leaves the "
+                "register undefined, and the following guard fails on a "
+                "healthy instance"
+            )
+
+    def test_mutating_tasks_never_force_check_mode_off(self):
+        tasks = _provision_tasks()
+        for fragment in self.MUTATING:
+            task = _task_named(tasks, fragment)
+            assert task.get("check_mode") is not False, (
+                f"{fragment!r} is a write and must keep the default behavior: "
+                "a preview must never mint, revoke, install, or register"
+            )
+
+    def test_preview_stops_before_the_mint(self):
+        tasks = _provision_tasks()
+        names = [str(t.get("name", "")) for t in tasks]
+        stop = _task_named(tasks, "Stop the preview before the token mint")
+        mint = _task_named(tasks, "Generate provisioning API token")
+        assert stop.get("ansible.builtin.meta") == "end_play", (
+            "the checkpoint must be meta: end_play"
+        )
+        assert stop.get("when") == "ansible_check_mode", (
+            "the checkpoint must fire only in check mode; a real run must "
+            f"continue to the mint, got when={stop.get('when')!r}"
+        )
+        assert names.index(stop["name"]) < names.index(mint["name"]), (
+            "the checkpoint must precede the mint, or the preview ends in an "
+            "undefined-variable failure at the next task that needs the token"
+        )
+
+
+@pytest.mark.skipif(
+    ANSIBLE_PLAYBOOK is None,
+    reason="ansible-playbook is missing from PATH (ansible-core is a dev dependency)",
+)
+def test_check_mode_passes_the_seal_guard_against_a_healthy_vault(tmp_path):
+    """Run the real probe + guard under `--check` against a stub health API.
+
+    Copies the two tasks verbatim from the playbook, points `vault_addr` at a
+    local server that answers `{"sealed": false}`, and asserts the check-mode
+    run finishes. With `check_mode: false` removed from the probe, the uri is
+    skipped, the guard falls back to `default(true)`, and the play fails.
+    """
+    import http.server
+    import json as _json
+    import threading
+
+    tasks = _provision_tasks()
+    probe = [
+        _task_named(tasks, "Check Vault seal status"),
+        _task_named(tasks, "Fail if Vault sealed"),
+    ]
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802 - http.server API
+            body = _json.dumps(
+                {"initialized": True, "sealed": False, "version": "1.20.4"}
+            ).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):  # silence the per-request log line
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = server.server_address[1]
+        playbook = tmp_path / "seal-guard.yml"
+        playbook.write_text(
+            yaml.safe_dump(
+                [
+                    {
+                        "hosts": "localhost",
+                        "gather_facts": False,
+                        "vars": {"vault_addr": f"http://127.0.0.1:{port}"},
+                        "tasks": probe,
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        proc = subprocess.run(
+            [ANSIBLE_PLAYBOOK, "-i", "localhost,", "-c", "local", "--check", str(playbook)],
+            capture_output=True,
+            text=True,
+            cwd=str(tmp_path),
+            env={**os.environ, "ANSIBLE_NOCOLOR": "1"},
+            timeout=180,
+            check=False,
+        )
+    finally:
+        server.shutdown()
+        thread.join(timeout=5)
+
+    assert proc.returncode == 0, (
+        "a --check run against an unsealed Vault must not fail:\n"
+        f"{proc.stdout}\n{proc.stderr}"
+    )
+    assert "TASK [Fail if Vault sealed]" in proc.stdout
+    after = proc.stdout.split("TASK [Fail if Vault sealed]", 1)[1]
+    assert "skipping: [localhost]" in after[:300], (
+        "the guard must skip on a healthy Vault, not fail; got:\n" + after[:400]
+    )
