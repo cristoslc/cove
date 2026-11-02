@@ -1,0 +1,29 @@
+# Secret scanning for the Cove repo.
+#
+# The gate runs the pinned gitleaks release (see
+# `.forgejo/workflows/secret-scan.yml`), extending its default rule set so a
+# pasted Forgejo, provider, or cloud credential blocks the pull request. Every
+# allowlist entry below is a specific, explained false positive; blanket path
+# exemptions are deliberately avoided because they are where real leaks hide.
+
+[extend]
+useDefault = true
+
+# Verbatim third-party issue threads archived under docs/troves carry upstream
+# example JWTs, AWS keys, and API keys. They are quoted source text, not Cove
+# credentials, and the archive is meaningless if it is scrubbed.
+[[allowlists]]
+description = "Upstream issue text archived verbatim under docs/troves"
+paths = ['''docs/troves/harness-catalog/sources/''']
+
+# A unit-test fixture: the vault cache tests assert the value round trips.
+[[allowlists]]
+description = "Fake API key in the vault cache test fixture"
+regexes = ['''sk-abcdef123''']
+
+# age public keys are published by design; the matching private key never lands
+# in the repo. Gitleaks' generic-api-key rule cannot tell a public key from a
+# secret, so pin the shape instead of allowlisting the document.
+[[allowlists]]
+description = "age public keys are not secrets"
+regexes = ['''age1[a-z0-9]{20,}''']
