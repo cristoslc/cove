@@ -165,6 +165,16 @@ The old data directory and the archived keystore entries were never written to b
 
 Because the rollback only reverts a pin and restores a directory, it is materially safer than an in-place storage upgrade, whose rollback would be a snapshot restore.
 
+### Executed run (2026-11-02)
+
+The live host migrated overnight from Vault 1.20 to OpenBao 2.7.2 on release 0.15.14, using this runbook. For the next operator:
+
+- Pre-flight found 66 cache entries carrying an `op_ref` and 8 hand-written ones with none (3 under `homelab/`, 5 under `private/`). The 8 were exported and restored by path after the fresh init. `vault-put` cannot replay them, so any future migration must export them again.
+- After the fresh init, 61 of the 66 refs replayed. The five that did not were already dead: an item removed from the `Homelab` vault, two WireGuard refs whose item names contain `(` (the `op` CLI rejects those as invalid references), a renamed Speedtest item, and an `op://test` placeholder.
+- `provision_vault_user.yml` needs a live 1Password session on its first two tasks even when the item exists: the seed step is an unconditional `1p-bulk-write`, and the cache step re-reads 1Password by contract. It was therefore started at the auth-method task with the cached values as extra vars.
+- Verification: `cove vault status` reports initialized and unsealed, a userpass login returns a token carrying the `admins` policy, the UI answers 200, and `cove creds vault-get` resolves a reference with the local cache removed, so Vault is the source. A follow-up `cove up` recreated no container.
+- Rollback material kept: `~/Documents/cove-data/vault/data.vault-1.20-20261101` and the `cove/vault-legacy/*` keystore entries.
+
 ## Tests
 
 `cli/tests/test_openbao.py` pins the image identity, the compose service shape (user override, no `IPC_LOCK`, `/openbao` mounts, `bao` healthcheck), the config shape (no `disable_mlock`, raft path, listener, UI), the keystore prefix override, and the standby health mapping. The Vault API call sites are covered by `test_vault.py`, `test_vault_unseal.py`, and `test_vault_cache.py`, which are API-shape tests and unchanged by the swap.
