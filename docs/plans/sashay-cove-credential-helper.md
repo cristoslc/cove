@@ -42,9 +42,11 @@ username=cristos
 **Output (stdout):** `git credential` protocol — `key=value\n` lines, blank-line terminated.
 ```
 username=cristos
-password=3632690a299c3579b1475f31c8953dddaf86eea1
+password=<redacted-forgejo-token>
 
 ```
+
+*The value above was rotated on 2026-11-02 and is redacted here; the literal is no longer valid.*
 
 **Client ID resolution** (for OAuth refresh):
 1. Check `~/.config/forgejo-cli/client_ids` (same as `fj`)
