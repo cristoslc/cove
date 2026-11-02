@@ -6,6 +6,15 @@
     ssh_key_path: "{{ ansible_env.HOME }}/.ssh/forgejo_{{ computer_name | lower }}_ed25519"
 
   tasks:
+    # Check-mode contract. A `--check` preview of this play must reflect
+    # reality, so the read-only probes below run under check mode explicitly
+    # (`check_mode: false`). `ansible.builtin.uri` and `ansible.builtin.command`
+    # declare `supports_check_mode=False`, so Ansible skips them in check mode
+    # and their registers stay undefined; the next `when:` then either dies on
+    # an undefined variable or, worse, collapses absence into a failure verdict
+    # (the seal guard's `default(true)` read a healthy Vault as sealed, so no
+    # preview of this play was possible at all). Every MUTATING step keeps the
+    # default behavior and is skipped in check mode.
     - name: Check Vault seal status
       ansible.builtin.uri:
         url: "{{ vault_addr }}/v1/sys/health"
@@ -14,6 +23,7 @@
         status_code: [200, 429, 501, 503]
         validate_certs: false
       register: vault_health
+      check_mode: false
 
     - name: Fail if Vault sealed
       ansible.builtin.fail:
@@ -28,6 +38,7 @@
       changed_when: false
       failed_when: false
       no_log: true
+      check_mode: false  # read-only probe; see the check-mode contract above
 
     - name: Get tailscale DNS name
       when: ts_status_prov.rc == 0
@@ -53,6 +64,7 @@
       changed_when: false
       failed_when: false
       no_log: true
+      check_mode: false  # cache read; no 1Password prompt, no write
 
     - name: Seed 1P with Forgejo creds (renders + executes bulk-write)
       tags: [creds]
@@ -98,6 +110,7 @@
       register: admin_pw_resolve
       changed_when: false
       no_log: true
+      check_mode: false  # cache read; feeds admin_password, no write
 
     - name: Set admin password fact
       tags: [creds]
@@ -137,6 +150,7 @@
       register: app_ini_check
       changed_when: false
       failed_when: false
+      check_mode: false  # docker exec test -f; read-only, feeds the install guard
 
     - name: Complete Forgejo install
       ansible.builtin.uri:
@@ -195,6 +209,12 @@
     # run is about to use. The pattern is anchored to digits on purpose, so
     # `cove-provision-pages` (pages provisioning) and the legacy bare
     # `cove-provision` are never touched.
+    #
+    # It also spares `cove-provision-manual-<epoch>` BY DESIGN: the `-manual-`
+    # infix keeps the name from matching `-<digits>$`, so a hand-minted token
+    # survives every sweep. That is why a live sweep on 2026-11-02 removed 101
+    # of the 102 epoch-shaped tokens and left that one standing; it is not an
+    # off-by-one.
     - name: List access tokens to find provisioning tokens from earlier converges
       ansible.builtin.uri:
         url: "{{ forgejo_api_url }}api/v1/users/{{ admin_username }}/tokens"
@@ -207,6 +227,7 @@
         status_code: [200]
       register: forgejo_access_tokens
       no_log: true
+      check_mode: false  # GET; a preview must be able to name what it would revoke
 
     - name: Select provisioning tokens minted by earlier converges
       ansible.builtin.set_fact:
@@ -236,6 +257,15 @@
       loop_control:
         label: "{{ item }}"
       no_log: true
+
+    # A preview stops here. Minting a token is a write, so it is correctly
+    # skipped under --check, and every task after it needs the token; without
+    # this checkpoint a check run ended in a raw undefined-variable failure at
+    # the next task instead of a clean recap. The sweep report above has
+    # already named exactly what a real run would revoke.
+    - name: Stop the preview before the token mint
+      ansible.builtin.meta: end_play
+      when: ansible_check_mode
 
     - name: Generate provisioning API token (unique name avoids collisions)
       ansible.builtin.command:
