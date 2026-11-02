@@ -28,6 +28,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - **The dead Headroom compression claim**: LiteLLM 1.84.0 has no Headroom integration (it ships as a `guardrails:` entry in 1.92 and later), so the former `headroom_settings:` block was silently ignored. The sidecar's counters showed one request in its lifetime and zero compression jobs, and its published `4001` mapped a port nothing listened on. The inert setting, the sidecar service, its bringup environment, the `cove status` tuple, and the CLI's compression promise are removed. A negative guard fails if the setting returns without the supported form and a pin that implements it. Compression is not lost: it was never running, and the approved Bifrost cutover does not carry it. Evidence and the two independent request-size gaps are in `docs/tech-debt/litellm-headroom-and-request-size.md`.
 
+## 0.15.14 (2026-11-01)
+
+### Changed
+- **The secrets server is OpenBao 2.7.2** ([#147](../../pulls/147)) - the `vault` compose service now runs the digest-pinned OpenBao image as the operator uid/gid with `SKIP_CHOWN`, on `/openbao` paths, with the obsolete `disable_mlock`/`IPC_LOCK` gone and a `bao status` health check. Service name, container name, hostnames, certificates and ingress are unchanged; the fresh-init migration runbook and its rollback live in `docs/services/openbao.md`. No live migration is executed by the release itself.
+
+### Added
+- **Threat evaluation for Renovate updates** ([#150](../../pulls/150)) - structured feeds first (OSV including `MAL-*`, GitHub advisories with an unresolved-range hold, NVD, registry yank/deprecation, issue-regression search, 90-day supply-chain search), a cheap `text:light` model only for query generation and summarisation, a `vision:standard` judge for the verdict, hard token caps, and fail-closed behaviour on every source. Runs before the age gate: a blocked verdict stops the merge, a hold parks it.
+
+### Fixed
+- **Provisioning no longer leaves one admin token behind per converge** ([#152](../../pulls/152)) - the play minted `cove-provision-<epoch>` on every converge and revoked nothing, so the admin account had accumulated 102 epoch-named `write:admin` tokens by 2026-11-01. It now lists the account's tokens with the cached admin password and deletes the epoch-named ones **before** minting, so a sweep can never revoke the token the same run is about to use; the pattern is anchored to digits, sparing `cove-provision-pages`, the legacy bare name, and hand-minted `cove-provision-manual-<epoch>` tokens. A live sweep removed 101, and a second run held the count at one.
+- **`--check` can preview the Forgejo provisioning play again** ([#153](../../pulls/153)) - `uri` and `command` declare `supports_check_mode=False`, so a preview skipped the Vault health probe, left `vault_health.json` undefined, and the seal guard's `default(true)` read a healthy Vault as sealed. The read-only probes now run under check mode, mutating tasks stay skipped, and a guarded `meta: end_play` stops the preview before the token mint. `--check --diff` against the live instance exits 0 and names the tokens a real run would revoke.
+- **Short credential names resolve to their `op://` reference** ([#151](../../pulls/151)) - `cove creds vault-get`/`vault-put` accept `forgejo-token` and map it to the Renovate bot item, so the documented `vault-put forgejo-token` path works instead of rejecting a bare name. The name is excluded from `batch-pull`, so a machine that never runs the merge automation cannot fail its converge on a missing item.
+
+### Docs
+- The secrets-manager role brief is refreshed against OpenBao 2.7.2 ([#149](../../pulls/149)): namespaces exist in the new pin, mounts are demoted to the last resort, and the Vault-versus-OpenBao section is recast as the dated record of why OpenBao won.
+
 ## 0.15.13 (2026-10-31)
 
 ### Added
