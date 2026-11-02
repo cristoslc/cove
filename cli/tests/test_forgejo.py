@@ -28,6 +28,7 @@ Run unit:  pytest cli/tests/test_forgejo.py -m "not e2e and not staging"
 from pathlib import Path
 
 import os
+import re
 import shutil
 import subprocess
 
@@ -356,3 +357,113 @@ class TestProvisionCredentialCacheFirst:
             "the read-back must run on BOTH branches (hit and miss) so the "
             "admin password fact is always the cached value"
         )
+
+class TestProvisionTokenHygiene:
+    """A converge must not leave one more admin token behind every run.
+
+    Forgejo token names are unique per user, so the play mints
+    `cove-provision-<epoch>`; nothing revoked the predecessor, and 102
+    epoch-named admin tokens had accumulated by 2026-11-01. The fix sweeps
+    tokens from earlier converges *before* minting, which is the only ordering
+    that can never revoke the token the same run is about to use.
+
+    These are logic-level checks on the play: no Forgejo instance is touched.
+    """
+
+    @staticmethod
+    def _sweep_pattern(tasks: list[dict]) -> str:
+        task = _task_named(tasks, "Select provisioning tokens minted by earlier")
+        expr = str(task["ansible.builtin.set_fact"]["stale_provision_tokens"])
+        match = re.search(r"select\('match',\s*'([^']+)'\)", expr)
+        assert match, f"sweep must filter token names with a select('match') pattern: {expr!r}"
+        return match.group(1)
+
+    @staticmethod
+    def _mint_name_template(tasks: list[dict]) -> str:
+        task = _task_named(tasks, "Generate provisioning API token")
+        argv = _argv(task)
+        assert "--token-name" in argv, f"mint task lost --token-name: {argv!r}"
+        return argv[argv.index("--token-name") + 1]
+
+    def _minted_name(self, tasks: list[dict], epoch: int) -> str:
+        template = self._mint_name_template(tasks)
+        return re.sub(r"\{\{\s*ansible_date_time\.epoch\s*\}\}", str(epoch), template)
+
+    def test_sweep_runs_between_the_list_and_the_mint(self):
+        tasks = _provision_tasks()
+        names = [str(t.get("name", "")) for t in tasks]
+
+        def index(fragment: str) -> int:
+            hits = [i for i, n in enumerate(names) if fragment in n]
+            assert len(hits) == 1, f"expected one task matching {fragment!r}, got {hits}"
+            return hits[0]
+
+        listing = index("List access tokens to find provisioning tokens")
+        sweep = index("Revoke provisioning tokens from earlier converges")
+        mint = index("Generate provisioning API token")
+        assert listing < sweep < mint, (
+            "the order must be list -> revoke -> mint. Revoking after minting "
+            "would delete the token the same run is using: "
+            f"list={listing} sweep={sweep} mint={mint}"
+        )
+
+    def test_sweep_pattern_matches_minted_names_and_spares_persistent_ones(self):
+        tasks = _provision_tasks()
+        pattern = self._sweep_pattern(tasks)
+        minted = self._minted_name(tasks, 1793556804)
+        assert re.match(pattern + r"$", minted), (
+            f"the sweep pattern {pattern!r} must match the names the mint produces "
+            f"(e.g. {minted!r}) or the tokens never get cleaned up"
+        )
+        for keep in ("cove-provision-pages", "cove-provision", "cove-push", "cove-push-2"):
+            assert not re.match(pattern + r"$", keep), (
+                f"the sweep pattern {pattern!r} must not match {keep!r}: pages "
+                "provisioning and the push credential are persistent by design"
+            )
+
+    def test_two_converges_leave_exactly_one_provisioning_token(self):
+        tasks = _provision_tasks()
+        pattern = self._sweep_pattern(tasks)
+        tokens = ["cove-provision-pages", "cove-provision", "cove-provision-1793556804"]
+
+        for epoch in (1793556805, 1793556806):
+            stale = [n for n in tokens if re.match(pattern + r"$", n)]
+            tokens = [n for n in tokens if n not in stale]
+            tokens.append(self._minted_name(tasks, epoch))
+
+        epoch_named = [n for n in tokens if re.match(pattern + r"$", n)]
+        assert len(epoch_named) == 1, (
+            "two converges must leave exactly one epoch-named provisioning token, "
+            f"not grow per run; got {epoch_named}"
+        )
+        assert "cove-provision-pages" in tokens, "pages provisioning token must survive the sweep"
+        assert "cove-provision" in tokens, "the legacy bare token must survive the sweep"
+
+    def test_sweep_tolerates_a_token_already_gone(self):
+        tasks = _provision_tasks()
+        task = _task_named(tasks, "Revoke provisioning tokens from earlier converges")
+        status = task["ansible.builtin.uri"].get("status_code")
+        assert status == [204, 404], (
+            "a second converge, or two runs racing, must not fail on an already "
+            f"deleted token; got status_code={status!r}"
+        )
+
+    def test_sweep_authenticates_with_the_cached_admin_password(self):
+        tasks = _provision_tasks()
+        for fragment in (
+            "List access tokens to find provisioning tokens",
+            "Revoke provisioning tokens from earlier converges",
+        ):
+            task = _task_named(tasks, fragment)
+            uri = task["ansible.builtin.uri"]
+            assert uri.get("url_password") == "{{ admin_password }}", (
+                f"{fragment!r} must use the cached admin password; a token cannot "
+                "list other tokens"
+            )
+            assert uri.get("force_basic_auth") is True, (
+                f"{fragment!r} must force basic auth, or ansible sends no header "
+                "until challenged and the call 401s against the API"
+            )
+            assert task.get("no_log") is True, (
+                f"{fragment!r} carries the admin password and must set no_log"
+            )
