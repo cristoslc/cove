@@ -289,6 +289,92 @@ smoke test — nothing reaches upstream). The non-streaming tiers simply omit
 the backstop from their chains. This closes the LiteLLM gap where a
 streaming-only backstop had to be trusted to configuration discipline.
 
+## Stalled-stream escalation (TTFT cutoff)
+
+A throttled Synthetic request does not fail: it accepts the stream and then
+produces no first token, so nothing in the retry or fallback path fires until the
+provider's 120-second request timeout expires. The tier rule carries a
+**time-to-first-token cutoff** on its target (`ttft_timeout_ms`), which closes an
+attempt that has produced no first token in time and moves to the next fallback.
+The client never sees the slow attempt, because Bifrost streams nothing until an
+attempt yields a first token.
+
+### What the pinned version supports (v2.3.2)
+
+- **Granularity is the routing target.** The store column is
+  `routing_targets.ttft_timeout_ms`, and the file loader reads it from each
+  `targets[]` entry. A rule-level `ttft_timeout_ms` is **silently ignored** by
+  v2.3.2 (verified against the pinned image 2026-11-03: rule-level waited out an
+  8-second stall; target-level escalated at 1.5 seconds). Current upstream docs
+  and the dashboard present the field per rule; each rule here has exactly one
+  target, so the two placements describe the same hop.
+- **Streaming only.** Non-streaming requests ignore it and keep the provider
+  request timeout.
+- **The last attempt is never cut off.** The cutoff applies to each attempt that
+  still has a fallback behind it.
+- **No same-provider retry.** A TTFT miss goes straight to the next fallback and
+  does not spend `max_retries`. A provider *request* timeout is also not retried
+  (verified on the pinned image: `max_retries: 1` produced one attempt, then the
+  fallback), so a stalled hop costs its timeout once, not twice.
+
+### Measured distribution and the chosen threshold
+
+Source: the live traffic path's spend logs (LiteLLM `LiteLLM_SpendLogs`), because
+Bifrost's own `logs_store` is disabled by the adoption gate. Window: the seven
+days to 2026-11-03. `completionStartTime - startTime` is time to first token;
+`request_duration_ms` is the whole request.
+
+| Tier | n | p50 | p95 | p99 | p99.9 | max TTFT | max total |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `vision:standard` | 11,645 | 2.7s | 8.2s | 15.0s | 21.5s | 33.6s | 471.5s |
+| `text:standard` (alias) | 5,192 | 2.7s | 6.2s | 9.7s | 25.4s | 37.8s | 214.7s |
+| `text:light` | 7 | 7.5s | 17.4s | 19.1s | — | 19.5s | 19.5s |
+| pooled light/standard | 16,859 | 2.7s | ~8s | 13.4s | 23.2s | 37.8s | — |
+| heavy tiers (pooled) | 5,471 | — | — | ~25s | 103.4s | 127.9s | 553.4s |
+
+**Threshold: 25,000 ms on `text:light`, `vision:standard`, and the deprecated
+`text:standard` alias.** It sits just above the pooled p99.9 (23.2s), so it
+escalates only the extreme tail: **7 of 16,859 requests (0.04%) exceeded 25s** in
+the window. Twenty-nine exceeded 22s and three exceeded 30s.
+
+The heavy tiers keep their 120s ceiling: **62 of 5,471 heavy requests (1.1%)
+exceeded 25s**, and `vision:heavy` has a p99 of 25.0s. A cutoff there would
+escalate healthy long generations, which is the failure mode a global timeout
+reduction would produce. The non-streaming and single-hop tiers are untouched:
+non-streaming ignores the field, and a rule without fallbacks is never cut.
+
+Worst case per hop is now bounded at 25s for the two metered hops, with the
+last (streaming-only) backstop still running under its 120s provider timeout.
+
+### Where the change lands, and what reaches an existing host
+
+The authoritative artefact is `compose/bifrost/config.json` (git-tracked, and the
+source of the wheel's bundled copy). The deployed
+`~/Documents/cove-data/bifrost/config.json` is seeded from it **first boot only**
+(`force: false`), so a converge neither reverts the value nor delivers it: a fresh
+install gets it, and an existing host keeps its current file until the operator
+copies the new config and restarts the gateway (a gateway restart is a live
+session interruption, so it is scheduled, never implicit).
+
+### Reproduction
+
+`TestBifrostLiveSmoke::test_ttft_cutoff_escalates_a_stalled_stream` runs the
+pinned image against a mock that accepts the stream and stalls 6 seconds on the
+primary. A test-only probe rule carries a 1.5-second target-level cutoff and the
+same ordered fallback; the test asserts the fallback serves at roughly 1.5
+seconds, that `x-bifrost-routing-info-is-fallback` and `x-bifrost-fallback-index:
+1` are set, and that the primary was attempted exactly once. Opt in with:
+
+```bash
+COVE_ALLOW_LIVE_TESTS=1 uv run --directory cli pytest -m live \
+  cli/tests/test_bifrost.py::TestBifrostLiveSmoke::test_ttft_cutoff_escalates_a_stalled_stream
+```
+
+The 25,000 ms shipped value itself is pinned by
+`TestBifrostConfigValidation::test_latency_sensitive_tiers_carry_a_ttft_cutoff`,
+which also holds the heavy, non-streaming, and single-hop tiers clear of the
+field.
+
 ## What's Hardened
 
 - **Digest-pinned image**: `maximhq/bifrost:v2.3.2` pinned to its multi-arch
