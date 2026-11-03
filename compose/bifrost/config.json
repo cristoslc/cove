@@ -223,7 +223,8 @@
           {
             "provider": "syn-subscription",
             "model": "hf:zai-org/GLM-4.7-Flash",
-            "weight": 1.0
+            "weight": 1.0,
+            "ttft_timeout_ms": 25000
           }
         ],
         "fallbacks": [
@@ -242,7 +243,8 @@
           {
             "provider": "syn-subscription",
             "model": "hf:deepseek-ai/DeepSeek-V4.1-Flash",
-            "weight": 1.0
+            "weight": 1.0,
+            "ttft_timeout_ms": 25000
           }
         ],
         "fallbacks": [
@@ -378,7 +380,8 @@
           {
             "provider": "syn-subscription",
             "model": "hf:deepseek-ai/DeepSeek-V4.1-Flash",
-            "weight": 1.0
+            "weight": 1.0,
+            "ttft_timeout_ms": 25000
           }
         ],
         "fallbacks": [

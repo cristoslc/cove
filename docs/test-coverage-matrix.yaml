@@ -188,6 +188,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "Bifrost stalled-stream escalation: a target-level ttft_timeout_ms on the latency-sensitive streaming tiers (text:light, vision:standard, deprecated text:standard) at 25,000 ms chosen from the measured TTFT tail, heavy/non-streaming/single-hop tiers clear of the field, and a live stalled stream escalating to the fallback at the cutoff instead of the provider timeout"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
   - path: "Bifrost config bundled-copy drift: the wheel's bifrost/config.json must match compose/bifrost/config.json byte-for-byte"
     blast_radius: medium
     coverage:
