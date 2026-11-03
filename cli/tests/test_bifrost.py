@@ -21,6 +21,7 @@ import json
 import os
 import sqlite3
 import stat
+import time
 from pathlib import Path
 
 import pytest
@@ -399,6 +400,53 @@ class TestBifrostConfigValidation:
             assert "deprecated" in rules[legacy].get("description", "").lower(), (
                 f"{legacy} must be marked deprecated in its description"
             )
+
+    def test_latency_sensitive_tiers_carry_a_ttft_cutoff(self):
+        """A throttled upstream accepts a streaming request and then produces
+        no first token; nothing fails, so the request would sit behind the
+        120s provider timeout. `ttft_timeout_ms` on the routing TARGET turns
+        that stall into an escalation at the measured tail.
+
+        25000ms is chosen from the observed distribution (7 days, LiteLLM
+        spend logs, syn-subscription): pooled light/standard p99 13.4s,
+        p99.9 23.2s, max 37.8s; 7 of 16,859 requests exceeded 25s. The heavy
+        tiers keep their 120s ceiling on purpose — 62 of 5,471 heavy requests
+        (1.1%) run past 25s, so a cutoff there would escalate healthy traffic.
+
+        The value rides on the target, not the rule: the pinned v2.3.2 file
+        loader reads `ttft_timeout_ms` from each target (the store column is
+        `routing_targets.ttft_timeout_ms`); a rule-level value is silently
+        ignored (verified against the pinned image 2026-11-03)."""
+        rules = _rules(self.config)
+        gated = ("text:light", "vision:standard", "text:standard")
+        for tier in gated:
+            rule = rules[tier]
+            assert "ttft_timeout_ms" not in rule, (
+                f"{tier}: a rule-level cutoff is ignored by v2.3.2; put it on "
+                "the target"
+            )
+            for target in rule["targets"]:
+                assert target.get("ttft_timeout_ms") == 25000, (
+                    f"{tier}: the streaming hop must cut a stalled first token "
+                    f"at 25000ms, got {target.get('ttft_timeout_ms')!r}"
+                )
+        # Everything else stays at its current ceiling.
+        for tier in ("text:ultra-heavy", "vision:heavy",
+                     "vision:super-ultra-heavy", "syn:large:text",
+                     "infinite:small:vision", "vision:system1-classifier",
+                     "nonstreaming:text:light",
+                     "nonstreaming:vision:standard",
+                     "nonstreaming:text:standard"):
+            for target in rules[tier]["targets"]:
+                assert "ttft_timeout_ms" not in target, (
+                    f"{tier}: the cutoff is scoped to the latency-sensitive "
+                    "streaming tiers; a cutoff here changes a tier whose "
+                    "measured tail does not justify one"
+                )
+        # Bifrost's accepted range.
+        for tier in gated:
+            value = rules[tier]["targets"][0]["ttft_timeout_ms"]
+            assert 1 <= value <= 300000
 
     def test_default_target_matches_ladder_head(self):
         rules = _rules(self.config)
@@ -1251,6 +1299,8 @@ def gateway(request):
         PRIMARY_KEY_VALUE = TestBifrostLiveSmoke.PRIMARY_KEY
         SECONDARY_KEY_VALUE = TestBifrostLiveSmoke.SECONDARY_KEY
         FAIL_WIRE_MODEL = TestBifrostLiveSmoke.FAIL_WIRE_MODEL
+        STALL_WIRE_MODEL = TestBifrostLiveSmoke.STALL_WIRE_MODEL
+        STALL_SECONDS = TestBifrostLiveSmoke.STALL_SECONDS
 
         def log_message(self, *args):  # quiet
             pass
@@ -1305,6 +1355,20 @@ def gateway(request):
             if key not in (self.PRIMARY_KEY_VALUE, self.SECONDARY_KEY_VALUE):
                 self._send_status(401, {"error": {"message": "bad key"}})
                 return
+            # Delay injection for the TTFT cutoff: the primary accepts the
+            # streaming request, then produces no first token for
+            # STALL_SECONDS. Verifies that the cutoff escalates long before
+            # the stall (and the 120s provider timeout) would end.
+            if (key == self.PRIMARY_KEY_VALUE
+                    and wire_model == self.STALL_WIRE_MODEL and stream):
+                time.sleep(self.STALL_SECONDS)
+            try:
+                self._serve(stream, wire_model)
+            except (BrokenPipeError, ConnectionResetError):
+                # The gateway cut the stalled attempt at the TTFT deadline.
+                pass
+
+        def _serve(self, stream, wire_model):
             if stream:
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
@@ -1361,6 +1425,27 @@ def gateway(request):
             if key.get("ollama_key_config"):
                 key["ollama_key_config"]["url"] = \
                     f"http://host.docker.internal:{mock_port}"
+    # TEST-ONLY probe tier for the TTFT cutoff. The shipped config's cutoff
+    # (25s) is pinned by the config test; exercising it live would add 25s to
+    # every smoke run. This rule keeps the same shape (target-level
+    # ttft_timeout_ms, ordered fallback) with a 1.5s deadline so the cutover
+    # is observable inside the mock's 6s stall.
+    config["providers"]["syn-subscription"]["keys"][0]["models"].append(
+        TestBifrostLiveSmoke.STALL_WIRE_MODEL)
+    config["governance"]["routing_rules"].append({
+        "id": "rr-test-ttft-probe",
+        "name": "TTFT probe (test only)",
+        "cel_expression": "model == 'test:ttft-probe'",
+        "targets": [{
+            "provider": "syn-subscription",
+            "model": TestBifrostLiveSmoke.STALL_WIRE_MODEL,
+            "weight": 1.0,
+            "ttft_timeout_ms": 1500,
+        }],
+        "fallbacks": ["ollama-cloud/deepseek-v4.1-flash"],
+        "priority": 99,
+        "enabled": True,
+    })
     config_path = Path(tmp) / "config.json"
     config_path.write_text(json.dumps(config, indent=2))
 
@@ -1478,6 +1563,8 @@ class TestBifrostLiveSmoke:
     PRIMARY_KEY = "sk-primary-smoke"
     SECONDARY_KEY = "sk-secondary-smoke"
     FAIL_WIRE_MODEL = "hf:deepseek-ai/DeepSeek-V4.1-Flash"
+    STALL_WIRE_MODEL = "test:stall"
+    STALL_SECONDS = 6.0
 
     def _capture_count(self):
         with self._captured_lock:
@@ -1621,6 +1708,45 @@ class TestBifrostLiveSmoke:
         fallback_flags = {k: v for k, v in resp.headers.items()
                           if "bifrost" in k.lower() or "fallback" in k.lower()}
         print("bifrost stream routing headers:", fallback_flags or "(none)")
+
+    def test_ttft_cutoff_escalates_a_stalled_stream(self):
+        """A provider that accepts a stream and then goes silent never errors,
+        so nothing would fire until the 120s provider timeout. The target's
+        ttft_timeout_ms cuts the attempt and the next fallback serves; the
+        primary is attempted ONCE (a TTFT miss does not spend max_retries on
+        the same slow provider)."""
+        import requests
+        before = self._capture_count()
+        started = time.monotonic()
+        resp = requests.post(
+            f"{self._base}/v1/chat/completions",
+            headers={"Authorization": f"Bearer {self._token}"},
+            json={"model": "test:ttft-probe",
+                  "messages": [{"role": "user", "content": "hi"}],
+                  "stream": True},
+            timeout=60,
+        )
+        elapsed = time.monotonic() - started
+        assert resp.status_code == 200, resp.text[:300]
+        assert "data: " in resp.text and "[DONE]" in resp.text
+        # The mock stalls the primary for 6s; the 1.5s cutoff must escalate
+        # well before the stall ends (and long before the 120s ceiling).
+        assert 1.0 <= elapsed < self.STALL_SECONDS, (
+            f"the TTFT cutoff did not fire at its 1.5s deadline: "
+            f"{elapsed:.2f}s (stall is {self.STALL_SECONDS}s)"
+        )
+        assert resp.headers.get("x-bifrost-routing-info-is-fallback") == "true"
+        assert resp.headers.get("x-bifrost-fallback-index") == "1"
+        with self._captured_lock:
+            new = list(self._captured)[before:]
+        primary_attempts = [c for c in new if c[0].endswith(self.PRIMARY_KEY)
+                            and c[1] == self.STALL_WIRE_MODEL]
+        assert len(primary_attempts) == 1, (
+            f"a TTFT miss must not be retried on the same provider: {new}"
+        )
+        assert any(c[0].endswith(self.SECONDARY_KEY) for c in new), (
+            f"the fallback hop was never attempted: {new}"
+        )
 
     def test_streaming_non_fallback_route_serves_first_hop(self):
         import requests
