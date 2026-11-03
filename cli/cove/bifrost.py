@@ -731,3 +731,97 @@ def logs(lines, follow):
     subprocess.run(
         cmd, check=True, env=scrubbed_environment(resolve_compose_dir(), warn=False)
     )
+
+def _admin_request(path: str, method: str = "GET", body: dict | None = None) -> bytes:
+    """Call the gateway admin API over loopback with the dashboard Basic
+    credentials. Values are never printed. Raises ClickException on failure."""
+    env_path = _runtime_env_path()
+    username = _read_file_var(env_path, "BIFROST_ADMIN_USERNAME")
+    password = _read_file_var(env_path, "BIFROST_ADMIN_PASSWORD")
+    if not username or not password:
+        raise click.ClickException(
+            "BIFROST_ADMIN_USERNAME / BIFROST_ADMIN_PASSWORD are missing from "
+            "the compose .env; the governor needs the dashboard credentials."
+        )
+    url = f"http://127.0.0.1:{_gateway_port()}{path}"
+    headers = {
+        "Authorization": "Basic " + base64.b64encode(
+            f"{username}:{password}".encode()).decode(),
+    }
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode()
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(url, data=data, method=method, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.read()
+    except urllib.error.HTTPError as exc:
+        raise click.ClickException(f"gateway admin API {method} {path} failed: HTTP {exc.code}")
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise click.ClickException(f"gateway admin API {method} {path} unreachable: {exc}")
+
+
+@bifrost.command()
+@click.option("--apply", is_flag=True,
+              help="Mutate the gateway. Without it the pass is a dry run.")
+@click.option("--threshold-ms", default=6000, show_default=True,
+              help="Escalate when the windowed TTFT median is at or above this.")
+@click.option("--exit-ms", default=4000, show_default=True,
+              help="Restore when the windowed TTFT median falls to this.")
+@click.option("--samples", default=20, show_default=True,
+              help="Minimum samples in the window before acting.")
+@click.option("--window-minutes", default=15, show_default=True,
+              help="Age bound on the delta ring.")
+@click.option("--max-per-hour", default=3, show_default=True)
+@click.option("--max-per-week", default=8, show_default=True)
+@click.option("--max-dwell-min", default=15, show_default=True)
+@click.option("--cooldown-min", default=10, show_default=True)
+@click.option("--state-file", type=click.Path(path_type=Path), default=None,
+              help="Defaults to <data root>/bifrost/governor-state.json.")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable result.")
+def governor(apply, threshold_ms, exit_ms, samples, window_minutes,
+             max_per_hour, max_per_week, max_dwell_min, cooldown_min,
+             state_file, as_json):
+    """Escalate the standard tier while its first-token median is in a slow
+    regime, with hard caps on episodes. Dry-run unless --apply is given."""
+    from cove.bifrost_governor import Governor
+
+    state_path = Path(state_file) if state_file else (
+        _runtime_data_root() / "bifrost" / "governor-state.json")
+    options = {
+        "threshold_ms": threshold_ms,
+        "exit_ms": exit_ms,
+        "samples": samples,
+        "window_minutes": window_minutes,
+        "max_per_hour": max_per_hour,
+        "max_per_week": max_per_week,
+        "max_dwell_min": max_dwell_min,
+        "cooldown_min": cooldown_min,
+    }
+
+    def metrics_fn() -> str:
+        return _admin_request("/metrics").decode()
+
+    def rules_fn() -> list:
+        return json.loads(
+            _admin_request("/api/governance/routing-rules"))["rules"]
+
+    def update_fn(rule_id: str, body: dict) -> None:
+        _admin_request(f"/api/routing/rules/{rule_id}", method="PUT", body=body)
+
+    result = Governor(
+        metrics_fn=metrics_fn, rules_fn=rules_fn, update_fn=update_fn,
+        state_path=state_path, options=options,
+    ).pass_once(apply=apply)
+
+    if as_json:
+        click.echo(json.dumps(result, sort_keys=True))
+        return
+    median = result.get("median_ms")
+    median_text = f"{median:.0f}ms" if median is not None else "n/a"
+    click.echo(
+        f"governor: {result['action']} ({result['reason']}); "
+        f"median={median_text} samples={result['samples']} "
+        f"applied={'yes' if result['applied'] else 'no (dry run)'}"
+    )
