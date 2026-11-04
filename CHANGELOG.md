@@ -29,6 +29,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - **The dead Headroom compression claim**: LiteLLM 1.84.0 has no Headroom integration (it ships as a `guardrails:` entry in 1.92 and later), so the former `headroom_settings:` block was silently ignored. The sidecar's counters showed one request in its lifetime and zero compression jobs, and its published `4001` mapped a port nothing listened on. The inert setting, the sidecar service, its bringup environment, the `cove status` tuple, and the CLI's compression promise are removed. A negative guard fails if the setting returns without the supported form and a pin that implements it. Compression is not lost: it was never running, and the approved Bifrost cutover does not carry it. Evidence and the two independent request-size gaps are in `docs/tech-debt/litellm-headroom-and-request-size.md`.
 
+## 0.15.15 (2026-11-03)
+
+### Added
+- **Bifrost escalates a stalled stream at a measured TTFT cutoff** ([#158](../../pulls/158)) - a per-request net that re-routes a stream whose first byte has not arrived by 25 seconds, so one pathological request no longer occupies a client for the whole timeout.
+- **`cove bifrost governor` escalates a slow regime, with hard caps** ([#159](../../pulls/159)) - Bifrost v2.3.2 has no windowed latency primitive, so a controller outside the gateway reads the streaming TTFT histogram from `/metrics`, keeps a 15-minute ring of bucket deltas, and escalates the standard tiers when the pooled median of at least 20 requests reaches 6,000 ms, restoring at 4,000 ms or the dwell limit. Caps are 3 episodes/hour, 8/week, 15 minutes each, 10-minute cooldown. Dry-run by default; `--apply` mutates the gateway transiently and a restart re-syncs `config.json`. Inert until Bifrost serves client traffic.
+
+No service image pin changes in this release: OpenBao 2.7.2, dnsproxy v0.86.0 and Forgejo 15.0.11 are current, and the newer Bifrost (v2.4.0), ToolHive (v0.61.0), zrok (v2.0.9) and Speedtest (`-ls179`) releases are all inside the Renovate age windows this repository uses.
+
 ## 0.15.14 (2026-11-01)
 
 ### Changed
