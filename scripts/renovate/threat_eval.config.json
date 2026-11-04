@@ -22,10 +22,19 @@
     "reuse_minutes_block": 1440
   },
   "prices_usd_per_mtok": {
-    "research": { "input": 0.10, "output": 0.30 },
-    "judge": { "input": 0.30, "output": 1.20 }
+    "research": {
+      "input": 0.1,
+      "output": 0.3
+    },
+    "judge": {
+      "input": 0.3,
+      "output": 1.2
+    }
   },
-  "search_providers": ["github_issues", "hn_algolia"],
+  "search_providers": [
+    "github_issues",
+    "hn_algolia"
+  ],
   "github_token_env": "GITHUB_TOKEN",
   "brave_key_env": "COVE_THREAT_SEARCH_KEY",
   "sources": {
@@ -38,6 +47,7 @@
     "npm": "https://registry.npmjs.org",
     "codeberg": "https://codeberg.org/api/v1",
     "hn_algolia": "https://hn.algolia.com/api/v1/search_by_date",
-    "brave": "https://api.search.brave.com/res/v1/web/search"
+    "brave": "https://api.search.brave.com/res/v1/web/search",
+    "github_releases": "https://api.github.com/repos"
   }
 }

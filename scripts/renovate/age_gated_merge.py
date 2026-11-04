@@ -7,10 +7,15 @@ enough, is it green, and may it land" and then ships one coalesced release.
 The split is deliberate:
 
 * Renovate never automerges (``automerge: false`` in ``renovate.json``). The
-  merge gate lives here, in one reviewable place, with the age numbers named.
-* Before the age window is evaluated, ``threat_eval`` reads the deterministic
-  advisory and registry feeds, researches the open-web gap with a light model,
-  and asks a standard-tier model for a verdict. The combined rule is
+  merge gate lives here, in one reviewable place, with the hold named.
+* Every update takes the same 24-hour hold (operator decision, 2026-11-04; the
+  tiered 48h/7d/14d/never windows are gone, majors included).
+* Before the hold is evaluated, ``threat_eval`` reads the deterministic
+  advisory, registry and release-notes feeds, researches the open-web gap with
+  a light model, and asks a standard-tier model for a verdict. The release
+  notes are the "changelog reviewed for security issues" half of the policy:
+  the notes are an evidence row, and a version with no published notes is
+  recorded as a coverage gap rather than silently skipped. The combined rule is
   "aged AND threat-checked proceed". A missing verdict, a hold, a block, an
   unreachable source, a model error, or a budget exhaustion holds. Only a
   recorded human override clears the threat half, and it clears nothing else.
@@ -65,13 +70,14 @@ FIELD_RE = re.compile(r"^[a-z_]+=\S*;$")
 # and must not silently classify.
 UPDATE_TYPE_RANK = ("major", "minor", "patch", "pinDigest", "digest")
 
-AGE_WINDOWS = {
-    "security": timedelta(hours=48),
-    "patch": timedelta(days=7),
-    "minor": timedelta(days=14),
-    "pinDigest": timedelta(days=7),
-    "digest": timedelta(days=7),
-}
+# The operator turned the tiered windows off on 2026-11-04: patches, minors,
+# digests and majors all take the same short hold. What replaces the tiering is
+# the changelog review in ``threat_eval`` (release notes are an evidence row the
+# judge must weigh) plus this minimum age, which exists so a compromised or
+# rebuilt release is visible for a day before the automation can merge it.
+# "In most cases" is deliberate: the automation always waits, and a shorter hold
+# is an operator hand-merge, never something this script does.
+MIN_AGE = timedelta(hours=24)
 
 # Paths this automation may merge on its own. Everything else is reported.
 MERGEABLE_PREFIXES = ("cli/", ".forgejo/workflows/")
@@ -184,12 +190,15 @@ def strongest(update_types) -> Classification:
 
 
 def required_age(update_type: str, vulnerability: bool) -> timedelta | None:
-    """None means "never eligible for this automation"."""
-    if update_type == "major":
-        return None
-    if vulnerability:
-        return AGE_WINDOWS["security"]
-    return AGE_WINDOWS.get(update_type, AGE_WINDOWS["patch"])
+    """One hold for every update type, majors included.
+
+    The tiered windows were removed on 2026-11-04. Majors are no longer
+    excluded outright; they carry the `major` label for human attention and
+    still face the same 24-hour hold and the same changelog-aware threat
+    verdict as everything else.
+    """
+    _ = (update_type, vulnerability)
+    return MIN_AGE
 
 
 def age_signal(upgrades: list[Upgrade], pr_created_at: datetime) -> tuple[datetime, str]:
@@ -215,7 +224,7 @@ def _classify_paths(files: list[str]) -> tuple[bool, str]:
 def precheck(*, body: str, label_names: list[str], files: list[str]) -> Decision | None:
     """Everything that must hold before a threat check is worth paying for.
 
-    This is the pure, no-network half of :func:`decide`: major updates and path
+    This is the pure, no-network half of :func:`decide`: path
     policy. The age window is evaluated after the threat check, because "aged
     AND threat-checked proceed" is the combined rule.
     """
@@ -229,9 +238,6 @@ def precheck(*, body: str, label_names: list[str], files: list[str]) -> Decision
     else:
         # Lock file maintenance has no per-dependency upgrades.
         update_type = "patch"
-
-    if update_type == "major":
-        return Decision(False, "major update: never auto-merged (operator session)")
 
     paths_ok, path_reason = _classify_paths(files)
     if not paths_ok:
@@ -273,9 +279,6 @@ def decide(
         vulnerability = security_label
         signal, source = pr_created_at, "pull request age"
 
-    if update_type == "major":
-        return Decision(False, "major update: never auto-merged (operator session)")
-
     paths_ok, path_reason = _classify_paths(files)
     if not paths_ok:
         return Decision(False, path_reason)
@@ -294,7 +297,6 @@ def decide(
         )
 
     window = required_age(update_type, vulnerability)
-    assert window is not None  # major returned above
     age = now - signal
     if age < window:
         remaining = window - age

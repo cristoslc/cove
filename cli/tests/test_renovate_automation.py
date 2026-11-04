@@ -85,15 +85,21 @@ def test_strongest_update_type_rejects_unknown_types(gate):
         gate.strongest(["rollback"])
 
 
-def test_major_updates_have_no_age_window(gate):
-    assert gate.required_age("major", vulnerability=False) is None
+def test_every_update_type_takes_the_same_24_hour_hold(gate):
+    """Operator decision 2026-11-04: the tiered windows are off.
+
+    Majors are no longer excluded outright, and a security fix is not fast-
+    tracked: the release-notes review in ``threat_eval`` is what replaces the
+    tiering, and the hold exists so a compromised release is visible for a day.
+    """
+    for update_type in ("major", "minor", "patch", "pinDigest", "digest"):
+        assert gate.required_age(update_type, vulnerability=False) == timedelta(hours=24)
+    assert gate.required_age("patch", vulnerability=True) == timedelta(hours=24)
 
 
-def test_known_age_windows(gate):
-    assert gate.required_age("patch", vulnerability=False) == timedelta(days=7)
-    assert gate.required_age("minor", vulnerability=False) == timedelta(days=14)
-    assert gate.required_age("digest", vulnerability=False) == timedelta(days=7)
-    assert gate.required_age("patch", vulnerability=True) == timedelta(hours=48)
+def test_no_update_type_is_never_eligible(gate):
+    for update_type in ("major", "minor", "patch", "pinDigest", "digest"):
+        assert gate.required_age(update_type, vulnerability=False) is not None
 
 
 def test_age_signal_uses_the_newest_release_in_a_group(gate):
@@ -132,7 +138,7 @@ def test_decision_merges_a_week_old_patch(gate):
 
 def test_decision_holds_a_fresh_patch(gate):
     decision = gate.decide(
-        body=_marker("datasource=pypi package=idna version=3.16 rel=2026-10-28T00:00:00.000Z type=patch vulnerability=false;"),
+        body=_marker("datasource=pypi package=idna version=3.16 rel=2026-10-31T10:00:00.000Z type=patch vulnerability=false;"),
         label_names=[],
         files=["cli/uv.lock"],
         pr_created_at=NOW - timedelta(days=1),
@@ -143,17 +149,35 @@ def test_decision_holds_a_fresh_patch(gate):
     assert "age" in decision.reason
 
 
-def test_decision_never_merges_a_major(gate):
+def test_a_major_takes_the_same_hold_and_can_merge_on_an_allowed_path(gate):
+    """Majors lost their "never" window on 2026-11-04.
+
+    The hold and the changelog-aware threat verdict replace the exclusion; the
+    `major` label stays as the human signal.
+    """
     decision = gate.decide(
-        body=_marker("datasource=docker package=postgres version=18 rel=2026-01-01T00:00:00.000Z type=major vulnerability=false;"),
+        body=_marker("datasource=pypi package=postgres version=18.0 rel=2026-01-01T00:00:00.000Z type=major vulnerability=false;"),
         label_names=["major"],
-        files=["compose/docker-compose.yml"],
+        files=["cli/uv.lock"],
         pr_created_at=NOW - timedelta(days=90),
         now=NOW,
         threat_verdict="proceed",
     )
+    assert decision.merge is True
+    assert decision.reason == "eligible"
+
+
+def test_a_fresh_major_is_still_held(gate):
+    decision = gate.decide(
+        body=_marker("datasource=docker package=postgres version=18 rel=2026-10-31T10:00:00.000Z type=major vulnerability=false;"),
+        label_names=["major"],
+        files=["cli/uv.lock"],
+        pr_created_at=NOW - timedelta(hours=1),
+        now=NOW,
+        threat_verdict="proceed",
+    )
     assert decision.merge is False
-    assert decision.reason.startswith("major")
+    assert "age gate" in decision.reason
 
 
 def test_decision_holds_a_compose_change_even_when_old(gate):
@@ -195,12 +219,12 @@ def test_decision_merges_an_osv_update_after_48_hours(gate):
     assert decision.merge is True
 
 
-def test_decision_holds_a_lockfile_maintenance_pr_until_it_is_a_week_old(gate):
+def test_decision_holds_a_lockfile_maintenance_pr_until_the_hold_elapses(gate):
     decision = gate.decide(
         body="No marker for lock file maintenance.",
         label_names=["dependencies"],
         files=["cli/uv.lock"],
-        pr_created_at=NOW - timedelta(days=2),
+        pr_created_at=NOW - timedelta(hours=6),
         now=NOW,
         branch="renovate/lock-file-maintenance",
         threat_verdict="proceed",
@@ -298,7 +322,7 @@ def test_decision_merges_only_when_aged_and_threat_proceed(gate):
 def test_a_threat_proceed_does_not_bypass_the_age_window(gate):
     decision = gate.decide(
         body=_marker(
-            "datasource=pypi package=idna version=3.16 rel=2026-10-29T00:00:00.000Z type=patch vulnerability=false;"
+            "datasource=pypi package=idna version=3.16 rel=2026-10-31T11:00:00.000Z type=patch vulnerability=false;"
         ),
         label_names=[],
         files=["cli/uv.lock"],
@@ -325,17 +349,26 @@ def test_a_threat_verdict_outside_the_schema_holds(gate):
     assert "unknown threat verdict" in decision.reason
 
 
-def test_precheck_stops_a_major_before_the_threat_check(gate):
-    decision = gate.precheck(
+def test_precheck_no_longer_stops_a_major_but_still_stops_compose(gate):
+    """Majors pass the type gate now; the path allowlist still refuses compose."""
+    compose = gate.precheck(
         body=_marker(
             "datasource=docker package=postgres version=18 rel=2026-01-01T00:00:00.000Z type=major vulnerability=false;"
         ),
         label_names=["major"],
         files=["compose/docker-compose.yml"],
     )
-    assert decision is not None
-    assert decision.merge is False
-    assert decision.reason.startswith("major")
+    assert compose is not None and compose.merge is False
+    assert compose.reason.startswith("compose change")
+
+    allowed = gate.precheck(
+        body=_marker(
+            "datasource=pypi package=postgres version=18.0 rel=2026-01-01T00:00:00.000Z type=major vulnerability=false;"
+        ),
+        label_names=["major"],
+        files=["cli/uv.lock"],
+    )
+    assert allowed is None, "a major on an allowlisted path must reach the threat check"
 
 
 def test_cached_verdict_is_reused_for_the_same_head_within_ttl(gate):
