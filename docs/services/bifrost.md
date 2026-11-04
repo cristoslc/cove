@@ -392,7 +392,16 @@ or cron entry runs it every minute.
 - **Signal**: Bifrost's `bifrost_stream_first_token_latency_seconds` histogram,
   scraped from `/metrics` with the dashboard Basic credentials. The histogram is
   cumulative, so each pass keeps a bucket snapshot and a 15-minute ring of
-  deltas; the median is read from the deltas covering at least 20 samples.
+  deltas; the median is read from the sum of those deltas.
+- **Evidence paths**: the ordinary path needs 20 samples in the window. The
+  low-rate path needs 8 samples spanning at least 10 of the window's 15
+  minutes, because a rate low enough never to reach 20 is exactly where the
+  provider is worst: the 95-minute regime on 2026-11-01 ran at a 19-second
+  median with about 37 requests an hour, so its window held nine samples and
+  the 20-sample floor never cleared. Eight is the floor below which a median
+  stops being worth acting on, since at seven samples a single request moves it
+  a full bucket; the span requirement keeps eight requests packed into two
+  minutes from standing in for a regime.
 - **Threshold**: the pooled median across `rr-vision-standard` and
   `rr-text-standard` at or above **6,000 ms** escalates. The highest ordinary
   prompt-band median is 4,300 ms (250k+ tokens outside a regime) and the lowest
@@ -406,11 +415,15 @@ or cron entry runs it every minute.
   dwell limit.
 - **Caps**: at most 3 episodes per hour, 8 per week, 15 minutes per episode,
   and a 10-minute cooldown after an episode. Worst case is 2 hours per week
-  (about 12% of the week) fully escalated. In the measured week the 8-second
-  signal produced 5 episodes covering 288 standard-tier requests (1.7% of tier
-  traffic); 123 of those (43%) had answered within 8 seconds and would be
-  routed to the fallback anyway. The caps are what bound that waste, since the
-  legacy Ollama weekly ceiling is unquantified.
+  (about 12% of the week) fully escalated. Replayed over the measured week
+  (2026-10-27 to 2026-11-03) the rule with the 20-sample floor alone produced 5
+  episodes covering 359 standard-tier requests (2.1% of tier traffic); with the
+  low-rate path it produces 8, which is the weekly cap, covering 320 requests
+  (1.9%). The low-rate path spends the budget earlier and on shorter episodes,
+  so the cap is reached during the worst regime rather than after it. That is
+  the intended trade: the budget goes to the stretch where the provider is
+  worst. The caps are what bound the waste, since the legacy Ollama weekly
+  ceiling is unquantified.
 - **Net underneath**: the merged 25,000 ms per-request `ttft_timeout_ms` stays
   on the escalated target too, so a single stalled stream still cuts even during
   an episode.
@@ -418,6 +431,20 @@ or cron entry runs it every minute.
   writes its original targets to a 0600 state file. A gateway restart re-syncs
   `config.json` and reverts to Synthetic. A metrics counter reset (restart)
   rebaselines instead of firing. No samples, no action.
+
+**Why latency and not load.** Do not add a stream-count trigger. Over the same
+week, first-token time correlated at **-0.118** with the number of our streams
+in flight and at **+0.444** with prompt tokens, and once prompt size is held
+fixed concurrency has no effect: the 100k to 200k band ran at a 2.45 second
+median with no other stream in flight and 2.45 seconds with four or more. The
+worst regimes ran with one or two streams in flight, the two quietest windows
+of the week. Peak concurrency was 11 streams in the window and 15 all-time
+against 42,542 requests with no 429s, so the provider has never pushed back on
+stream count. A rotation at three streams would have fired on 24% to 46% of
+traffic, caught 14% to 35% of slow requests, and sent a quarter of the week's
+requests to the fallback at a 2.40 second median, which is faster than the
+tier's own 2.67 second median. The rule keys on the signal that actually moves,
+which is why it fires both on the busy slow window and the empty one.
 
 The governor only sees Bifrost traffic, so it is inert until the client path is
 re-pointed to `llmproxy.cove` and Bifrost serves the tiers. It is not started by

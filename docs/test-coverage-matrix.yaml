@@ -195,7 +195,7 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
-  - path: "Bifrost regime governor: pooled streaming-TTFT median from the /metrics histogram drives a transient target swap on the two standard rules at a 6,000 ms threshold, restores at 4,000 ms or the dwell limit, enforces hourly/weekly/dwell/cooldown caps, rebaselines on a counter reset, dry-runs by default, and leaves the committed ladder and 25s net untouched"
+  - path: "Bifrost regime governor: pooled streaming-TTFT median from the /metrics histogram drives a transient target swap on the two standard rules at a 6,000 ms threshold, restores at 4,000 ms or the dwell limit, admits a low-rate path of 8 samples spread over 10 minutes without letting a burst or a sub-threshold median through, enforces hourly/weekly/dwell/cooldown caps, rebaselines on a counter reset, dry-runs by default, and leaves the committed ladder and 25s net untouched"
     blast_radius: high
     coverage:
       happy: executable

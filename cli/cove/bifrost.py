@@ -770,7 +770,11 @@ def _admin_request(path: str, method: str = "GET", body: dict | None = None) -> 
 @click.option("--exit-ms", default=4000, show_default=True,
               help="Restore when the windowed TTFT median falls to this.")
 @click.option("--samples", default=20, show_default=True,
-              help="Minimum samples in the window before acting.")
+              help="Samples in the window that qualify on the ordinary path.")
+@click.option("--low-rate-samples", default=8, show_default=True,
+              help="Samples needed when the window spans the low-rate span.")
+@click.option("--low-rate-span-min", default=10, show_default=True,
+              help="Minutes the samples must span on the low-rate path.")
 @click.option("--window-minutes", default=15, show_default=True,
               help="Age bound on the delta ring.")
 @click.option("--max-per-hour", default=3, show_default=True)
@@ -780,9 +784,9 @@ def _admin_request(path: str, method: str = "GET", body: dict | None = None) -> 
 @click.option("--state-file", type=click.Path(path_type=Path), default=None,
               help="Defaults to <data root>/bifrost/governor-state.json.")
 @click.option("--json", "as_json", is_flag=True, help="Machine-readable result.")
-def governor(apply, threshold_ms, exit_ms, samples, window_minutes,
-             max_per_hour, max_per_week, max_dwell_min, cooldown_min,
-             state_file, as_json):
+def governor(apply, threshold_ms, exit_ms, samples, low_rate_samples,
+             low_rate_span_min, window_minutes, max_per_hour, max_per_week,
+             max_dwell_min, cooldown_min, state_file, as_json):
     """Escalate the standard tier while its first-token median is in a slow
     regime, with hard caps on episodes. Dry-run unless --apply is given."""
     from cove.bifrost_governor import Governor
@@ -793,6 +797,8 @@ def governor(apply, threshold_ms, exit_ms, samples, window_minutes,
         "threshold_ms": threshold_ms,
         "exit_ms": exit_ms,
         "samples": samples,
+        "low_rate_samples": low_rate_samples,
+        "low_rate_span_min": low_rate_span_min,
         "window_minutes": window_minutes,
         "max_per_hour": max_per_hour,
         "max_per_week": max_per_week,
@@ -823,5 +829,6 @@ def governor(apply, threshold_ms, exit_ms, samples, window_minutes,
     click.echo(
         f"governor: {result['action']} ({result['reason']}); "
         f"median={median_text} samples={result['samples']} "
+        f"span={result['span_min']:.0f}m "
         f"applied={'yes' if result['applied'] else 'no (dry run)'}"
     )
