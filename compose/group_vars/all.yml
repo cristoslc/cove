@@ -2,7 +2,7 @@
 cove_data_root: "{{ ansible_env.HOME }}/Documents/cove-data"
 
 # --- Forgejo ---
-forgejo_image_tag: "15"
+forgejo_image_tag: "15.0.11"
 forgejo_image_digest: ""
 forgejo_image: "codeberg.org/forgejo/forgejo:{{ forgejo_image_tag }}"
 forgejo_container_name: cove-forgejo

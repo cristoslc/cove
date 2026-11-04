@@ -2,7 +2,7 @@ name: cove
 
 services:
   forgejo:
-    image: ${FORGEJO_IMAGE:-codeberg.org/forgejo/forgejo:15}
+    image: ${FORGEJO_IMAGE:-codeberg.org/forgejo/forgejo:15.0.11}
     container_name: ${FORGEJO_CONTAINER_NAME:-cove-forgejo}
     restart: unless-stopped
     environment:
