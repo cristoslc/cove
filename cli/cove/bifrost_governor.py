@@ -12,7 +12,14 @@ The signal is Bifrost's own `bifrost_stream_first_token_latency_seconds`
 histogram (streaming TTFT), scraped from `/metrics` with the dashboard Basic
 credentials. The histogram is cumulative, so each pass stores a bucket
 snapshot and keeps a short ring of deltas; the median is read from the sum of
-the most recent deltas covering at least N samples.
+the deltas still inside the window.
+
+Two evidence paths qualify, because a single sample floor is unreachable at the
+rates where the provider is worst. The ordinary path needs twenty samples in
+the window. The low-rate path needs eight samples spread across most of the
+window, which is what a long slowdown looks like when traffic is thin: the
+measured regimes included a 95-minute stretch at a 19-second median carrying
+about 37 requests an hour, where a 15-minute window never held twenty.
 
 This module is pure decision logic plus injected I/O so it can be tested
 without a gateway. `cove bifrost governor` wires it to the live admin API.
@@ -44,6 +51,24 @@ DEFAULTS = {
     "threshold_ms": 6000,
     "exit_ms": 4000,
     "samples": 20,
+    # Twenty samples is the ordinary floor. A rate low enough never to reach
+    # it is exactly the measured regime that hurt most: 95 minutes at a 19s
+    # median, 37 requests an hour, so a 15-minute window held about nine. The
+    # low-rate path lets the rule act there, but only on evidence that has
+    # actually spread across the window.
+    #
+    # Eight is the floor below which a median stops being worth acting on: at
+    # seven samples one request moves the median by a full bucket, and a single
+    # outlier can drag it across the threshold. Eight with a spread requirement
+    # still needs most of the window to be slow, which is what "regime" means.
+    "low_rate_samples": 8,
+    # The samples must span at least this much of the 15-minute window. Eight
+    # slow requests packed into two minutes are a burst, not a regime; the
+    # same eight spread over ten minutes are a provider that has stopped
+    # answering promptly. At 37 requests an hour the eighth sample lands about
+    # eleven minutes after the first, so the measured regime clears ten with
+    # room to spare, while a burst misses it by a factor of five.
+    "low_rate_span_min": 10,
     "window_minutes": 15,
     "max_per_hour": 3,
     "max_per_week": 8,
@@ -156,15 +181,36 @@ def _samples(buckets: dict[float, int]) -> int:
     return max(buckets.values(), default=0)
 
 
+def _shortfall(samples: int, span_min: float, min_samples: int,
+               low_rate_samples: int, low_rate_span_min: int) -> str | None:
+    """None when the window holds enough evidence, else why it does not.
+
+    Two paths qualify. The ordinary one needs `min_samples` in the window. The
+    low-rate one needs `low_rate_samples` spread across at least
+    `low_rate_span_min` minutes of it, which is what a provider that is slow
+    for a long stretch looks like when traffic is thin.
+    """
+    if samples >= min_samples:
+        return None
+    if samples >= low_rate_samples and span_min >= low_rate_span_min:
+        return None
+    return (f"insufficient evidence ({samples} samples over {span_min:.0f} min; "
+            f"need {min_samples}, or {low_rate_samples} spread over "
+            f"{low_rate_span_min} min)")
+
+
 def decide(
     *,
     now: datetime,
     median: float | None,
     samples: int,
+    span_min: float,
     state: dict,
     threshold_ms: int,
     exit_ms: int,
     min_samples: int,
+    low_rate_samples: int,
+    low_rate_span_min: int,
     max_per_hour: int,
     max_per_week: int,
     max_dwell_min: int,
@@ -172,14 +218,17 @@ def decide(
 ) -> dict:
     """Return {"action", "reason"}; action is escalate, restore, or hold."""
     active = state.get("active")
-    if median is None or samples < min_samples:
+    shortfall = _shortfall(samples, span_min, min_samples,
+                           low_rate_samples, low_rate_span_min)
+    if median is None or shortfall:
         if active:
             # No signal is not a reason to stay escalated; restore on stale
             # data at the dwell limit only.
             started = _parse_ts(active["started"])
             if now - started >= timedelta(minutes=max_dwell_min):
                 return {"action": "restore", "reason": "stale signal, dwell limit"}
-        return {"action": "hold", "reason": f"insufficient samples ({samples}/{min_samples})"}
+        reason = shortfall or "no first-token samples in the window"
+        return {"action": "hold", "reason": reason}
 
     if active:
         started = _parse_ts(active["started"])
@@ -206,7 +255,10 @@ def decide(
     ends = [_parse_ts(e["end"]) for e in episodes if e.get("end")]
     if ends and now - max(ends) < timedelta(minutes=cooldown_min):
         return {"action": "hold", "reason": f"cooldown ({cooldown_min}m) not elapsed"}
-    return {"action": "escalate", "reason": f"median {median:.0f}ms >= threshold {threshold_ms}ms"}
+    path = "window" if samples >= min_samples else "low-rate"
+    return {"action": "escalate",
+            "reason": f"median {median:.0f}ms >= threshold {threshold_ms}ms "
+                      f"({path} path, {samples} samples over {span_min:.0f} min)"}
 
 
 def load_state(path: Path) -> dict:
@@ -267,11 +319,22 @@ class Governor:
         window = _sum_buckets([{_le(k): v for k, v in h["buckets"].items()} for h in history])
         median = median_ms(window)
         samples = _samples(window)
+        # How much of the window the evidence actually covers. A tail of eight
+        # requests in two minutes is a burst; the same eight spread over most
+        # of the window is a sustained slowdown.
+        if len(history) >= 2:
+            stamps = [_parse_ts(h["ts"]) for h in history]
+            span_min = (max(stamps) - min(stamps)).total_seconds() / 60.0
+        else:
+            span_min = 0.0
 
         verdict = decide(
-            now=now, median=median, samples=samples, state=state,
+            now=now, median=median, samples=samples, span_min=span_min, state=state,
             threshold_ms=self.opt["threshold_ms"], exit_ms=self.opt["exit_ms"],
-            min_samples=self.opt["samples"], max_per_hour=self.opt["max_per_hour"],
+            min_samples=self.opt["samples"],
+            low_rate_samples=self.opt["low_rate_samples"],
+            low_rate_span_min=self.opt["low_rate_span_min"],
+            max_per_hour=self.opt["max_per_hour"],
             max_per_week=self.opt["max_per_week"],
             max_dwell_min=self.opt["max_dwell_min"],
             cooldown_min=self.opt["cooldown_min"],
@@ -282,6 +345,7 @@ class Governor:
             "reason": verdict["reason"],
             "median_ms": median,
             "samples": samples,
+            "span_min": round(span_min, 1),
             "counter_reset": reset,
             "applied": False,
         }
