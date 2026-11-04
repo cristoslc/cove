@@ -446,6 +446,48 @@ requests to the fallback at a 2.40 second median, which is faster than the
 tier's own 2.67 second median. The rule keys on the signal that actually moves,
 which is why it fires both on the busy slow window and the empty one.
 
+**Metric choice: first token, throughput, completion.** The trigger is time to
+first token, and it should stay that way. The three candidates, measured over
+16,858 standard-tier requests from 2026-10-27 to 2026-11-03:
+
+| metric | median | 95th percentile | correlation with output length |
+| --- | --- | --- | --- |
+| time to first token | 2.67s | 7.60s | +0.027 |
+| completion | 7.41s | 34.62s | **+0.815** |
+| seconds per 1k output tokens | 8.49 | 15.89 | +0.058 |
+
+**Completion time is unusable as a trigger.** It correlates at 0.815 with how
+many tokens the answer contained, so it mostly measures answer length. A window
+on 2026-10-28 had a 16.6 second median completion, a 2.6 second first token,
+9.9 s/1k throughput, and 1,299 median output tokens: a long answer at normal
+speed, indistinguishable from a degraded provider by completion time alone.
+
+**Throughput is the right second signal if one is ever needed.** Seconds per
+1,000 output tokens, or equivalently the median of
+`bifrost_stream_inter_token_latency_seconds` times 1,000, correlates with output
+length at +0.058 and so measures streaming health on its own. It is not
+implemented for two reasons. The eight-episodes-per-week cap already binds
+during the 2026-11-01 regime, so a second condition would displace coverage
+rather than add it. And it would extend a component that has never been
+scheduled, which is building for a future that a plan-tier decision may cancel.
+
+**First token stays because it saw both regimes.** On 2026-10-31 the delay was
+admission queueing: first token at 10.62 seconds, throughput at 7.55 s/1k,
+which is better than the week median. A throughput rule would have slept
+through it. On 2026-11-01 both signals collapsed together, 19 seconds and
+198 s/1k, twenty-three times the median throughput. Outside that collapse,
+first-token window medians spread 8.8 times while throughput medians spread 2.3
+times, so the variance in this workload lives in admission.
+
+**No series until traffic flows.** Bifrost documents
+`bifrost_stream_first_token_latency_seconds`,
+`bifrost_stream_inter_token_latency_seconds`, and
+`bifrost_upstream_latency_seconds`, but the gateway has never carried a client
+request through the tiers, so none of them has a series on this deployment. The
+governor has therefore never been observed deciding against live data, only
+against fixtures. Scheduling it is a live experiment rather than a switch-on:
+run it dry first, and watch the first `--apply`.
+
 The governor only sees Bifrost traffic, so it is inert until the client path is
 re-pointed to `llmproxy.cove` and Bifrost serves the tiers. It is not started by
 any converge.
