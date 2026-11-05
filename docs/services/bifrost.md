@@ -659,7 +659,18 @@ cutover day, then teardown one week later.
    request logs; irreversible, operator sign-off).
 3. Drop the `OLLAMA_API_KEY` pass-through line from the deployed compose
    `.env` (workstation-lane property; the lane provisioned the key into
-   Bifrost directly at cutover).
+   Bifrost directly at cutover). **Do not do this before the compose
+   `environment:` entry is gone.** Bifrost receives `OLLAMA_API_KEY` twice:
+   once from `${COVE_DATA_ROOT}/bifrost/local.env` through `env_file:`, and
+   once as `OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}` under the service's
+   `environment:` block. Compose gives `environment` precedence over
+   `env_file`, and an unset variable interpolates to the empty string, so
+   removing the `.env` line alone leaves the gateway with a blank key and
+   every ollama-cloud route returning 401, even when `local.env` carries a
+   good value. Remove the `environment:` entry (or rewrite it to read only
+   from `local.env`) in the same change that drops the `.env` line, and only
+   after the workstation lane has provisioned `local.env` and verified it by
+   fingerprint.
 4. Delete the 1Password `LiteLLM Proxy` item and its Vault cache entries —
    the drain window closed today, so the retention rule is satisfied.
 5. Prune the litellm image.
