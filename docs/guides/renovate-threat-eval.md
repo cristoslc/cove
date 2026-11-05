@@ -13,7 +13,7 @@ related:
 
 # Renovate threat evaluation
 
-The age gate answers "has this release been out long enough". It cannot answer "is this release safe". This page describes the evidence layer that runs before the age window is evaluated, the two model roles, the verdict schema, and exactly where the gate will fail closed.
+The age gate answers "has this release been out long enough". It cannot answer "is this release safe". This page describes the evidence layer that runs before the hold is evaluated, the two model roles, the verdict schema, and exactly where the gate will fail closed.
 
 The operator's ruling was: "age is not sufficient, we also need tooling that checks for reported issues, cves, supply chain attacks, etc." The age wait is still useful. It is no longer sufficient on its own.
 
@@ -256,7 +256,7 @@ A human can override a threat verdict, and only a human can:
 
 The merge script reads both, posts an acknowledgement comment on the pull request, appends a JSONL row to `COVE_RENOVATE_AUDIT_LOG` (default `~/.local/state/cove/renovate-threat-overrides.jsonl`, mode `0600`), and then lets the threat gate pass. The row records the login, reason, verdict, head SHA, packages, and the evidence URLs.
 
-The override clears **only** the threat gate. It does not clear the age window, the path policy, the required check, the draft state, or the major-update rule. Those remain independent.
+The override clears **only** the threat gate. It does not clear the 24-hour hold, the path policy, the required check, or the draft state. Those remain independent.
 
 ## What this cannot see
 
@@ -319,7 +319,7 @@ It still cannot see:
 - publishing the comment and label, and the dry-run no-op;
 - the shipped configuration schema and this guide's invariants.
 
-The age-gate tests add the combined rule: missing verdict holds, hold holds, block holds, proceed merges only when aged, and a threat proceed does not bypass the age window.
+The age-gate tests add the combined rule: missing verdict holds, hold holds, block holds, proceed merges only after the 24-hour hold, and a threat proceed does not bypass it.
 
 ## Related
 

@@ -53,12 +53,13 @@ def _pkg(threat, datasource="pypi", package="idna", version="3.16"):
 
 
 class FakeFeeds:
-    def __init__(self, error_cls, *, advisories=(), registry=(), issues=(), search=(), error=None):
+    def __init__(self, error_cls, *, advisories=(), registry=(), issues=(), search=(), changelog=(), error=None):
         self.error_cls = error_cls
         self.advisories = list(advisories)
         self.registry = list(registry)
         self.repo_url = None
         self.issues = list(issues)
+        self.changelog = list(changelog)
         self.search_hits = list(search)
         self.error = error
         self.calls: list[str] = []
@@ -80,6 +81,12 @@ class FakeFeeds:
         if self.error == "issues":
             raise self.error_cls("upstream issues", "403")
         return list(self.issues)
+
+    def changelog_for(self, pkg, repo_url):
+        self.calls.append("changelog")
+        if self.error == "changelog":
+            raise self.error_cls("GitHub releases", "503")
+        return list(self.changelog)
 
     def search_for(self, pkg, queries):
         self.calls.append("search")
@@ -692,3 +699,18 @@ def test_the_guide_states_the_limits_and_the_escape_hatch():
     assert "cannot see" in lowered or "cannot" in lowered
     assert "osv" in lowered
     assert "budget" in lowered
+
+
+def test_an_unreachable_changelog_source_holds_without_calling_the_model(threat):
+    """The changelog review is a gate, not a nice-to-have.
+
+    If the release notes cannot be read, the update is unknown, and unknown
+    holds: the operator's policy makes the changelog the security review.
+    """
+    feeds = FakeFeeds(threat.SourceError, error="changelog")
+    feeds.repo_url = "https://github.com/psf/requests"
+    model = FakeModel(_queries(threat), _decision(threat, "proceed"), _decision(threat, "proceed"))
+    verdict = _evaluator(threat, feeds, model).evaluate(_request(threat))
+    assert verdict.verdict == "hold"
+    assert any("GitHub releases" in error for error in verdict.errors)
+    assert model.calls == []

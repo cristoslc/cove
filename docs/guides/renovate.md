@@ -121,7 +121,7 @@ labels is an operator step, listed below.
 
 ## The threat gate
 
-Age is necessary and not sufficient. Before the age window is evaluated, the
+Age is necessary and not sufficient. Before the hold is evaluated, the
 automation runs `scripts/renovate/threat_eval.py` on every otherwise-eligible
 pull request. It reads OSV, GitHub advisories, NVD enrichment, the registry's
 own metadata, upstream issues where an API resolves the repository, and a
@@ -141,17 +141,33 @@ the token caps, the verdict schema, and the honest limits are in
 [Renovate threat evaluation](renovate-threat-eval.md). This page keeps the age
 numbers and the release flow.
 
-## The age gate
+## The hold
 
-The operator's words were "soon enough to protect zero-days, long enough to
-avoid supply-chain attacks". That resolves to four classes:
+The operator turned the tiered windows off on 2026-11-04: "Windows are off.
+Patch should be quicker. And it should be subject to the changelog being
+reviewed for security issues, with a 24 hour minimum age in most cases."
 
-| Class | Window | Clock starts at | Why |
+That resolves to one rule for every class:
+
+| Class | Hold | Clock starts at | Why |
 |---|---|---|---|
-| Security (`security` label, or `isVulnerabilityAlert`) | **48 h** | upstream release of the fixing version | A known CVE against a pinned version must not wait a week. 48 h still covers the window where a hijacked publisher pushes a malicious "fix" and it gets yanked. |
-| Patch / pin / digest / lockfile maintenance | **7 d** | upstream release where known, else PR age | A week is long enough for a compromised release or a same-tag rebuild to be noticed and pulled; patch churn is the bulk of the volume, so one week keeps the PR board readable. |
-| Minor | **14 d** | upstream release where known, else PR age | Behaviour changes inside a major line need more soak time than a patch, and they are rare enough that two weeks costs little. |
-| Major | **never** | n/a | The digest-pinning plan and the stack-update runbook both require a gap analysis before a major bump. The automation reports it and stops. |
+| Everything: security, patch, pin, digest, lockfile maintenance, minor, **major** | **24 h** | upstream release where known, else PR age | One day is the supply-chain floor: long enough for a compromised release or a same-tag rebuild to be noticed and pulled, short enough that a fix lands the next day. The changelog review below is what replaces the old tiering. |
+
+Majors are no longer excluded. They keep the `major` label as the human signal
+to read the release notes properly before promoting, and they face the same
+hold and the same threat verdict as everything else. "In most cases" is
+deliberate: the automation always waits 24 hours, and a shorter hold is an
+operator hand-merge, never something the automation does.
+
+### The changelog review
+
+The hold answers "has the release existed long enough to be trusted". The
+changelog answers "does what it changes break us, or widen what it can reach".
+`threat_eval` fetches the release notes for the exact target version and hands
+them to the judge as an evidence row, so the verdict cannot be "proceed"
+without the notes having been read. When a version has no published notes, the
+row records a coverage gap saying the changelog must be read by hand, and a
+source that cannot be reached holds the pull request rather than passing it.
 
 ### Where the timestamp comes from, per ecosystem
 
@@ -194,7 +210,7 @@ for direct `pypi`/`npm`/`cargo`/… dependencies and emits an update with
 `isVulnerabilityAlert: true`. The `vulnerabilityAlerts` block is applied to those
 updates (Renovate forces `packageFileConfig.vulnerabilityAlerts` onto every OSV
 upgrade in `lib/workers/repository/process/vulnerabilities.ts`), which is how
-the `security` label and the 48 h window reach them.
+the `security` label reach them first in the merge order; every update still takes the same 24-hour hold.
 
 OSV does not scan container images. For an image rebuild that fixes a CVE the
 label is applied by the operator, after the Trivy/SBOM signal in
@@ -230,20 +246,20 @@ Per run it:
    a fork cannot fake the branch prefix in this repo, and the marker is the
    contract Renovate renders.
 3. Applies the cheap prechecks to each, and holds:
-   - majors (never),
    - anything touching `compose/` (staging E2E, SBOM delta and the `.env`
      re-sync are prerequisites, and a merged pin provably does not reach an
      existing host until Phase 0 lands),
    - anything outside `cli/` and `.forgejo/workflows/`,
    - drafts and `WIP:` titles.
-4. Runs the threat evaluation on the rest, before the age window. A missing
+4. Runs the threat evaluation on the rest, before the hold. It reads release
+   notes for the exact target version as evidence. A missing
    verdict, a `hold`, a `block`, an unreachable source, a model failure, or an
    exhausted token budget holds the pull request. A fresh `proceed` marker on
    the same head is reused; a new commit forces a new check. The verdict and
    its evidence links are posted on the pull request, and a human override is
    read and recorded there.
-5. Applies the age window. The combined rule is **aged AND threat-checked
-   proceed**, so a threat `proceed` on a fresh release still waits.
+5. Applies the 24-hour hold. The combined rule is **aged AND threat-checked
+   proceed**, so a threat `proceed` on a fresh release still waits a day.
 6. Holds pull requests whose required check is missing or not success, and pull
    requests behind `main` (it asks Forgejo to update the branch, then holds
    them until the re-run check is green; it never pushes or force-pushes).

@@ -128,6 +128,7 @@ DEFAULT_SOURCES = {
     "osv": "https://api.osv.dev/v1/query",
     "github_advisories": "https://api.github.com/advisories",
     "github_issues": "https://api.github.com/search/issues",
+    "github_releases": "https://api.github.com/repos",
     "nvd": "https://services.nvd.nist.gov/rest/json/cves/2.0",
     "pypi": "https://pypi.org/pypi",
     "npm": "https://registry.npmjs.org",
@@ -801,6 +802,62 @@ class Feeds:
             raise SourceError(f"{pkg.datasource} registry", "unexpected payload")
         return registry_findings(pkg.datasource, payload, pkg)
 
+    def changelog_for(self, pkg: PackageRef, repo_url: str) -> list[Evidence]:
+        """Release notes for the target version, as judged evidence.
+
+        The update policy gates on the changelog being read for security-relevant
+        changes, so the notes go to the judge as an evidence row. A version with
+        no published notes is recorded as a coverage gap instead of being
+        silently skipped: "nobody read the changelog" must stay visible.
+        """
+        if not repo_url or not repo_url.startswith("https://github.com/"):
+            return []
+        owner_repo = repo_url.removeprefix("https://github.com/").strip("/")
+        payload = self.http.json(
+            "GET",
+            f"{self.config.sources['github_releases']}/{owner_repo}/releases?per_page=30",
+            headers=self._github_headers(),
+            timeout=self._timeout,
+            source="GitHub releases",
+        )
+        if not isinstance(payload, list):
+            raise SourceError("GitHub releases", "unexpected payload")
+        target = pkg.version.lstrip("v")
+        for release in payload:
+            tag = str(release.get("tag_name") or "").lstrip("v")
+            if tag != target:
+                continue
+            notes = (release.get("body") or "").strip()
+            url = release.get("html_url") or repo_url
+            if not notes:
+                return [
+                    Evidence(
+                        id=f"changelog:{owner_repo}@{target}",
+                        source="coverage",
+                        url=url,
+                        finding="release published with empty notes; read the changelog by hand",
+                        relevance="gap",
+                    )
+                ]
+            return [
+                Evidence(
+                    id=f"changelog:{owner_repo}@{target}",
+                    source="changelog",
+                    url=url,
+                    finding=notes[:1200],
+                    relevance="context",
+                )
+            ]
+        return [
+            Evidence(
+                id=f"changelog:{owner_repo}@{target}",
+                source="coverage",
+                url=repo_url,
+                finding="no release notes published for the target version; read the changelog by hand",
+                relevance="gap",
+            )
+        ]
+
     def issues_for(self, pkg: PackageRef, repo_url: str) -> list[Evidence]:
         if not repo_url:
             return []
@@ -1220,6 +1277,10 @@ class Evaluator:
             if repo_url:
                 try:
                     evidence.extend(self.feeds.issues_for(pkg, repo_url))
+                except SourceError as exc:
+                    errors.append(str(exc))
+                try:
+                    evidence.extend(self.feeds.changelog_for(pkg, repo_url))
                 except SourceError as exc:
                     errors.append(str(exc))
 
