@@ -176,7 +176,7 @@ class TestEdgeAuthConfig:
         `set $llmproxy_upstream` can name must already be keyed in the map."""
         vhost = _render("default.conf.j2")
         map_block = _render_edge()
-        assert "set $llmproxy_upstream http://litellm:4000;" in vhost
+        assert "set $llmproxy_upstream http://bifrost:8080;" in vhost
         for upstream in ("http://litellm:4000", "http://bifrost:8080"):
             assert f'"{upstream}"' in map_block
 
