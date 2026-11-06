@@ -26,7 +26,7 @@
           "value": "env.SYNTHETIC_API_KEY",
           "models": [
             "hf:deepseek-ai/DeepSeek-V4.1-Flash",
-            "hf:moonshotai/Kimi-K3",
+            "hf:moonshotai/Kimi-K3.1-Pro",
             "hf:zai-org/GLM-4.7-Flash",
             "hf:zai-org/GLM-5.3",
             "hf:zai-org/GLM-5.3-Flash",
@@ -51,7 +51,7 @@
             "text:ultra-heavy": "hf:zai-org/GLM-5.3",
             "vision:heavy": "hf:zai-org/GLM-5.3-Flash",
             "vision:standard": "hf:deepseek-ai/DeepSeek-V4.1-Flash",
-            "vision:super-ultra-heavy": "hf:moonshotai/Kimi-K3"
+            "vision:super-ultra-heavy": "hf:moonshotai/Kimi-K3.1-Pro"
           },
           "weight": 1.0
         }
@@ -89,7 +89,7 @@
             "glm-5.3",
             "glm-5.3-flash",
             "gpt-oss:120b",
-            "kimi-k3"
+            "kimi-k3.1-pro"
           ],
           "weight": 1.0
         }
@@ -297,12 +297,12 @@
         "targets": [
           {
             "provider": "syn-subscription",
-            "model": "hf:moonshotai/Kimi-K3",
+            "model": "hf:moonshotai/Kimi-K3.1-Pro",
             "weight": 1.0
           }
         ],
         "fallbacks": [
-          "ollama-cloud/kimi-k3",
+          "ollama-cloud/kimi-k3.1-pro",
           "syn-infinite-backstop/infinite:small:vision"
         ],
         "priority": 5,

@@ -174,7 +174,7 @@ so per ADR-008 ("aliases lead with the modality") its canonical alias is
 | `vision:standard` | syn-subscription `hf:deepseek-ai/DeepSeek-V4.1-Flash` (image input) → ollama-cloud `deepseek-v4.1-flash` → backstop |
 | `text:ultra-heavy` | syn-subscription `hf:zai-org/GLM-5.3` → ollama-cloud `glm-5.3` → backstop |
 | `vision:heavy` | syn-subscription `hf:zai-org/GLM-5.3-Flash` → ollama-cloud `glm-5.3-flash` → backstop |
-| `vision:super-ultra-heavy` | syn-subscription `hf:moonshotai/Kimi-K3` → ollama-cloud `kimi-k3` → backstop |
+| `vision:super-ultra-heavy` | syn-subscription `hf:moonshotai/Kimi-K3.1-Pro` → ollama-cloud `kimi-k3.1-pro` → backstop |
 | `nonstreaming:text:light` | syn-subscription → ollama-cloud (2 hops, no backstop) |
 | `nonstreaming:vision:standard` | syn-subscription `hf:deepseek-ai/DeepSeek-V4.1-Flash` (image input) → ollama-cloud `deepseek-v4.1-flash` (2 hops, no backstop) |
 | `syn:large:text` | syn-subscription directly (1 hop) |
