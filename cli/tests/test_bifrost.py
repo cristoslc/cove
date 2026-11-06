@@ -83,8 +83,8 @@ EXPECTED_CHAINS = {
         "syn-infinite-backstop/infinite:small:vision",
     ],
     "vision:super-ultra-heavy": [
-        "syn-subscription/hf:moonshotai/Kimi-K3",
-        "ollama-cloud/kimi-k3",
+        "syn-subscription/hf:moonshotai/Kimi-K3.1-Pro",
+        "ollama-cloud/kimi-k3.1-pro",
         "syn-infinite-backstop/infinite:small:vision",
     ],
     "nonstreaming:text:light": [
