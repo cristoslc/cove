@@ -38,6 +38,14 @@ services:
       - ${FORGEJO_DATA_ROOT}/certs:/certs:ro
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
+    # Healthz, not `/`: the 2026-11-06 wedge answered 200 on `/` while the API
+    # was dead, so a root probe would have called it healthy. Docker now has a
+    # signal to report `unhealthy` instead of `running`.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/api/healthz || exit 1"]
+      interval: 15s
+      start_period: 30s
+      retries: 5
     deploy:
       resources:
         limits:

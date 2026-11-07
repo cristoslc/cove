@@ -530,19 +530,51 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
 
 
 @app.command()
-def status():
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit machine-readable JSON; exits non-zero when a required check fails.",
+)
+def status(as_json):
     """Check health of cove services.
 
     Verifies containers are running, nginx ingress responds,
     Forgejo and Vault APIs are reachable, and DNS resolves correctly.
 
+    The command exits non-zero when a required check fails, in both the table
+    and the ``--json`` form, so a scheduled consumer can rely on the status
+    code alone. Optional services that are down do not fail it.
+
     Examples:
 
         cove status
+
+        cove status --json
     """
+    import json
+
     from cove.status import check_all, print_status
+
     results = check_all()
-    print_status(results)
+    if as_json:
+        click.echo(
+            json.dumps(
+                [
+                    {
+                        "name": result.name,
+                        "ok": result.ok,
+                        "detail": result.detail,
+                        "hints": list(result.hints),
+                        "optional": result.optional,
+                    }
+                    for result in results
+                ],
+                indent=2,
+            )
+        )
+    else:
+        print_status(results)
     if not all(r.ok or r.optional for r in results):
         raise SystemExit(1)
 
@@ -602,6 +634,7 @@ app.add_command(vault)
 from cove.update import update
 
 app.add_command(update)
+
 
 
 @app.command()
@@ -773,3 +806,23 @@ def version():
         cove --version
     """
     click.echo(f"cove {__version__}")
+
+
+# Expected-state recorders: `up`/`down` write the whole map, each service group
+# writes only its own containers. `cove update` shells out to `cove up`, so it
+# inherits whatever that converge left without needing its own hook.
+from cove import expected_state as _expected_state  # noqa: E402
+
+_expected_state.wrap_converge(up, "up")
+_expected_state.wrap_converge(down, "down")
+for _group, _service in (
+    (ade, "ade"),
+    (litellm, "litellm"),
+    (bifrost, "bifrost"),
+    (speedtest, "speedtest"),
+    (runner, "runner"),
+    (tunnel, "tunnel"),
+    (toolhive, "toolhive"),
+    (vault, "vault"),
+):
+    _expected_state.wrap_service(_group, _service)
