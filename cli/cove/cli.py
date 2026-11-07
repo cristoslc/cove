@@ -575,8 +575,6 @@ def status(as_json):
         )
     else:
         print_status(results)
-    if any(not result.ok and not result.optional for result in results):
-        raise SystemExit(1)
     if not all(r.ok or r.optional for r in results):
         raise SystemExit(1)
 
