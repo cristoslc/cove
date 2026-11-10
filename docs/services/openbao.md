@@ -175,6 +175,19 @@ The live host migrated overnight from Vault 1.20 to OpenBao 2.7.2 on release 0.1
 - Verification: `cove vault status` reports initialized and unsealed, a userpass login returns a token carrying the `admins` policy, the UI answers 200, and `cove creds vault-get` resolves a reference with the local cache removed, so Vault is the source. A follow-up `cove up` recreated no container.
 - Rollback material kept: `~/Documents/cove-data/vault/data.vault-1.20-20261101` and the `cove/vault-legacy/*` keystore entries.
 
+**Retention (operator ruling, decision `dec_uordeqmi5mjl`, 2026-11-10).** Both stay for 30 days from the migration, so they may be deleted on or after **2026-12-02**. Until then they are the only way back to the pre-OpenBao root token and raft data. On that date:
+
+```sh
+# 1. the archive directory
+rm -rf ~/Documents/cove-data/vault/data.vault-1.20-20261101
+# 2. the legacy keystore namespace, if the archive is no longer needed
+for k in unseal-1 unseal-2 unseal-3 unseal-4 unseal-5 root-token; do
+  security delete-generic-password -a "$USER" -s "cove/vault-legacy/$k" >/dev/null 2>&1 || true
+done
+```
+
+Deleting either is irreversible. If the archive age is in doubt, `ls -ld ~/Documents/cove-data/vault/data.vault-1.20-*` prints the copy date rather than trusting a calendar.
+
 ## Tests
 
 `cli/tests/test_openbao.py` pins the image identity, the compose service shape (user override, no `IPC_LOCK`, `/openbao` mounts, `bao` healthcheck), the config shape (no `disable_mlock`, raft path, listener, UI), the keystore prefix override, and the standby health mapping. The Vault API call sites are covered by `test_vault.py`, `test_vault_unseal.py`, and `test_vault_cache.py`, which are API-shape tests and unchanged by the swap.
