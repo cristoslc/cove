@@ -31,6 +31,10 @@ services:
       FORGEJO__repository.signing__DEFAULT_TRUST_MODEL: "committer"
       FORGEJO__server__LFS_START_SERVER: "true"
       FORGEJO__webhook__ALLOWED_HOST_LIST: ${FORGEJO_WEBHOOK_ALLOWED_HOST_LIST:-loopback}
+      # Only the ingress may assert a client address. The wildcard in app.ini
+      # is overridden here (env beats the file), and the address is stable
+      # because nginx is pinned on the default network below.
+      FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES: ${FORGEJO_TRUSTED_PROXY:-172.28.0.10}
     volumes:
       - ${FORGEJO_DATA_ROOT}/forgejo/gitea:/data/gitea
       - ${FORGEJO_DATA_ROOT}/forgejo/git:/data/git
@@ -57,6 +61,11 @@ services:
     image: ${NGINX_IMAGE:-nginx:1.27-alpine}
     container_name: ${NGINX_CONTAINER_NAME:-cove-nginx}
     restart: unless-stopped
+    # Fixed address so Forgejo can name exactly this ingress as its trusted
+    # proxy instead of trusting every container on the bridge.
+    networks:
+      default:
+        ipv4_address: ${NGINX_IP:-172.28.0.10}
     depends_on:
       forgejo:
         condition: service_started
@@ -513,6 +522,15 @@ services:
           memory: ${BIFROST_MEM_LIMIT:-512M}
 
 networks:
+  # The project network gets a declared subnet so nginx's fixed address is
+  # guaranteed on every start rather than allocated at random. 172.28.0.0/24
+  # sits outside every subnet this host already uses and outside compose's
+  # default pools.
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
   # Dedicated subnet for the bifrost egress boundary (only the two bifrost
   # profile services join it). 172.43.0.0/24 sits outside every compose
   # default pool (172.17-172.31/16 and 192.168.0.0/16). Only created when a

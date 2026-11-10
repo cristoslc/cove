@@ -94,3 +94,15 @@ cove backup uninstall           # removes the agent, keeps the snapshots
 - Repositories are ordinary files under the same data root and are already safe for a file-level backup; this command covers the database, which is the part a copy can tear.
 
 The scheduled agent is a `StartCalendarInterval` job that runs `cove backup now` once a day. It is host state, installed on request, and removed by `cove backup uninstall`.
+
+## Client address trust (`REVERSE_PROXY_TRUSTED_PROXIES`)
+
+Forgejo only believes the `X-Forwarded-For` a proxy sends when the proxy's address is listed. The image's own default used to be a wildcard, and the live `app.ini` still carries `REVERSE_PROXY_TRUSTED_PROXIES = *` from the installer, which means any container on the bridge could claim any client address.
+
+Cove overrides it in the compose environment (`FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES`), because environment variables take precedence over `app.ini`:
+
+- The project network declares a subnet (`172.28.0.0/24`) instead of taking a random one.
+- `nginx` pins `172.28.0.10` on that network, so its address is the same on every start.
+- Forgejo trusts exactly that address and nothing else.
+
+Both values are overridable (`NGINX_IP`, `FORGEJO_TRUSTED_PROXY`) but must stay equal; a test asserts they do, that the address lives inside the declared subnet, and that the wildcard never returns. Changing the network is a stack-wide recreate: every container joins a new `cove_default` with the new subnet on the next converge.

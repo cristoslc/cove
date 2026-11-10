@@ -616,3 +616,30 @@ def test_check_mode_passes_the_seal_guard_against_a_healthy_vault(tmp_path):
     assert "skipping: [localhost]" in after[:300], (
         "the guard must skip on a healthy Vault, not fail; got:\n" + after[:400]
     )
+
+
+def test_forgejo_trusts_exactly_the_ingress_address():
+    """The trusted proxy is the nginx container, not the whole bridge.
+
+    The operator ruled the exact-address option (dec_mlnlo1wcrzbc), and asked
+    whether the address can be guaranteed. It can, because the default network
+    now declares a subnet and nginx pins an address inside it.
+    """
+    compose = _load_compose()
+    subnet = compose["networks"]["default"]["ipam"]["config"][0]["subnet"]
+    assert subnet == "172.28.0.0/24"
+
+    nginx_address = compose["services"]["nginx"]["networks"]["default"]["ipv4_address"]
+    trusted = compose["services"]["forgejo"]["environment"][
+        "FORGEJO__security__REVERSE_PROXY_TRUSTED_PROXIES"
+    ]
+    # both are `${VAR:-default}` forms; compare the defaults
+    nginx_default = nginx_address.split(":-", 1)[1].rstrip("}")
+    trusted_default = trusted.split(":-", 1)[1].rstrip("}")
+    assert nginx_default == trusted_default == "172.28.0.10"
+
+    network_prefix = subnet.split("/")[0].rsplit(".", 1)[0]
+    assert nginx_default.startswith(network_prefix + "."), (
+        "the pinned address must live inside the declared subnet"
+    )
+    assert trusted_default != "*", "the wildcard must never be the default again"
