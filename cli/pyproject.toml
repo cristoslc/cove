@@ -23,6 +23,12 @@ dependencies = [
     "requests>=2.33.0",
 ]
 
+[project.optional-dependencies]
+# Unattended 1Password access through the official SDK (ruling
+# dec_fgl9wusck656). Optional: the CLI path still works without it, and the
+# SDK path fails loud naming the missing package rather than degrading.
+onepassword = ["onepassword-sdk>=0.4.2,<1"]
+
 [project.scripts]
 cove = "cove.cli:app"
 

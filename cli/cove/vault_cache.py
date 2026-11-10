@@ -154,25 +154,15 @@ def _vault_write(op_ref: str, value: str) -> None:
 
 
 def _op_read(op_ref: str) -> str:
-    # On non-macOS try bare op first (works with service account tokens).
-    if platform.system() != "Darwin":
-        proc = subprocess.run(
-            ["op", "read", "--no-newline", "--", op_ref],
-            capture_output=True, text=True, stdin=subprocess.DEVNULL,
-        )
-        if proc.returncode == 0:
-            return proc.stdout
+    """Resolve a reference through the provider seam.
 
-    # Primary path (macOS and fallback): op run wraps in a single biometric prompt.
-    proc = subprocess.run(
-        ["op", "run", "--", "op", "read", "--no-newline", "--", op_ref],
-        capture_output=True, text=True, stdin=subprocess.DEVNULL,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"op read failed for {op_ref}\nstderr: {proc.stderr.strip()}"
-        )
-    return proc.stdout
+    The store is the seam for readers; the provider is the seam for filling it.
+    A scoped service account selects the unattended SDK path, otherwise the
+    interactive CLI path is used.
+    """
+    from cove.secret_providers import read_secret
+
+    return read_secret(op_ref)
 
 
 def vault_put_op_ref(op_ref: str, force_refresh: bool = False) -> str:
