@@ -67,6 +67,7 @@ No service image pin changes in this release: OpenBao 2.7.2, dnsproxy v0.86.0 an
 ## 0.15.13 (2026-10-31)
 
 ### Added
+- **Forgejo trusts the ingress address, not the whole bridge** (`dec_mlnlo1wcrzbc`) — the live `app.ini` carried `REVERSE_PROXY_TRUSTED_PROXIES = *`, so any container on the bridge could assert any client address and the CVE-2026-20896 hardening never applied. The compose environment now overrides it (env beats the file) with `172.28.0.10`, and that address is guaranteed rather than incidental: the default network declares `172.28.0.0/24` and nginx pins the address inside it, so it is identical on every start. Both values are overridable but must stay equal; a test asserts the match, the subnet membership, and that the wildcard cannot return. Expect a stack-wide recreate on the next converge, because the default network's subnet changes.
 - **Renovate on Forgejo with an age-gated merge and release automation** ([#143](../../pulls/143)) - a nightly Renovate job on the existing runner (dry-run until a token exists), `renovate.json` covering uv/Python, Dockerfile bases, compose image pins and action pins, and `scripts/renovate/age_gated_merge.py`, which merges eligible updates only when the age window elapses (48h security-labelled, 7d patch/pin/digest, 14d minor, never major), the required no-PII check is green, and the branch is rebaselined; releases coalesce into one version bump per run. 26 tests.
 
 ### Fixed
