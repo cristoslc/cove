@@ -632,8 +632,10 @@ app.add_command(sudo)
 app.add_command(serve)
 app.add_command(vault)
 from cove.update import update
+from cove.backup import backup
 
 app.add_command(update)
+app.add_command(backup)
 
 
 

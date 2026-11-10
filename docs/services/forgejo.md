@@ -71,3 +71,26 @@ cd ~/.config/cove/compose && docker compose up -d forgejo
 Never hand-edit the deployed compose directory (`~/.config/cove/compose/`) — it is a runtime copy regenerated from the wheel.
 
 Resource extraction replaces bundled Compose files and pins, but leaves the operator's `.env` and generated `nginx/default.conf` in place. The files keep their existing inodes, which protects nginx's bind mount until `cove up` re-renders nginx from the bundled template during bring-up. `.env` stays private; unsafe symlink or special-file paths stop extraction before pruning.
+
+## Backups
+
+The Forgejo SQLite database lives on the OrbStack host-share mount on purpose: host-level backup (Time Machine, restic) can only capture what it can see on the host filesystem. Copying a live SQLite file, though, can capture a torn database that only fails at restore.
+
+`cove backup` closes that gap without coordinating with the backup tool. It writes a consistent snapshot **into the data dir**, so the next host backup picks it up with everything else:
+
+```shell
+cove backup now                 # one snapshot, verified, then pruned
+cove backup now --keep 14       # keep two weeks
+cove backup list                # what is in the data dir
+cove backup install             # daily launchd agent, default 03:15
+cove backup install --hour 4 --minute 30
+cove backup uninstall           # removes the agent, keeps the snapshots
+```
+
+- The snapshot is taken by `sqlite3 .backup` inside the container, against the live database, so SQLite itself handles the read under a writer.
+- It is written as `gitea-<UTC timestamp>.db.part`, checked with `PRAGMA integrity_check`, and only then renamed to `gitea-<timestamp>.db`. A half-written file never appears in the backup set.
+- Snapshots land in `~/Documents/cove-data/forgejo/gitea/snapshots/`, which is inside the data dir and therefore inside every host backup.
+- Retention keeps the newest `--keep` files (default 7) and deletes older ones, oldest first.
+- Repositories are ordinary files under the same data root and are already safe for a file-level backup; this command covers the database, which is the part a copy can tear.
+
+The scheduled agent is a `StartCalendarInterval` job that runs `cove backup now` once a day. It is host state, installed on request, and removed by `cove backup uninstall`.
