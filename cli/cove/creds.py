@@ -111,6 +111,39 @@ def creds():
     """
 
 
+@creds.command("item-put")
+@click.option("--vault", required=True, help="Vault name or id.")
+@click.option("--title", required=True, help="Item title.")
+@click.option("--field", "field_id", required=True, help="Field id/title holding the secret.")
+@click.option(
+    "--value-file",
+    required=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Read the value from this file; values never travel through argv.",
+)
+def item_put(vault: str, title: str, field_id: str, value_file: Path):
+    """Create or update one 1Password item through the official SDK.
+
+    The unattended write path (operator ruling dec_fgl9wusck656): a scoped
+    service account token in OP_SERVICE_ACCOUNT_TOKEN, the value read from a
+    file so it never appears in a process list, and only the item id printed.
+
+    Examples:
+
+        cove creds item-put --vault Private --title "Renovate Bot (git.cove)" \
+            --field token --value-file /tmp/token
+    """
+    from cove.op_sdk import upsert_item
+
+    value = value_file.read_text(encoding="utf-8").strip()
+    if not value:
+        raise click.ClickException(f"{value_file} is empty; refusing to write a blank secret")
+    action, item_id = upsert_item(
+        vault=vault, title=title, field_id=field_id, value=value
+    )
+    click.echo(f"{action} {title!r} in {vault} (field {field_id}), item {item_id}")
+
+
 @creds.command("vault-put")
 @click.argument("op_ref")
 @click.option(
