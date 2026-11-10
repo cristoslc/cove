@@ -351,7 +351,15 @@ Related blocker observed during this work: the 1Password CLI on this machine cur
 
 ### 7.6 Credential drift found during validation
 
-The operator's 1Password item `op://Cristos-Personal/Forgejo <hostname> Admin/password` does not authenticate on the live forge. The password cached in Vault under Cove's configured reference, `op://Private/Forgejo <hostname> Admin/password` (lowercase machine name, as `ansible_hostname` renders it), does (verified with a full web login, value never printed). The live password hash is unchanged since before this rehearsal. The likely cause is that the item moved vaults (or its password rotated) while Cove's `op_vault` still points at `Private`, and the cache-first provisioning path never noticed. This matters for the upgrade window: confirm the working credential before starting, or the login checklist item fails for reasons unrelated to Forgejo.
+The operator's 1Password item `op://Cristos-Personal/Forgejo <hostname> Admin/password` does not authenticate on the live forge. The password cached in Vault under Cove's configured reference, `op://Private/Forgejo <hostname> Admin/password` (the item title uses the machine name exactly as Ansible's `ansible_hostname` reports it, uppercase), does (verified with a full web login, value never printed). The live password hash is unchanged since before this rehearsal. The likely cause is that the item moved vaults (or its password rotated) while Cove's `op_vault` still points at `Private`, and the cache-first provisioning path never noticed.
+
+**Operator ruling, 2026-11-10 (`dec_5v8hp0zyxsjb`): make `Cristos-Personal` the canonical vault.** Execution is staged, not done:
+
+1. Set `op_vault: "Cristos-Personal"` in the CLI-managed host vars file, `~/.config/cove/state/hosts/<hostname>.yml` (not the template directory under the deployed compose tree). `cove up` passes this file to Ansible with `-e @file`, never overwrites it, and derives `ansible_hostname` from its stem, so the 1Password reference resolves to `op://Cristos-Personal/Forgejo <hostname> Admin/password`.
+2. Rotate the live admin password to the item's value (`forgejo admin user change-password`, then clear `must_change_password`).
+3. Warm the Vault cache under the new reference (`cove creds vault-put`) and verify a web login.
+
+Steps 2 and 3 are gated on the 1Password CLI, which currently reports `accounts: null` (`~/.config/op/config`) and cannot read any item. The cache is keyed by the **full op reference**, so flipping `op_vault` before the cache is warm turns every converge that needs the admin password into a hard 1Password read failure. The order above is therefore mandatory, not stylistic.
 
 ### 7.7 Support status is the decision the plan cannot make
 
