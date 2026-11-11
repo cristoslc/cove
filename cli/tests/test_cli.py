@@ -1374,6 +1374,21 @@ class TestStatusDnsCheck:
         assert not result.ok, result.detail
         assert "timed out" in result.detail, result.detail
 
+    def test_macos_dscacheutil_without_ip_address_is_a_failed_row(self, monkeypatch):
+        from cove import status
+
+        monkeypatch.setattr(status, "is_macos", lambda: True)
+        monkeypatch.setattr(
+            status.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="name: git.cove\n"
+            ),
+        )
+        result = status._check_dns()
+        assert not result.ok, result.detail
+        assert "no address returned" in result.detail, result.detail
+
     def test_linux_loopback_is_ok(self, monkeypatch):
         from cove import status
 
@@ -1429,6 +1444,13 @@ class TestStatusDnsCheck:
         from cove import status
 
         assert not status._is_local_address("::1")
+
+    def test_local_address_probe_rejects_sinkhole_and_special_addresses(self):
+        """The kernel accepts binds to these, so they must be rejected up front."""
+        from cove import status
+
+        for address in ("0.0.0.0", "224.0.0.1", "255.255.255.255"):
+            assert not status._is_local_address(address), address
 
     def test_local_address_probe_accepts_a_bound_address(self, monkeypatch):
         from cove import status
@@ -1486,7 +1508,8 @@ class TestStatusDnsCheck:
         monkeypatch.setattr(status.socket, "getaddrinfo", unresolvable)
         result = status._check_dns()
         assert not result.ok, result.detail
-        assert "git.cove" in result.detail
+        assert "git.cove.local" in result.detail, result.detail
+        assert "git.cove:" in result.detail, result.detail
 
     def test_linux_hints_skip_macos_resolver_guidance(self, monkeypatch):
         from cove import status

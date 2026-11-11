@@ -1,5 +1,6 @@
 """Health checks for cove services."""
 
+import ipaddress
 import json
 import logging
 import re
@@ -209,13 +210,23 @@ def _is_local_address(address: str) -> bool:
     Binding an ephemeral socket to the address succeeds only if the kernel has
     it on an interface, which covers loopback, LAN, VPN, and Tailscale addresses
     without enumerating interfaces. IPv6 is rejected: nginx publishes on
-    ``0.0.0.0:443`` only, so a ``::1`` mapping would not serve cove.
+    ``0.0.0.0:443`` only, so a ``::1`` mapping would not serve cove. Wildcard,
+    multicast, and reserved addresses are rejected because the kernel accepts
+    binds to them, which would make a sinkhole entry such as
+    ``0.0.0.0 git.cove`` look healthy.
+
+    Limitation: on a host with ``net.ipv4.ip_nonlocal_bind=1`` every IPv4 bind
+    succeeds, so ownership cannot be distinguished there.
     """
-    if ":" in address:
+    try:
+        ip = ipaddress.IPv4Address(address)
+    except ipaddress.AddressValueError:
+        return False
+    if ip.is_unspecified or ip.is_multicast or ip.is_reserved:
         return False
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            sock.bind((address, 0))
+            sock.bind((str(ip), 0))
     except OSError:
         return False
     return True
