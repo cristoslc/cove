@@ -448,6 +448,32 @@ class TestBifrostConfigValidation:
             value = rules[tier]["targets"][0]["ttft_timeout_ms"]
             assert 1 <= value <= 300000
 
+    def test_subscription_hops_do_not_retry_a_rate_limit(self):
+        """ADR-009: a rate limit on the subscription hop fails over on the
+        first error instead of retrying into an upstream that has already said
+        it is exhausted. Both Synthetic instances carry exactly one key, so a
+        Bifrost retry reuses that same key: every 429 would earn a second 429
+        plus a backoff sleep before the fallback ran (measured over 115 hours:
+        1,541 retries). `max_retries: 0` makes the first error the failover
+        point. The metered Ollama hops keep 1; they are not the subscription
+        quota this guards (see docs/services/bifrost.md)."""
+        providers = _provider_names(self.config)
+        for name in ("syn-subscription", "syn-infinite-backstop"):
+            assert len(providers[name]["keys"]) == 1, (
+                f"{name}: the no-retry rule exists because a single key has "
+                "nothing to rotate to"
+            )
+            assert providers[name]["network_config"]["max_retries"] == 0, (
+                f"{name}: a rate-limited subscription hop must fail over, not "
+                f"retry, got max_retries="
+                f"{providers[name]['network_config']['max_retries']!r}"
+            )
+        for name in ("ollama-cloud", "ollama"):
+            assert providers[name]["network_config"]["max_retries"] == 1, (
+                f"{name}: the metered hops are out of scope for ADR-009's "
+                "subscription failover rule"
+            )
+
     def test_default_target_matches_ladder_head(self):
         rules = _rules(self.config)
         for tier, rule in rules.items():
