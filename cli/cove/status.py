@@ -2,6 +2,8 @@
 
 import json
 import logging
+import re
+import socket
 import subprocess
 import urllib3
 from dataclasses import dataclass, field
@@ -197,26 +199,77 @@ def _check_vault() -> CheckResult:
     )
 
 
+def _local_addresses() -> set[str]:
+    """Addresses this host owns, used to judge a ``*.cove`` mapping.
+
+    Loopback always counts. The primary interface address comes from a UDP
+    ``connect()`` to TEST-NET-1: the kernel picks a source address without
+    sending a packet, so this works offline and touches no network.
+    """
+    addresses = {"127.0.0.1", "::1"}
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("192.0.2.1", 9))
+            addresses.add(sock.getsockname()[0])
+    except OSError:
+        # Best effort: loopback still lets the check pass on a working host.
+        logging.debug("could not determine primary interface address", exc_info=True)
+    return addresses
+
+
+def _resolve_addresses(name: str) -> list[str]:
+    """Resolve ``name`` with the platform's real lookup path.
+
+    macOS keeps the ``dscacheutil`` query the check has always used; other
+    platforms go through NSS via ``getaddrinfo`` so ``/etc/hosts`` and the
+    local resolver both count. Raises OSError (including FileNotFoundError and
+    socket.gaierror) or subprocess.TimeoutExpired; the caller turns those into
+    a failed row.
+    """
+    if is_macos():
+        result = subprocess.run(
+            ["dscacheutil", "-q", "host", "-a", "name", name],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            return []
+        return re.findall(r"(?m)^\s*ip_address:\s*(\S+)\s*$", result.stdout)
+
+    infos = socket.getaddrinfo(name, None, type=socket.SOCK_STREAM)
+    return list(dict.fromkeys(info[4][0] for info in infos))
+
+
 def _check_dns() -> CheckResult:
+    local = _local_addresses()
+    failures: list[str] = []
     for name in ("git.cove.local", "git.cove"):
         try:
-            result = subprocess.run(
-                ["dscacheutil", "-q", "host", "-a", "name", name],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0 and "127.0.0.1" in result.stdout:
-                return CheckResult(name="DNS resolution", ok=True, detail=f"{name} → 127.0.0.1")
+            addresses = _resolve_addresses(name)
         except subprocess.TimeoutExpired:
+            failures.append(f"{name}: lookup timed out")
             continue
+        except OSError as exc:
+            failures.append(f"{name}: lookup failed ({exc})")
+            continue
+        hits = [address for address in addresses if address in local]
+        if hits:
+            return CheckResult(name="DNS resolution", ok=True, detail=f"{name} → {hits[0]}")
+        if addresses:
+            failures.append(f"{name} → {', '.join(addresses)} (not this host)")
+        else:
+            failures.append(f"{name}: no address returned")
+
+    hints = ["Check /etc/hosts: `grep cove /etc/hosts`"]
+    if is_macos():
+        hints += [
+            "Check /etc/resolver/cove",
+            "Run `cove sudo enable` then `cove up` to configure DNS",
+        ]
     return CheckResult(
         name="DNS resolution",
         ok=False,
-        detail="git.cove.local / git.cove does not resolve to 127.0.0.1",
-        hints=[
-            "Check /etc/hosts: `grep cove /etc/hosts`",
-            "Check /etc/resolver/cove",
-            "Run `cove sudo enable` then `cove up` to configure DNS",
-        ],
+        detail="; ".join(failures),
+        hints=hints,
     )
 
 
