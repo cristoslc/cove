@@ -1,5 +1,8 @@
 """Tests for CLI commands and deployment correctness."""
 
+import socket
+import subprocess
+
 import yaml
 from pathlib import Path
 from unittest.mock import patch
@@ -1306,6 +1309,140 @@ class TestCoveStatusCommand:
             "cove.status.resolve_compose_dir", side_effect=RuntimeError("no compose")
         ):
             assert _check_resolver_port() is None
+
+
+class TestStatusDnsCheck:
+    """The DNS row must report on every platform and must never raise.
+
+    Regression: `_check_dns` shelled out to macOS-only `dscacheutil` on Linux,
+    the uncaught FileNotFoundError aborted the whole `cove status` report.
+    """
+
+    def test_macos_dscacheutil_hit_is_ok(self, monkeypatch):
+        from cove import status
+
+        monkeypatch.setattr(status, "is_macos", lambda: True)
+        monkeypatch.setattr(
+            status.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(
+                args=[], returncode=0, stdout="ip_address: 127.0.0.1\n"
+            ),
+        )
+        result = status._check_dns()
+        assert result.ok, result.detail
+        assert "127.0.0.1" in result.detail
+
+    def test_macos_missing_dscacheutil_is_a_failed_row_not_a_traceback(self, monkeypatch):
+        from cove import status
+
+        def missing(*a, **k):
+            raise FileNotFoundError(2, "No such file or directory", "dscacheutil")
+
+        monkeypatch.setattr(status, "is_macos", lambda: True)
+        monkeypatch.setattr(status.subprocess, "run", missing)
+        result = status._check_dns()
+        assert not result.ok, "a missing lookup tool must fail the row, not pass it"
+        assert "dscacheutil" in f"{result.detail} {' '.join(result.hints)}"
+
+    def test_linux_loopback_is_ok(self, monkeypatch):
+        from cove import status
+
+        monkeypatch.setattr(status, "is_macos", lambda: False)
+        monkeypatch.setattr(
+            status.socket,
+            "getaddrinfo",
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 0))],
+        )
+        result = status._check_dns()
+        assert result.ok, result.detail
+        assert "127.0.0.1" in result.detail
+
+    def test_linux_local_interface_address_is_ok(self, monkeypatch):
+        """A Linux host may map *.cove to its LAN address; nginx publishes on
+        0.0.0.0:443, so an address this host owns is a working mapping."""
+        from cove import status
+
+        monkeypatch.setattr(status, "is_macos", lambda: False)
+        monkeypatch.setattr(
+            status.socket,
+            "getaddrinfo",
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.0.25", 0))],
+        )
+        monkeypatch.setattr(
+            status, "_local_addresses", lambda: {"127.0.0.1", "::1", "192.168.0.25"}
+        )
+        result = status._check_dns()
+        assert result.ok, result.detail
+        assert "192.168.0.25" in result.detail
+
+    def test_linux_foreign_address_fails(self, monkeypatch):
+        from cove import status
+
+        monkeypatch.setattr(status, "is_macos", lambda: False)
+        monkeypatch.setattr(
+            status.socket,
+            "getaddrinfo",
+            lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
+        )
+        monkeypatch.setattr(status, "_local_addresses", lambda: {"127.0.0.1", "::1"})
+        result = status._check_dns()
+        assert not result.ok, "a public address must not count as local cove DNS"
+        assert "93.184.216.34" in result.detail
+
+    def test_linux_unresolvable_name_is_a_failed_row(self, monkeypatch):
+        from cove import status
+
+        def unresolvable(*a, **k):
+            raise socket.gaierror(-2, "Name or service not known")
+
+        monkeypatch.setattr(status, "is_macos", lambda: False)
+        monkeypatch.setattr(status.socket, "getaddrinfo", unresolvable)
+        result = status._check_dns()
+        assert not result.ok, result.detail
+        assert "git.cove" in result.detail
+
+    def test_linux_hints_skip_macos_resolver_guidance(self, monkeypatch):
+        from cove import status
+
+        monkeypatch.setattr(status, "is_macos", lambda: False)
+        monkeypatch.setattr(
+            status, "_resolve_addresses", lambda name: []
+        )
+        result = status._check_dns()
+        assert not result.ok
+        assert not any("/etc/resolver" in h for h in result.hints), result.hints
+
+    def test_status_command_still_reports_when_dns_lookup_fails(self):
+        """The whole report survives a broken DNS row: the crash must not
+        take the container, nginx, Forgejo, or Vault rows down with it."""
+        from cove.status import CheckResult
+
+        def unresolvable(*a, **k):
+            raise FileNotFoundError(2, "No such file or directory", "dscacheutil")
+
+        with patch("cove.status._check_containers", return_value=[]), patch(
+            "cove.status._check_nginx_ingress",
+            return_value=CheckResult(name="nginx ingress", ok=True, detail="ok"),
+        ), patch(
+            "cove.status._check_forgejo",
+            return_value=CheckResult(name="Forgejo API", ok=True, detail="ok"),
+        ), patch(
+            "cove.status._check_vault",
+            return_value=CheckResult(name="Vault API", ok=True, detail="ok"),
+        ), patch(
+            "cove.status._check_resolver_port", return_value=None
+        ), patch(
+            "cove.status.is_macos", return_value=True
+        ), patch(
+            "cove.status.subprocess.run", unresolvable
+        ):
+            result = CliRunner().invoke(cove.cli.app, ["status"])
+
+        assert "Traceback" not in result.output, result.output
+        assert "DNS resolution" in result.output, result.output
+        assert "Forgejo API" in result.output, result.output
+        assert result.exit_code == 1, "a failed required check must exit non-zero"
 
 
 class TestCoveDownCommand:
