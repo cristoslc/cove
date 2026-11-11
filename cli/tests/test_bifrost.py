@@ -747,7 +747,7 @@ class TestBifrostNginxSurface:
         rendered = _render_nginx()
         assert "server_name llmproxy.cove llmproxy.cove.local;" in rendered
         # The product-swap line names the currently active proxy.
-        assert "set $llmproxy_upstream http://litellm:4000;" in rendered
+        assert "set $llmproxy_upstream http://bifrost:8080;" in rendered
         block = _extract_server_block(rendered, "server_name llmproxy.cove")
         assert "proxy_pass $llmproxy_upstream$request_uri;" in block
         assert "resolver 127.0.0.11" in block

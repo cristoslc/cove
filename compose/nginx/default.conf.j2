@@ -234,7 +234,7 @@ server {
     # "Client endpoint" + the cutover runbook). The matching backend key is
     # already in llmproxy-auth.conf's map, so the flip is this line, not a
     # client change.
-    set $llmproxy_upstream http://litellm:4000;
+    set $llmproxy_upstream http://bifrost:8080;
 
     # Client auth at the edge. $llmproxy_authorized is an exact-match map of
     # "Bearer <client token>" (llmproxy-auth.conf), so anything else — a
