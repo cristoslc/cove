@@ -32,6 +32,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - **The dead Headroom compression claim**: LiteLLM 1.84.0 has no Headroom integration (it ships as a `guardrails:` entry in 1.92 and later), so the former `headroom_settings:` block was silently ignored. The sidecar's counters showed one request in its lifetime and zero compression jobs, and its published `4001` mapped a port nothing listened on. The inert setting, the sidecar service, its bringup environment, the `cove status` tuple, and the CLI's compression promise are removed. A negative guard fails if the setting returns without the supported form and a pin that implements it. Compression is not lost: it was never running, and the approved Bifrost cutover does not carry it. Evidence and the two independent request-size gaps are in `docs/tech-debt/litellm-headroom-and-request-size.md`.
 
+## 0.15.17 (2026-11-11)
+
+### Fixed
+- **`cove status` survives a Linux host without `dscacheutil`** ([#1](https://github.com/cristoslc/cove/pull/1)) — `_check_dns()` called the macOS Directory Services tool on every platform. On Linux the missing binary raised `FileNotFoundError` out of `check_all()`, so the command printed a traceback and no rows at all, including the container, nginx, Forgejo, and Vault checks. The DNS row now resolves through `dscacheutil` on macOS and `getaddrinfo` elsewhere, accepts only an address this host owns (bind probe; IPv6, wildcard, multicast, and reserved answers are rejected because nginx publishes `0.0.0.0:443`), and renders a missing tool, timeout, non-zero exit, or NXDOMAIN as a failed row carrying the real error text. Sixteen unit tests plus a CLI-level test prove the report survives a broken DNS row.
+
+### Changed
+- **`cli/uv.lock` catches up to uv 0.13's lock format** — revision 3 to 5, the editable `cove-cli` entry moves from the stale 0.15.13 to the project version, and `ansible-core`'s redundant per-entry dependency markers are normalized away. No package versions change; `uv lock --check` and `uv sync --frozen` pass, and `uv run` no longer rewrites the file.
+
 ## 0.15.16 (2026-11-05)
 
 ### Changed
