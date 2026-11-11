@@ -199,22 +199,26 @@ def _check_vault() -> CheckResult:
     )
 
 
-def _local_addresses() -> set[str]:
-    """Addresses this host owns, used to judge a ``*.cove`` mapping.
+class _LookupFailed(Exception):
+    """A resolver tool ran but did not answer usefully (non-zero exit)."""
 
-    Loopback always counts. The primary interface address comes from a UDP
-    ``connect()`` to TEST-NET-1: the kernel picks a source address without
-    sending a packet, so this works offline and touches no network.
+
+def _is_local_address(address: str) -> bool:
+    """True when this host owns *address*.
+
+    Binding an ephemeral socket to the address succeeds only if the kernel has
+    it on an interface, which covers loopback, LAN, VPN, and Tailscale addresses
+    without enumerating interfaces. IPv6 is rejected: nginx publishes on
+    ``0.0.0.0:443`` only, so a ``::1`` mapping would not serve cove.
     """
-    addresses = {"127.0.0.1", "::1"}
+    if ":" in address:
+        return False
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("192.0.2.1", 9))
-            addresses.add(sock.getsockname()[0])
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((address, 0))
     except OSError:
-        # Best effort: loopback still lets the check pass on a working host.
-        logging.debug("could not determine primary interface address", exc_info=True)
-    return addresses
+        return False
+    return True
 
 
 def _resolve_addresses(name: str) -> list[str]:
@@ -223,16 +227,20 @@ def _resolve_addresses(name: str) -> list[str]:
     macOS keeps the ``dscacheutil`` query the check has always used; other
     platforms go through NSS via ``getaddrinfo`` so ``/etc/hosts`` and the
     local resolver both count. Raises OSError (including FileNotFoundError and
-    socket.gaierror) or subprocess.TimeoutExpired; the caller turns those into
-    a failed row.
+    socket.gaierror), ``_LookupFailed``, or ``subprocess.TimeoutExpired``; the
+    caller turns those into a failed row.
     """
     if is_macos():
         result = subprocess.run(
             ["dscacheutil", "-q", "host", "-a", "name", name],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=10, errors="replace",
         )
         if result.returncode != 0:
-            return []
+            detail = (result.stderr or result.stdout).strip()
+            raise _LookupFailed(
+                f"dscacheutil exited {result.returncode}"
+                + (f": {detail}" if detail else "")
+            )
         return re.findall(r"(?m)^\s*ip_address:\s*(\S+)\s*$", result.stdout)
 
     infos = socket.getaddrinfo(name, None, type=socket.SOCK_STREAM)
@@ -240,7 +248,6 @@ def _resolve_addresses(name: str) -> list[str]:
 
 
 def _check_dns() -> CheckResult:
-    local = _local_addresses()
     failures: list[str] = []
     for name in ("git.cove.local", "git.cove"):
         try:
@@ -248,16 +255,19 @@ def _check_dns() -> CheckResult:
         except subprocess.TimeoutExpired:
             failures.append(f"{name}: lookup timed out")
             continue
+        except _LookupFailed as exc:
+            failures.append(f"{name}: {exc}")
+            continue
         except OSError as exc:
             failures.append(f"{name}: lookup failed ({exc})")
             continue
-        hits = [address for address in addresses if address in local]
-        if hits:
-            return CheckResult(name="DNS resolution", ok=True, detail=f"{name} → {hits[0]}")
-        if addresses:
-            failures.append(f"{name} → {', '.join(addresses)} (not this host)")
-        else:
+        if not addresses:
             failures.append(f"{name}: no address returned")
+            continue
+        local = next((address for address in addresses if _is_local_address(address)), None)
+        if local is not None:
+            return CheckResult(name="DNS resolution", ok=True, detail=f"{name} → {local}")
+        failures.append(f"{name} → {', '.join(addresses)} (not this host)")
 
     hints = ["Check /etc/hosts: `grep cove /etc/hosts`"]
     if is_macos():

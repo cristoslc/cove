@@ -1343,7 +1343,36 @@ class TestStatusDnsCheck:
         monkeypatch.setattr(status.subprocess, "run", missing)
         result = status._check_dns()
         assert not result.ok, "a missing lookup tool must fail the row, not pass it"
-        assert "dscacheutil" in f"{result.detail} {' '.join(result.hints)}"
+        assert "lookup failed" in result.detail, result.detail
+        assert "dscacheutil" in result.detail, result.detail
+
+    def test_macos_dscacheutil_nonzero_exit_reports_the_tool_error(self, monkeypatch):
+        from cove import status
+
+        monkeypatch.setattr(status, "is_macos", lambda: True)
+        monkeypatch.setattr(
+            status.subprocess,
+            "run",
+            lambda *a, **k: subprocess.CompletedProcess(
+                args=[], returncode=2, stdout="", stderr="DS flap\n"
+            ),
+        )
+        result = status._check_dns()
+        assert not result.ok, "a failing lookup tool must not pass as NXDOMAIN"
+        assert "exited 2" in result.detail, result.detail
+        assert "DS flap" in result.detail, result.detail
+
+    def test_macos_dscacheutil_timeout_is_a_failed_row(self, monkeypatch):
+        from cove import status
+
+        def slow(*a, **k):
+            raise subprocess.TimeoutExpired(cmd="dscacheutil", timeout=10)
+
+        monkeypatch.setattr(status, "is_macos", lambda: True)
+        monkeypatch.setattr(status.subprocess, "run", slow)
+        result = status._check_dns()
+        assert not result.ok, result.detail
+        assert "timed out" in result.detail, result.detail
 
     def test_linux_loopback_is_ok(self, monkeypatch):
         from cove import status
@@ -1370,11 +1399,68 @@ class TestStatusDnsCheck:
             lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.0.25", 0))],
         )
         monkeypatch.setattr(
-            status, "_local_addresses", lambda: {"127.0.0.1", "::1", "192.168.0.25"}
+            status, "_is_local_address", lambda address: address == "192.168.0.25"
         )
         result = status._check_dns()
         assert result.ok, result.detail
         assert "192.168.0.25" in result.detail
+
+    def test_linux_mixed_v4_v6_picks_the_local_v4_address(self, monkeypatch):
+        from cove import status
+
+        monkeypatch.setattr(status, "is_macos", lambda: False)
+        monkeypatch.setattr(
+            status.socket,
+            "getaddrinfo",
+            lambda *a, **k: [
+                (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::1", 0, 0, 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.0.25", 0)),
+            ],
+        )
+        monkeypatch.setattr(
+            status, "_is_local_address", lambda address: address == "192.168.0.25"
+        )
+        result = status._check_dns()
+        assert result.ok, result.detail
+        assert "192.168.0.25" in result.detail
+
+    def test_linux_ipv6_loopback_is_not_local(self):
+        """nginx publishes 0.0.0.0:443 only, so ::1 does not serve cove."""
+        from cove import status
+
+        assert not status._is_local_address("::1")
+
+    def test_local_address_probe_accepts_a_bound_address(self, monkeypatch):
+        from cove import status
+
+        class _Sock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def bind(self, address):
+                self.bound = address
+
+        monkeypatch.setattr(status.socket, "socket", lambda *a, **k: _Sock())
+        assert status._is_local_address("192.168.0.25")
+
+    def test_local_address_probe_rejects_a_foreign_address(self, monkeypatch):
+        from cove import status
+
+        class _Sock:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def bind(self, address):
+                raise OSError(99, "Cannot assign requested address")
+
+        monkeypatch.setattr(status.socket, "socket", lambda *a, **k: _Sock())
+        assert not status._is_local_address("93.184.216.34")
 
     def test_linux_foreign_address_fails(self, monkeypatch):
         from cove import status
@@ -1385,7 +1471,7 @@ class TestStatusDnsCheck:
             "getaddrinfo",
             lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))],
         )
-        monkeypatch.setattr(status, "_local_addresses", lambda: {"127.0.0.1", "::1"})
+        monkeypatch.setattr(status, "_is_local_address", lambda address: False)
         result = status._check_dns()
         assert not result.ok, "a public address must not count as local cove DNS"
         assert "93.184.216.34" in result.detail
@@ -1405,10 +1491,11 @@ class TestStatusDnsCheck:
     def test_linux_hints_skip_macos_resolver_guidance(self, monkeypatch):
         from cove import status
 
+        def unresolvable(*a, **k):
+            raise socket.gaierror(-2, "Name or service not known")
+
         monkeypatch.setattr(status, "is_macos", lambda: False)
-        monkeypatch.setattr(
-            status, "_resolve_addresses", lambda name: []
-        )
+        monkeypatch.setattr(status.socket, "getaddrinfo", unresolvable)
         result = status._check_dns()
         assert not result.ok
         assert not any("/etc/resolver" in h for h in result.hints), result.hints
