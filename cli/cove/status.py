@@ -1,7 +1,10 @@
 """Health checks for cove services."""
 
+import ipaddress
 import json
 import logging
+import re
+import socket
 import subprocess
 import urllib3
 from dataclasses import dataclass, field
@@ -197,26 +200,97 @@ def _check_vault() -> CheckResult:
     )
 
 
+class _LookupFailed(Exception):
+    """A resolver tool ran but did not answer usefully (non-zero exit)."""
+
+
+def _is_local_address(address: str) -> bool:
+    """True when this host owns *address*.
+
+    Binding an ephemeral socket to the address succeeds only if the kernel has
+    it on an interface, which covers loopback, LAN, VPN, and Tailscale addresses
+    without enumerating interfaces. IPv6 is rejected: nginx publishes on
+    ``0.0.0.0:443`` only, so a ``::1`` mapping would not serve cove. Wildcard,
+    multicast, and reserved addresses are rejected because the kernel accepts
+    binds to them, which would make a sinkhole entry such as
+    ``0.0.0.0 git.cove`` look healthy.
+
+    Limitation: on a host with ``net.ipv4.ip_nonlocal_bind=1`` every IPv4 bind
+    succeeds, so ownership cannot be distinguished there.
+    """
+    try:
+        ip = ipaddress.IPv4Address(address)
+    except ipaddress.AddressValueError:
+        return False
+    if ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+        return False
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.bind((str(ip), 0))
+    except OSError:
+        return False
+    return True
+
+
+def _resolve_addresses(name: str) -> list[str]:
+    """Resolve ``name`` with the platform's real lookup path.
+
+    macOS keeps the ``dscacheutil`` query the check has always used; other
+    platforms go through NSS via ``getaddrinfo`` so ``/etc/hosts`` and the
+    local resolver both count. Raises OSError (including FileNotFoundError and
+    socket.gaierror), ``_LookupFailed``, or ``subprocess.TimeoutExpired``; the
+    caller turns those into a failed row.
+    """
+    if is_macos():
+        result = subprocess.run(
+            ["dscacheutil", "-q", "host", "-a", "name", name],
+            capture_output=True, text=True, timeout=10, errors="replace",
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()
+            raise _LookupFailed(
+                f"dscacheutil exited {result.returncode}"
+                + (f": {detail}" if detail else "")
+            )
+        return re.findall(r"(?m)^\s*ip_address:\s*(\S+)\s*$", result.stdout)
+
+    infos = socket.getaddrinfo(name, None, type=socket.SOCK_STREAM)
+    return list(dict.fromkeys(info[4][0] for info in infos))
+
+
 def _check_dns() -> CheckResult:
+    failures: list[str] = []
     for name in ("git.cove.local", "git.cove"):
         try:
-            result = subprocess.run(
-                ["dscacheutil", "-q", "host", "-a", "name", name],
-                capture_output=True, text=True, timeout=10,
-            )
-            if result.returncode == 0 and "127.0.0.1" in result.stdout:
-                return CheckResult(name="DNS resolution", ok=True, detail=f"{name} → 127.0.0.1")
+            addresses = _resolve_addresses(name)
         except subprocess.TimeoutExpired:
+            failures.append(f"{name}: lookup timed out")
             continue
+        except _LookupFailed as exc:
+            failures.append(f"{name}: {exc}")
+            continue
+        except OSError as exc:
+            failures.append(f"{name}: lookup failed ({exc})")
+            continue
+        if not addresses:
+            failures.append(f"{name}: no address returned")
+            continue
+        local = next((address for address in addresses if _is_local_address(address)), None)
+        if local is not None:
+            return CheckResult(name="DNS resolution", ok=True, detail=f"{name} → {local}")
+        failures.append(f"{name} → {', '.join(addresses)} (not this host)")
+
+    hints = ["Check /etc/hosts: `grep cove /etc/hosts`"]
+    if is_macos():
+        hints += [
+            "Check /etc/resolver/cove",
+            "Run `cove sudo enable` then `cove up` to configure DNS",
+        ]
     return CheckResult(
         name="DNS resolution",
         ok=False,
-        detail="git.cove.local / git.cove does not resolve to 127.0.0.1",
-        hints=[
-            "Check /etc/hosts: `grep cove /etc/hosts`",
-            "Check /etc/resolver/cove",
-            "Run `cove sudo enable` then `cove up` to configure DNS",
-        ],
+        detail="; ".join(failures),
+        hints=hints,
     )
 
 
