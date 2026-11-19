@@ -38,6 +38,14 @@ services:
     volumes:
       - ${FORGEJO_DATA_ROOT}/forgejo/gitea:/data/gitea
       - ${FORGEJO_DATA_ROOT}/forgejo/git:/data/git
+      # The SSH host identity. Forgejo writes ssh_host_*_key to /data/ssh and
+      # sshd reads them from there (sshd_config pins HostKey /data/ssh/...),
+      # while /etc/ssh above is only sshd's config. Without this bind, /data/ssh
+      # sits on the container's anonymous /data volume, so every recreate
+      # generates a new key and every client that pinned the old fingerprint
+      # fails host-key verification (2026-11-19T00:22). Same host-side pattern
+      # as gitea/ and git/ so the identity outlives the container.
+      - ${FORGEJO_DATA_ROOT}/forgejo/ssh-host-keys:/data/ssh
       - ${FORGEJO_DATA_ROOT}/forgejo/ssh:/etc/ssh
       - ${FORGEJO_DATA_ROOT}/certs:/certs:ro
       - /etc/timezone:/etc/timezone:ro
