@@ -27,3 +27,10 @@ regexes = ['''sk-abcdef123''']
 [[allowlists]]
 description = "age public keys are not secrets"
 regexes = ['''age1[a-z0-9]{20,}''']
+
+# Deliberate fixtures for the edge-secrets spike: every value is fake but the
+# shape is real, which is the point of the corpus. The gate must not fire on
+# the file that exists to prove the gate works.
+[[allowlists]]
+description = "Fake secret shapes in the edge-secrets spike corpus"
+paths = ['''scripts/spikes/edge-secrets/corpus/''']

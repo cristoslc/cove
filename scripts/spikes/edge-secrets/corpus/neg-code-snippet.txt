@@ -1,0 +1,2 @@
+api_key = os.environ["PROVIDER_KEY"]
+client = OpenAI(api_key=api_key)
