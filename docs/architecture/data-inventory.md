@@ -52,7 +52,7 @@ Each item is classified on the dimensions the governance policy will need:
 |---|---|---|---|---|
 | Forgejo SQLite DB `~/Documents/cove-data/forgejo/gitea/gitea.db` | service-state | **yes** | **NO** | Repos, issues, PRs, registry index. The work product. |
 | Forgejo git repo store `~/Documents/cove-data/forgejo/git/` | service-state | **yes** | NO | Bare repos. |
-| Forgejo SSH host keys `~/Documents/cove-data/forgejo/ssh/` | service-state | yes | NO | Host identity. |
+| Forgejo SSH host keys `~/Documents/cove-data/forgejo/ssh-host-keys/` | service-state | **yes** | **NO** | Host identity, bind-mounted at `/data/ssh`. `forgejo/ssh/` is sshd's `/etc/ssh` config, not the keys; before 2026-11-19 the keys sat on the anonymous `/data` volume and every recreate broke every pinned client. |
 | Vault Raft storage `~/Documents/cove-data/vault/data/` | service-state | **yes** | NO | All Vault secrets incl. op-cache; encrypted at rest. |
 | Vault audit logs `~/Documents/cove-data/vault/logs/` | derived | no | yes | |
 | Speedtest DB `~/Documents/cove-data/speedtest/database.sqlite` | service-state | **yes** | NO | History + seeded admin row. |

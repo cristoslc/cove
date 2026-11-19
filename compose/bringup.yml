@@ -457,6 +457,7 @@
       loop:
         - "{{ cove_data_root }}/forgejo/gitea"
         - "{{ cove_data_root }}/forgejo/git"
+        - "{{ cove_data_root }}/forgejo/ssh-host-keys"
         - "{{ cove_data_root }}/forgejo/ssh"
         - "{{ cove_data_root }}/certs"
         - "{{ cove_data_root }}/vault/data"

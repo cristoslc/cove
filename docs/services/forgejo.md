@@ -72,6 +72,30 @@ Never hand-edit the deployed compose directory (`~/.config/cove/compose/`) — i
 
 Resource extraction replaces bundled Compose files and pins, but leaves the operator's `.env` and generated `nginx/default.conf` in place. The files keep their existing inodes, which protects nginx's bind mount until `cove up` re-renders nginx from the bundled template during bring-up. `.env` stays private; unsafe symlink or special-file paths stop extraction before pruning.
 
+## SSH host identity
+
+Forgejo writes its SSH host keys to `/data/ssh`, and the image's `sshd_config` pins `HostKey /data/ssh/ssh_host_*_key` there. The compose service binds that directory from the host:
+
+```text
+${FORGEJO_DATA_ROOT}/forgejo/ssh-host-keys -> /data/ssh
+```
+
+This is the same pattern as `/data/git` and `/data/gitea`, and it is what makes the forge's identity survive a container recreate. Before 2026-11-19 the bind was missing: `/data/ssh` sat on the container's anonymous `/data` volume, so every recreate generated a new host key and every client that had pinned the old fingerprint failed with `REMOTE HOST IDENTIFICATION HAS CHANGED` (that day's recreate at 00:17 changed the ED25519 fingerprint and blocked every git operation until `known_hosts` was updated). Client-side verification is unchanged; only the key's lifetime changed.
+
+`forgejo/ssh/` is a different directory: it is bind-mounted at `/etc/ssh` and carries sshd's configuration, not the host keys. Do not confuse the two.
+
+When migrating a host that predates this bind, copy the live keys onto the host **before** recreating the container, or the new bind starts empty and Forgejo generates a fresh identity:
+
+```shell
+mkdir -p ~/Documents/cove-data/forgejo/ssh-host-keys
+chmod 700 ~/Documents/cove-data/forgejo/ssh-host-keys
+docker cp cove-forgejo:/data/ssh/. ~/Documents/cove-data/forgejo/ssh-host-keys/
+chmod 600 ~/Documents/cove-data/forgejo/ssh-host-keys/ssh_host_*_key
+chmod 644 ~/Documents/cove-data/forgejo/ssh-host-keys/ssh_host_*_key.pub
+```
+
+Then confirm the fingerprint before and after the recreate; it must not change. The host directory is now the durable copy and belongs in the host backup alongside `gitea/` and `git/`.
+
 ## Backups
 
 The Forgejo SQLite database lives on the OrbStack host-share mount on purpose: host-level backup (Time Machine, restic) can only capture what it can see on the host filesystem. Copying a live SQLite file, though, can capture a torn database that only fails at restore.

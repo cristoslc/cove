@@ -643,3 +643,39 @@ def test_forgejo_trusts_exactly_the_ingress_address():
         "the pinned address must live inside the declared subnet"
     )
     assert trusted_default != "*", "the wildcard must never be the default again"
+
+
+class TestForgejoSshHostKeyDurability:
+    """The forge's SSH host identity must survive a container recreate.
+
+    Forgejo writes its SSH host keys to /data/ssh, and sshd reads them from
+    there. That path used to sit on the container's anonymous /data volume, so
+    every recreate generated new keys and every client that pinned the old
+    fingerprint failed with "REMOTE HOST IDENTIFICATION HAS CHANGED"
+    (2026-11-19T00:22, after the container was recreated at 00:17). The host
+    keys belong on a host bind next to git/ and gitea/, which already persist.
+    """
+
+    HOST_KEY_MOUNT = "${FORGEJO_DATA_ROOT}/forgejo/ssh-host-keys:/data/ssh"
+
+    def test_compose_binds_a_host_directory_for_ssh_host_keys(self):
+        volumes = _load_compose()["services"]["forgejo"]["volumes"]
+        assert self.HOST_KEY_MOUNT in volumes, (
+            "Forgejo's host keys must live on a host bind mount; an anonymous "
+            f"/data volume regenerates them on every recreate: {volumes}"
+        )
+
+    def test_no_other_volume_targets_data_ssh(self):
+        volumes = _load_compose()["services"]["forgejo"]["volumes"]
+        targets = [v.split(":")[1] for v in volumes]
+        assert targets.count("/data/ssh") == 1, (
+            f"exactly one mount may own /data/ssh, got {volumes}"
+        )
+
+    def test_bringup_creates_the_host_key_directory(self):
+        bringup = (COMPOSE_DIR / "bringup.yml").read_text(encoding="utf-8")
+        assert "{{ cove_data_root }}/forgejo/ssh-host-keys" in bringup, (
+            "a fresh install must create the host-key directory before compose "
+            "starts the container, like forgejo/git and forgejo/gitea"
+        )
+
