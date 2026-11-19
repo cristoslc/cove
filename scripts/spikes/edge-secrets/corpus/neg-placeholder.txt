@@ -1,0 +1,1 @@
+The literal <redacted-forgejo-token> stands in for a value that was rotated.
