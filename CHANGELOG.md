@@ -37,6 +37,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Removed
 - **The dead Headroom compression claim**: LiteLLM 1.84.0 has no Headroom integration (it ships as a `guardrails:` entry in 1.92 and later), so the former `headroom_settings:` block was silently ignored. The sidecar's counters showed one request in its lifetime and zero compression jobs, and its published `4001` mapped a port nothing listened on. The inert setting, the sidecar service, its bringup environment, the `cove status` tuple, and the CLI's compression promise are removed. A negative guard fails if the setting returns without the supported form and a pin that implements it. Compression is not lost: it was never running, and the approved Bifrost cutover does not carry it. Evidence and the two independent request-size gaps are in `docs/tech-debt/litellm-headroom-and-request-size.md`.
 
+## 0.15.17 (2026-11-19)
+
+### Added
+- **An expected-state file, machine-readable status, and a Forgejo healthcheck** ([#169](../../pulls/169)) — `cove status --json` emits one object per check and the command exits non-zero when a required check fails, in both forms. `cove up`, `cove down` and each service `up`/`down` write `~/.config/cove/state/expected.json` (0600, atomic) recording what the stack was asked to be, with `converge_incomplete` when a converge fails part-way. Forgejo now probes `/api/healthz`, so a wedge reads unhealthy instead of "running".
+- **`cove backup` writes consistent Forgejo database snapshots into the data dir** ([#172](../../pulls/172)) — `sqlite3 .backup` inside the container, verified with `PRAGMA integrity_check`, renamed into place only after the check, retention keeping the newest N. A daily launchd agent is one command away, and host backups capture the snapshots naturally.
+- **A provider seam with the official 1Password SDK** ([#175](../../pulls/175)) — the store stays the seam for readers; `secret_providers.py` is the seam for filling it, with one class per authentication path. A scoped service account selects the SDK, otherwise the CLI. `cove creds item-put` creates or updates one item with the value read from a file.
+- **A measured spike for an edge secrets check** ([#177](../../pulls/177)) — the repo ruleset catches 4 of 6 real secret shapes and misses bare 40-hex Forgejo tokens and `sk-proj-` keys; two context-aware rules close both with no false positives against a corpus containing commit SHAs. Latency of ~246 ms per process puts the check in-process, not on a subrequest path.
+
+### Fixed
+- **Forgejo trusts the pinned ingress address, not the whole bridge** ([#173](../../pulls/173)) — the environment overrides the `app.ini` wildcard with `172.28.0.10`, and that address is guaranteed because the project network declares `172.28.0.0/24` and nginx pins the address inside it. This release's converge replaces the project network, so every container is recreated once.
+- **Bifrost fails over on the first rate limit instead of retrying it** ([#176](../../pulls/176)) — a 429 now escalates to the next provider rather than burning the retry budget on the primary.
+- **The staging harness survives a real rehearsal** ([#174](../../pulls/174)) — root URL and domain values, the runner socket GID, a staging-only runner network, a bounded ToolHive gate, and a staging ingress subnet that cannot collide with the live one. The Forgejo 17 rehearsal method is recorded in `docs/plans/forgejo-17-upgrade.md`.
+
 ## 0.15.16 (2026-11-05)
 
 ### Changed
