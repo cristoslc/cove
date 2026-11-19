@@ -1,1 +1,1 @@
-Read the value from op://Private/Forgejo MBPBK-202602 Admin/password and never print it.
+Read the value from op://Private/Forgejo <hostname> Admin/password and never print it.
