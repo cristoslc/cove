@@ -8,6 +8,11 @@ from cove import secret_providers
 
 
 def test_a_service_account_token_selects_the_sdk(monkeypatch):
+    # The token is one of two inputs; the package is the other. Declaring the
+    # package keeps this test about the rule rather than about the host.
+    from cove import secret_providers
+
+    monkeypatch.setattr(secret_providers, "_sdk_available", lambda: True)
     monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "fake-token")
     provider = secret_providers.provider_for("op://Private/Thing/password")
     assert provider.name == "1password-sdk"
