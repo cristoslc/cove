@@ -163,8 +163,13 @@ def test_unknown_vault_is_refused(monkeypatch):
 
 
 def test_op_read_prefers_the_sdk_when_a_token_is_set(monkeypatch):
-    from cove import vault_cache
+    from cove import secret_providers, vault_cache
 
+    # Selection needs the package as well as the token, so the test declares
+    # the package rather than inheriting whatever the host happens to have
+    # installed. Without this it passes on a machine with the optional extra
+    # and fails on a clean one, which is the wrong way round for a gate.
+    monkeypatch.setattr(secret_providers, "_sdk_available", lambda: True)
     monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "fake-token")
     monkeypatch.setattr(vault_cache, "_op_read_cli", lambda ref: "cli-value", raising=False)
     monkeypatch.setattr(op_sdk, "resolve", lambda ref: "sdk-value")
