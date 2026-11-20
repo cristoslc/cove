@@ -42,3 +42,17 @@ It prints the action (`created` or `updated`) and the item id, never the value. 
 - **The populator** talks to the durable vault. `cli/cove/secret_providers.py` holds that seam: a `SecretProvider` protocol, a registry by URI scheme, and one implementation per way a machine can authenticate.
 
 Today both implementations speak `op://`, because they are two ways to reach the same backend: the CLI when a human is present, the SDK when a service-account token is. A different backend is one new class plus its scheme; the store, its contents and every consumer stay as they are. A reference with an unknown scheme is refused by name rather than guessed at.
+
+## One vault setting
+
+The vault every reference names is one variable, `COVE_OP_VAULT`. Both halves read it: `cli/cove/creds.py` builds `OP_REFS` from it, and `compose/group_vars/all.yml` renders `op_vault` from the same value, which `cove up` passes through to Ansible.
+
+```shell
+# the default when unset
+COVE_OP_VAULT=Private
+
+# after moving items to a vault a service account can read
+export COVE_OP_VAULT="<vault name>"
+```
+
+A vault move is therefore one exported variable plus a converge, not thirteen reference edits. An empty value falls back to `Private` rather than naming a blank vault. Warming the cache afterwards still needs a working read path (a signed-in CLI or `OP_SERVICE_ACCOUNT_TOKEN`), because every reference under the new name is a cache miss by definition.
