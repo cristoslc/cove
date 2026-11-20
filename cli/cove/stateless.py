@@ -47,7 +47,7 @@ NONCANONICAL_OVERRIDE_ENV = "COVE_ALLOW_FOREIGN_DATA_ROOT"
 # NON-canonical compose dir that shares the canonical data root. Without it,
 # the live stack only converges from ~/.config/cove/compose, so a no-op
 # converge cannot flip absolute config-hash inputs (bind sources, build
-# contexts, NGINX_CONF_DIR) and recreate litellm/nginx.
+# contexts, NGINX_CONF_DIR) and recreate the gateway/nginx.
 LIVE_SOURCE_OVERRIDE_ENV = "COVE_ALLOW_NONCANONICAL_LIVE_SOURCE"
 
 # Compose top-level project-name files, checked in Compose's own precedence.
@@ -578,10 +578,10 @@ def require_live_project_from_canonical_dir(compose_dir: Path) -> None:
     Churn: a compose dir with the live name and the *canonical* data root is
     not harmless, because every service's config hash embeds absolute paths
     resolved from the compose directory: relative bind sources
-    (`./vault/vault.hcl`, `./certs/rootCA.pem`), `build.context: ./litellm`,
+    (`./vault/vault.hcl`, `./certs/rootCA.pem`), `build.context: ./bifrost`,
     and the `NGINX_CONF_DIR` / `DNSMASQ_CONF_DIR` values in `.env`. Converging
     the live stack from two different dirs (the install dir and a checkout, or
-    two checkouts) therefore changes the hash of litellm, nginx, vault, and ade
+    two checkouts) therefore changes the hash of bifrost, nginx, vault, and ade
     on every flip and recreates them even when nothing changed. Each recreate
     drops the LLM proxy for one to two minutes (2026-10-26 incident). Refused
     unless LIVE_SOURCE_OVERRIDE_ENV is set.
@@ -630,8 +630,8 @@ def require_live_project_from_canonical_dir(compose_dir: Path) -> None:
         "directory) and every service's config hash embeds absolute paths "
         "resolved from that directory (relative bind sources such as "
         "./vault/vault.hcl and ./certs/rootCA.pem, build contexts such as "
-        "./litellm, and the NGINX_CONF_DIR / DNSMASQ_CONF_DIR values in .env). "
-        "Converging the live stack from two different dirs recreates litellm, "
+        "./bifrost, and the NGINX_CONF_DIR / DNSMASQ_CONF_DIR values in .env). "
+        "Converging the live stack from two different dirs recreates bifrost, "
         "nginx, vault, and ade on every flip even when nothing changed, and "
         "each recreate drops the LLM proxy for one to two minutes. Run the "
         "live stack from the canonical dir, or set "

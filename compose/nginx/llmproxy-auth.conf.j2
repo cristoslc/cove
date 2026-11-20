@@ -6,9 +6,9 @@
 # Two credentials live here and they have different owners:
 #   * CLIENT TOKEN — the one stable credential machine clients hold. Cove-owned,
 #     edge-scoped, and independent of which backend serves traffic.
-#   * BACKEND KEY — the ACTIVE upstream's own credential (LiteLLM master key
-#     today, Bifrost virtual key after the cutover). It exists only here and in
-#     that backend's env; it never reaches a client.
+#   * BACKEND KEY — the ACTIVE upstream's own credential (the Bifrost virtual
+#     key). It exists only here and in that backend's env; it never reaches a
+#     client.
 #
 # Client auth: anything that is not the exact bearer is unauthorized BEFORE any
 # upstream sees the request (default.conf returns 401 on $llmproxy_authorized).
@@ -25,6 +25,5 @@ map $http_authorization $llmproxy_authorized {
 # the upstream) rather than borrowing another product's credential.
 map $llmproxy_upstream $llmproxy_upstream_key {
     default                 "";
-    "http://litellm:4000"   "Bearer {{ llmproxy_litellm_key }}";
     "http://bifrost:8080"   "Bearer {{ llmproxy_bifrost_key }}";
 }

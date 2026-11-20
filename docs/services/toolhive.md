@@ -1,6 +1,6 @@
 # ToolHive MCP Gateway for Cove
 
-ToolHive is Cove's **MCP gateway** — an optional, profiled service (`profile: mcp`, lifecycle via `cove toolhive up|down|status|logs`) that runs MCP servers as sibling containers on the Cove network, each constrained by a permission profile and explicit mounts. It is the only MCP surface in Cove: LiteLLM's MCP endpoints stay permanently disabled (`disable_mcp: true`, CVE-2026-42271). It mirrors the litellm/speedtest/runner optional-service pattern.
+ToolHive is Cove's **MCP gateway** — an optional, profiled service (`profile: mcp`, lifecycle via `cove toolhive up|down|status|logs`) that runs MCP servers as sibling containers on the Cove network, each constrained by a permission profile and explicit mounts. It is the only MCP surface in Cove (the retired LiteLLM gateway's MCP endpoints went with it; CVE-2026-42271 is why no gateway MCP surface returns). It follows the established optional-service pattern.
 
 - **Gateway address:** `https://mcp.cove/` (through Cove's nginx ingress; in Phase 1 the vhost serves 403 for everything except `/health` — see Auth Posture). The ToolHive API/UI itself binds `127.0.0.1:${TOOLHIVE_PORT:-8090}` only — never published beyond loopback.
 - **Scope:** Phase 1 of [docs/plans/toolhive-mcp-gateway.md](../plans/toolhive-mcp-gateway.md) — control plane, curated registry, ingress, CLI lifecycle. The `cove mcp` data-plane wrapper (Phase 2) and per-project scopes (Phase 3) are not built yet.
@@ -62,7 +62,6 @@ MCP servers enter the harbor only through the seeded catalog:
 | **Image posture** | Distroless ko image, runs as non-root (uid:gid 1000:1000 by default, overridable at the compose layer). No shell/curl inside — the compose healthcheck runs the bundled `thv list`, which discovers the API and verifies `/health` with the startup nonce. |
 | **Memory** | Memory-limited (`TOOLHIVE_MEM_LIMIT`, 512M default). |
 | **Data** | All state under `${COVE_DATA_ROOT}/toolhive/` (config, state, profiles, registry) per the Data in Documents rule. |
-| **LiteLLM** | `disable_mcp: true` stays permanent (CVE-2026-42271) with a cross-reference comment; guard test `TestLitellmMcpGuard` enforces it. |
 
 ## Configuration
 
@@ -75,7 +74,7 @@ Data lives at `~/Documents/cove-data/toolhive/`. The `.env` is written by `cove 
 - No Vault-backed per-server secret wiring (Phase 2).
 - No OIDC/IdP or virtual-MCP workflow features (single-dev posture).
 - No remote catalog fetch (offline-first).
-- Does not re-enable LiteLLM MCP endpoints — ever.
+- Remains Cove's only MCP surface; the retired LiteLLM gateway's MCP endpoints are gone with it (CVE-2026-42271 posture).
 
 ## Lifecycle
 

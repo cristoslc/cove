@@ -60,7 +60,8 @@ cove tunnel up --private
 Bare `cove tunnel up` never picks a service for you. It presents an interactive
 picker (arrow keys, Enter; `q` cancels) of the services Cove discovers from its
 **nginx ingress config** — every proxied vhost in `compose/nginx/default.conf`
-(git.cove → forgejo, vault.cove → vault, litellm.cove, speedtest.cove, the
+(git.cove → forgejo, vault.cove → vault, bifrost.cove, llmproxy.cove,
+ speedtest.cove, the
 landing root, pages). Each entry shows the resolved target. Regex-only vhosts
 (`*.pages.cove`), redirects (ca.cove), and health endpoints are not tunnelable
 and are excluded.

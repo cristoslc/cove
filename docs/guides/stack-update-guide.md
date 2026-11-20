@@ -14,7 +14,7 @@ Every upstream update is classified by semver change of the pin. The classificat
 
 Major-bump responses are loud on purpose: the audit script emits a warning block into the weekly report, and the issue template requires a gap analysis (breaking-change notes from upstream release notes, data-migration steps, config-shape changes, and a test impact list) before a bump PR is opened.
 
-Two cross-cutting rules apply to all classes: a new third-party release waits **48-72 hours** after release before the bump PR is opened (supply-chain hold, borrowed from the [LiteLLM upgrade procedure](../services/litellm-proxy.md)), and security advisories against a pinned current version override the wait and the SLA class (fix ships as a patch-class bump immediately).
+Two cross-cutting rules apply to all classes: a new third-party release waits **48-72 hours** after release before the bump PR is opened (supply-chain hold, established by the retired LiteLLM upgrade procedure and now carried by [the Bifrost service doc](../services/bifrost.md)), and security advisories against a pinned current version override the wait and the SLA class (fix ships as a patch-class bump immediately).
 
 The hold and the merge gate are now mechanical, not aspirational: [Renovate on Forgejo](renovate.md) runs the age gate (48 h security, 7 d patch, 14 d minor, never major) and the SLA clock above starts when the gate opens a PR for merge, not when upstream published the release. A release that a gate holds has not missed its SLA; a release the gate has cleared and nobody merged has.
 
@@ -30,23 +30,21 @@ Single source of truth for image pins is `compose/` (bundled into the `cove` whe
 | nginx | `nginx:1.27-alpine` | `compose/group_vars/all.yml` (`nginx_image`) | Minor-line tag |
 | dnsproxy (DoH) | `adguard/dnsproxy:v0.86.0@sha256:4d65bafbf246b206a1af35d4263a86c35451d957458c7836304199f1cd2c1535` | `compose/docker-compose.yml` | Tag + digest |
 | OpenBao (secrets) | `openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f` | `compose/group_vars/all.yml` (`vault_image_tag` + `vault_image_digest`) | Tag + digest; **newest minor only** (see cadence note) |
-| Postgres (litellm-db) | `postgres:16-alpine` | `compose/docker-compose.yml` | Major-line tag; **no digest, drift risk** |
 | Forgejo runner | `data.forgejo.org/forgejo/runner:11` | `compose/docker-compose.yml` (`FORGEJO_RUNNER_IMAGE`) | Major-line tag |
 | Speedtest Tracker | `lscr.io/linuxserver/speedtest-tracker:v1.15.1-ls177` | `compose/docker-compose.yml` (`SPEEDTEST_IMAGE`) | Tag |
 | ToolHive | `ghcr.io/stacklok/toolhive:v0.51.4@sha256:5e1e2536…` | `compose/docker-compose.yml` (`TOOLHIVE_IMAGE`) | Tag + digest |
 | zrok2 tunnel | `openziti/zrok2:2.0.4` | `compose/tunnel.yml` (`TUNNEL_IMAGE`) | Tag |
-| LiteLLM (built) | `cove-litellm:1.84.0`, from `python:3.13-slim`, `litellm==1.84.0` hash-pinned | `compose/litellm/Dockerfile` | Own build; app pin is the SLA subject |
 | ADE (built) | `cove-ade:0.44.0`, from `node:24-bookworm-slim`, `bb-app==0.44.0` | `compose/ade/Dockerfile` + `ADE_BB_APP_VERSION` | Own build; app pin is the SLA subject |
 | dnsmasq (built) | from `alpine:3.21` | `compose/dnsmasq/Dockerfile` | Own build; base pin is the SLA subject |
 | Config resolver podlets | `npx`-invoked, no image pin | `compose/toolhive/registry.json` | Per-server refs pinned by tag in registry |
 
-**Known drift risks to close** (tracked for the next audit cycle): `forgejo_image_digest` is empty, `postgres:16-alpine` has no digest, and the two major-line runner pins (`forgejo:15`, `runner:11`) rely on Codeberg and data.forgejo.org not retagging.
+**Known drift risks to close** (tracked for the next audit cycle): `forgejo_image_digest` is empty, and the two major-line runner pins (`forgejo:15`, `runner:11`) rely on Codeberg and data.forgejo.org not retagging.
 
 **Secrets server cadence (OpenBao).** OpenBao supports the newest minor only, and its own support policy asks reporters to reproduce on the latest release. A minor bump is therefore mandatory within the 3-day SLA, not optional, and the quarterly-ish bump is a standing line item. Bumps within OpenBao are ordinary in-place upgrades: revert the pin to roll back. Only the Vault 1.20 to OpenBao transition was a fresh init, because storage compatibility across the fork is not offered. See [the OpenBao service doc](../services/openbao.md).
 
 ## Upgrade procedure
 
-Standard per-service flow (the LiteLLM doc was the first instance and remains the reference shape):
+Standard per-service flow (the shape established by the retired LiteLLM doc):
 
 1. Within the SLA window (and after the 48-72h hold), open a bump branch. The Forgejo audit workflow opens these automatically and names them `bump/<component>-<old>-to-<new>`.
 2. Locate the pin with the table above and change it in that one file only. Digest-pinned components get a fresh digest copied from the registry (multi-arch index digest, verified the way ToolHive's pin was: verify the index covers the machine's arch).
@@ -55,7 +53,7 @@ Standard per-service flow (the LiteLLM doc was the first instance and remains th
 5. Open the PR with the evidence block (SLA section above). The reviewer automation evaluates it; tier-2 staging (`scripts/staging/e2e.sh`) runs before any merge that touches `compose/`.
 6. Merge, then promote: sync compose resources, build the wheel, reinstall, and attach the regenerated SBOMs to both release hosts via `scripts/release.sh` (see [dual-host release rules](../../AGENTS.md)).
 
-Rollback for a bad bump: restore the previous pin in the same pin-location file, `cove down` the affected service, `cove up`, verify its health check. Built images (`cove-litellm`, `cove-ade`, `cove-dnsmasq`) additionally need `docker compose build` before up.
+Rollback for a bad bump: restore the previous pin in the same pin-location file, `cove down` the affected service, `cove up`, verify its health check. Built images (`cove-ade`, `cove-dnsmasq`) additionally need `docker compose build` before up.
 
 ## SBOM process
 
@@ -64,7 +62,7 @@ Cove takes its SBOM as part of development, not as a runtime product:
 - `scripts/sbom.sh` generates CycloneDX via `trivy image --format cyclonedx` for every pin in the inventory (or one component when named), into `sbom/<component>.cdx.json`.
 - Snapshots are **committed at bump time**, inside the bump PR. The PR diff then is the SBOM delta for that release.
 - Release packaging: `scripts/release.sh` attaches the current `sbom/` set to the release on both hosts (Forgejo + GitHub), so each release carries its SBOM.
-- A built image (LiteLLM, ADE, dnsmasq) additionally gets a BuildKit attestation at build time (`docker buildx build --sbom=true`) for the images we own.
+- A built image (ADE, dnsmasq) additionally gets a BuildKit attestation at build time (`docker buildx build --sbom=true`) for the images we own.
 - View without generating anything: `cove --sbom` prints the pin matrix as an about item (the SBOM is informational, never a state change). Machine-readable form: `python -m cove.pins --json`. Generation never runs from the runtime CLI; it is a development step.
 
 ## cove update
@@ -90,7 +88,7 @@ That third layer is the one that makes a pin bump actually apply. Before it exis
 
 **Authoritative from the wheel** (re-synced on every converge):
 
-- `FORGEJO_IMAGE`, `VAULT_IMAGE`, `NGINX_IMAGE`, `LITELLM_IMAGE`, `SPEEDTEST_IMAGE`, `TOOLHIVE_IMAGE`, `BIFROST_IMAGE`, `BIFROST_DNS_IMAGE`, `FORGEJO_RUNNER_IMAGE`, `TUNNEL_IMAGE`
+- `FORGEJO_IMAGE`, `VAULT_IMAGE`, `NGINX_IMAGE`, `SPEEDTEST_IMAGE`, `TOOLHIVE_IMAGE`, `BIFROST_IMAGE`, `BIFROST_DNS_IMAGE`, `FORGEJO_RUNNER_IMAGE`, `TUNNEL_IMAGE`
 
 **Operator-overridable** (the named allowlist in `compose/group_vars/all.yml`):
 
@@ -116,8 +114,8 @@ Three cooperating parts, none of which runs ad-hoc commands in a container:
   report rather than being merged quietly.
 - **The operator** owns the classes that must not be automated yet: image pins
   (staging E2E plus the SBOM delta; the `.env` delivery defect is fixed, but
-  the age gate still holds every `compose/` change), the LiteLLM and ADE build
-  pins, the zrok2 per-arch map, and the ToolHive registry refs. Each is named in
+  the age gate still holds every `compose/` change), the ADE build pin, the
+  zrok2 per-arch map, and the ToolHive registry refs. Each is named in
   the Renovate guide's gap table.
 
 Major bumps stay loud: the automation reports them and never merges them, and the
@@ -125,6 +123,6 @@ gap analysis is still required before a major bump PR is opened.
 
 ## Related docs
 
-- [LiteLLM upgrade procedure](../services/litellm-proxy.md) — reference service doc
+- [Bifrost gateway](../services/bifrost.md) — the serving gateway and its upgrade/rollback notes
 - [Dual-host release drift](../tech-debt/dual-host-release-drift.md) — why `scripts/release.sh` publishes to both hosts
 - [Staging E2E](../../AGENTS.md) — tier-2 gate rules

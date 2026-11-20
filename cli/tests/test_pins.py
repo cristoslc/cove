@@ -82,11 +82,9 @@ def test_inventory_parses_real_compose():
     assert pins[("vault", "image")].location == "group_vars/all.yml"
     assert pins[("vault", "image")].ref.startswith("openbao/openbao:2.7.")
     assert pins[("forgejo", "image")].location == "group_vars/all.yml"
-    assert pins[("litellm", "image")].classified == "built"
     assert pins[("ade", "image")].classified == "built"
     assert pins[("ade.BB_APP_VERSION", "dependency")].ref == "0.44.0"
     assert any(p.name == "alpine" and p.kind == "base" for p in pins.values())
-    assert any(p.name == "python" and p.kind == "base" for p in pins.values())
     assert any(p.name == "node" and p.kind == "base" for p in pins.values())
     # no latest without digest survives
     for p in pins.values():

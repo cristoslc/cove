@@ -27,7 +27,7 @@ Two independent hazards, two guards:
   for data but still changes every service's config hash, because the hash
   embeds absolute paths resolved from the compose dir (relative binds, build
   contexts, NGINX_CONF_DIR/DNSMASQ_CONF_DIR). Alternating `cove up` between two
-  dirs therefore recreates litellm/nginx on every converge (2026-10-26), so only
+  dirs therefore recreates the gateway/nginx on every converge (2026-10-26), so only
   the canonical install dir passes without an explicit opt-in.
 
 These tests are hermetic: they drive the guard helpers directly and the
@@ -305,7 +305,7 @@ class TestRequireLiveProjectFromCanonicalDir:
         # The dev checkout shape: a real .env pointing at the canonical data
         # root is safe for DATA, but it is not harmless: converging the live
         # project from a second compose dir changes the absolute inputs to
-        # every service's config hash and recreates litellm/nginx on each flip
+        # every service's config hash and recreates the gateway/nginx on each flip
         # (2026-10-26 churn). Refused unless explicitly opted in.
         canonical_root = monkeypatch_home / "Documents" / "cove-data"
         compose_dir = _write_compose_dir(
@@ -464,7 +464,7 @@ class TestServiceCommandGuards:
     """
 
     def test_service_modules_import_and_call_the_guard(self):
-        for module_name in ("ade", "speedtest", "toolhive", "runner", "litellm", "bifrost", "tunnel"):
+        for module_name in ("ade", "speedtest", "toolhive", "runner", "bifrost", "tunnel"):
             source = (
                 Path(__file__).resolve().parent.parent / "cove" / f"{module_name}.py"
             ).read_text()

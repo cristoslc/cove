@@ -1,5 +1,7 @@
 # `cove litellm up` broken on Docker Compose v5 (2026-08-03)
 
+**Status:** CLOSED 2026-11-19 by the LiteLLM code removal — the `cove litellm` group and its compose invocation are deleted. Kept as history.
+
 Discovered while investigating the LiteLLM container's idle memory footprint and
 restarting the service.
 

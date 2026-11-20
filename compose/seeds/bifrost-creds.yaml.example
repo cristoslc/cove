@@ -11,8 +11,8 @@
 # value), so `cove bifrost up` fetches the generated token from the
 # gateway's admin API and projects it into the compose .env
 # (BIFROST_CLIENT_VIRTUAL_KEY). Provider API keys are NOT held here: the
-# Synthetic key is projected from the LiteLLM local.env and the ollama-cloud
-# key is projected by the workstation lane (ownership ruling, 2026-10-26).
+# Synthetic key lives in the gateway's local.env, and the ollama-cloud key is
+# projected by the workstation lane (ownership ruling, 2026-10-26).
 
 items:
   - title: "Bifrost Gateway"

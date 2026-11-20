@@ -1,8 +1,8 @@
 """Credential provenance: the ambient environment must not beat the files of record.
 
-2026-10-27 defect: `cove-litellm` and `cove-bifrost` carried a
-`SYNTHETIC_API_KEY` whose fingerprint did not match `<COVE_DATA_ROOT>/litellm/
-local.env`, the service's declared `env_file`. `docker compose` interpolates the
+2026-10-27 defect: a gateway container carried a `SYNTHETIC_API_KEY` whose
+fingerprint did not match `<COVE_DATA_ROOT>/bifrost/local.env`, the service's
+declared `env_file`. `docker compose` interpolates the
 invoking shell ahead of the compose `.env`, so an exported credential silently
 wins over the file of record: a value nobody manages goes live, the next clean
 shell silently switches it, and the ambient value enters every affected
@@ -81,10 +81,6 @@ def _write(path: Path, text: str) -> Path:
 #: Credential variables the compose files interpolate with ${NAME}.
 INTERPOLATED_CREDENTIALS = {
     "OLLAMA_API_KEY",
-    "LITELLM_MASTER_KEY",
-    "LITELLM_DB_PASSWORD",
-    "LITELLM_UI_USERNAME",
-    "LITELLM_UI_PASSWORD",
     "BIFROST_ENCRYPTION_KEY",
     "BIFROST_ADMIN_USERNAME",
     "BIFROST_ADMIN_PASSWORD",
@@ -171,8 +167,8 @@ class TestScrubbedEnvironment:
 
     def test_matching_ambient_value_is_silent(self, sandbox, monkeypatch, capsys):
         compose_dir, _ = sandbox
-        _write(compose_dir / ".env", "LITELLM_MASTER_KEY=sk-file\n")
-        monkeypatch.setenv("LITELLM_MASTER_KEY", "sk-file")
+        _write(compose_dir / ".env", "BIFROST_ADMIN_PASSWORD=file-pass\n")
+        monkeypatch.setenv("BIFROST_ADMIN_PASSWORD", "file-pass")
         ce.scrubbed_environment(compose_dir)
         captured = capsys.readouterr()
         assert "WARNING" not in captured.err
@@ -181,18 +177,18 @@ class TestScrubbedEnvironment:
         self, sandbox, monkeypatch, capsys
     ):
         compose_dir, _ = sandbox
-        _write(compose_dir / ".env", "LITELLM_MASTER_KEY=sk-file-value\n")
-        monkeypatch.setenv("LITELLM_MASTER_KEY", "sk-ambient-value")
+        _write(compose_dir / ".env", "BIFROST_ADMIN_PASSWORD=file-pass-value\n")
+        monkeypatch.setenv("BIFROST_ADMIN_PASSWORD", "ambient-pass-value")
         env = ce.scrubbed_environment(compose_dir)
         err = capsys.readouterr().err
-        assert "LITELLM_MASTER_KEY" in err
-        assert _fp("sk-ambient-value") in err
-        assert _fp("sk-file-value") in err
-        assert "sk-ambient-value" not in err, "values must never be printed"
-        assert "sk-file-value" not in err, "values must never be printed"
+        assert "BIFROST_ADMIN_PASSWORD" in err
+        assert _fp("ambient-pass-value") in err
+        assert _fp("file-pass-value") in err
+        assert "ambient-pass-value" not in err, "values must never be printed"
+        assert "file-pass-value" not in err, "values must never be printed"
         assert "compose .env" in err
         assert ce.ALLOW_AMBIENT_ENV in err
-        assert "LITELLM_MASTER_KEY" not in env
+        assert "BIFROST_ADMIN_PASSWORD" not in env
 
     def test_divergent_bifrost_variable_is_pinned_too(
         self, sandbox, monkeypatch, capsys
@@ -210,12 +206,12 @@ class TestScrubbedEnvironment:
         self, sandbox, monkeypatch, capsys
     ):
         compose_dir, data_root = sandbox
-        _write(data_root / "litellm" / "local.env", "SYNTHETIC_API_KEY=file-syn\n")
+        _write(data_root / "bifrost" / "local.env", "SYNTHETIC_API_KEY=file-syn\n")
         monkeypatch.setenv("SYNTHETIC_API_KEY", "ambient-syn")
         ce.scrubbed_environment(compose_dir)
         err = capsys.readouterr().err
         assert "SYNTHETIC_API_KEY" in err
-        assert "litellm/local.env" in err
+        assert "bifrost/local.env" in err
         assert _fp("ambient-syn") in err and _fp("file-syn") in err
 
     def test_ambient_with_no_file_value_warns_that_it_resolves_to_unset(
@@ -232,17 +228,17 @@ class TestScrubbedEnvironment:
         self, sandbox, monkeypatch, capsys
     ):
         compose_dir, _ = sandbox
-        _write(compose_dir / ".env", "LITELLM_MASTER_KEY=sk-file\n")
-        monkeypatch.setenv("LITELLM_MASTER_KEY", "sk-ambient")
+        _write(compose_dir / ".env", "BIFROST_ADMIN_PASSWORD=file-pass\n")
+        monkeypatch.setenv("BIFROST_ADMIN_PASSWORD", "ambient-pass")
         monkeypatch.setenv(ce.ALLOW_AMBIENT_ENV, "1")
         env = ce.scrubbed_environment(compose_dir)
-        assert env["LITELLM_MASTER_KEY"] == "sk-ambient"
+        assert env["BIFROST_ADMIN_PASSWORD"] == "ambient-pass"
         assert ce.ALLOW_AMBIENT_ENV in capsys.readouterr().err
 
     def test_files_of_record_are_never_rewritten(self, sandbox, monkeypatch):
         compose_dir, data_root = sandbox
         env_path = _write(compose_dir / ".env", "OLLAMA_API_KEY=file\n")
-        local = _write(data_root / "litellm" / "local.env", "SYNTHETIC_API_KEY=file2\n")
+        local = _write(data_root / "bifrost" / "local.env", "SYNTHETIC_API_KEY=file2\n")
         monkeypatch.setenv("OLLAMA_API_KEY", "ambient")
         monkeypatch.setenv("SYNTHETIC_API_KEY", "ambient2")
         ce.scrubbed_environment(compose_dir)
@@ -259,19 +255,19 @@ class TestConvergeChurnContract:
         _write(
             compose_dir / ".env",
             "OLLAMA_API_KEY=file-ollama\n"
-            "LITELLM_MASTER_KEY=sk-file\n"
+            "BIFROST_ADMIN_USERNAME=file-user\n"
             "BIFROST_ADMIN_PASSWORD=file-pass\n",
         )
-        _write(data_root / "litellm" / "local.env", "SYNTHETIC_API_KEY=file-syn\n")
+        _write(data_root / "bifrost" / "local.env", "SYNTHETIC_API_KEY=file-syn\n")
 
         monkeypatch.setenv("OLLAMA_API_KEY", "shell-a-ollama")
-        monkeypatch.setenv("LITELLM_MASTER_KEY", "sk-shell-a")
+        monkeypatch.setenv("BIFROST_ADMIN_USERNAME", "shell-a-user")
         monkeypatch.setenv("SYNTHETIC_API_KEY", "shell-a-syn")
         first = ce.scrubbed_environment(compose_dir)
 
         ce.reset_warning_state()
         monkeypatch.setenv("OLLAMA_API_KEY", "shell-b-ollama")
-        monkeypatch.setenv("LITELLM_MASTER_KEY", "sk-shell-b")
+        monkeypatch.setenv("BIFROST_ADMIN_USERNAME", "shell-b-user")
         monkeypatch.setenv("SYNTHETIC_API_KEY", "shell-b-syn")
         second = ce.scrubbed_environment(compose_dir)
 
@@ -288,29 +284,15 @@ class TestConvergeChurnContract:
 # --------------------------------------------------------------------------
 
 class TestProvisioningGate:
-    def test_litellm_master_key_ambient_ignored_without_opt_in(
-        self, sandbox, monkeypatch, capsys
-    ):
-        import cove.litellm as ll
-        compose_dir, _ = sandbox
-        env_path = _write(compose_dir / ".env", "LITELLM_MASTER_KEY=sk-file\n")
-        monkeypatch.setattr(ll, "_compose_env_path", lambda: env_path)
-        monkeypatch.setenv("LITELLM_MASTER_KEY", "sk-ambient")
-        assert ce.credential_from_ambient(
-            "LITELLM_MASTER_KEY", compose_dir
-        ) is None
-        assert "WARNING" in capsys.readouterr().err
-        assert env_path.read_text() == "LITELLM_MASTER_KEY=sk-file\n"
-
-    def test_litellm_master_key_ambient_honored_with_opt_in(
+    def test_service_credential_ambient_honored_with_opt_in(
         self, sandbox, monkeypatch
     ):
         compose_dir, _ = sandbox
-        monkeypatch.setenv("LITELLM_MASTER_KEY", "sk-ambient")
+        monkeypatch.setenv("BIFROST_ADMIN_PASSWORD", "ambient-pass")
         monkeypatch.setenv(ce.ALLOW_AMBIENT_ENV, "yes")
         assert ce.credential_from_ambient(
-            "LITELLM_MASTER_KEY", compose_dir
-        ) == "sk-ambient"
+            "BIFROST_ADMIN_PASSWORD", compose_dir
+        ) == "ambient-pass"
 
     def test_bifrost_provisioning_ignores_ambient_password(
         self, sandbox, monkeypatch, capsys
@@ -331,21 +313,19 @@ class TestProvisioningGate:
         assert _fp("ambient-pass") in err and _fp("file-pass") in err
         assert "ambient-pass" not in err
 
-    def test_bifrost_synthetic_key_projects_the_file_value_and_warns(
+    def test_bifrost_synthetic_key_keeps_the_file_value_and_warns(
         self, sandbox, monkeypatch, capsys
     ):
         from cove import bifrost as bf
         compose_dir, data_root = sandbox
-        litellm_env = _write(
-            data_root / "litellm" / "local.env", "SYNTHETIC_API_KEY=file-syn\n"
+        bifrost_env = _write(
+            data_root / "bifrost" / "local.env", "SYNTHETIC_API_KEY=file-syn\n"
         )
         monkeypatch.setattr(bf, "_compose_env_path", lambda: compose_dir / ".env")
         monkeypatch.setenv("SYNTHETIC_API_KEY", "ambient-syn")
         bf._ensure_synthetic_key()
-        bifrost_env = data_root / "bifrost" / "local.env"
         assert "SYNTHETIC_API_KEY=file-syn" in bifrost_env.read_text()
         assert "ambient-syn" not in bifrost_env.read_text()
-        assert litellm_env.read_text() == "SYNTHETIC_API_KEY=file-syn\n"
         err = capsys.readouterr().err
         assert "SYNTHETIC_API_KEY" in err and _fp("ambient-syn") in err
 
@@ -355,18 +335,24 @@ class TestProvisioningGate:
 # --------------------------------------------------------------------------
 
 class TestComposeSubprocessBoundary:
-    def test_litellm_up_hands_compose_a_scrubbed_env(self, sandbox, monkeypatch):
+    def test_bifrost_up_hands_compose_a_scrubbed_env(self, sandbox, monkeypatch):
         from click.testing import CliRunner
-        import cove.litellm as ll
+        from cove import bifrost as bf
 
         compose_dir, _ = sandbox
-        _write(compose_dir / ".env", "LITELLM_MASTER_KEY=sk-file\n")
+        _write(
+            compose_dir / ".env",
+            "BIFROST_ADMIN_USERNAME=file-user\nBIFROST_ADMIN_PASSWORD=file-pass\n",
+        )
         monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
-        monkeypatch.setenv("LITELLM_MASTER_KEY", "sk-ambient")
+        monkeypatch.setenv("BIFROST_ADMIN_PASSWORD", "ambient-pass")
         monkeypatch.setenv("SYNTHETIC_API_KEY", "ambient-syn")
-        monkeypatch.setattr(ll, "_ensure_master_key", lambda: "sk-file")
-        monkeypatch.setattr(ll, "_prepare_runtime_files", lambda: None)
-        monkeypatch.setattr(ll, "ensure_compose_source_ready", lambda d: None)
+        monkeypatch.setattr(bf, "ensure_compose_source_ready", lambda d: None)
+        monkeypatch.setattr(bf, "_ensure_secrets", lambda: None)
+        monkeypatch.setattr(bf, "_ensure_runtime_files", lambda: None)
+        monkeypatch.setattr(bf, "_ensure_synthetic_key", lambda: None)
+        monkeypatch.setattr(bf, "_check_ollama_passthrough", lambda: None)
+        monkeypatch.setattr(bf, "_ensure_client_virtual_key", lambda: None)
 
         calls = []
 
@@ -374,8 +360,8 @@ class TestComposeSubprocessBoundary:
             calls.append(kwargs)
             return SimpleNamespace(returncode=0)
 
-        monkeypatch.setattr(ll.subprocess, "run", _fake_run)
-        result = CliRunner().invoke(ll.up)
+        monkeypatch.setattr(bf.subprocess, "run", _fake_run)
+        result = CliRunner().invoke(bf.up)
         assert result.exit_code == 0, result.output
         env = calls[-1]["env"]
         for name in ce.CREDENTIAL_ENV_NAMES:
@@ -393,7 +379,7 @@ class TestComposeSubprocessBoundary:
         data_root.mkdir()
         (compose_dir / ".env").write_text(
             f"COVE_DATA_ROOT={data_root}\nFORGEJO_DATA_ROOT={data_root}\n"
-            "LITELLM_MASTER_KEY=sk-file\n"
+            "BIFROST_ADMIN_USERNAME=file-user\n"
         )
         host_vars = tmp_path / "host.yml"
         host_vars.write_text("admin_username: x\n")
@@ -407,7 +393,7 @@ class TestComposeSubprocessBoundary:
         monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: tmp_path))
         monkeypatch.setenv("COVE_DATA_ROOT", str(data_root))
         monkeypatch.delenv("COVE_COMPOSE_DIR", raising=False)
-        monkeypatch.setenv("LITELLM_MASTER_KEY", "sk-ambient")
+        monkeypatch.setenv("BIFROST_ADMIN_USERNAME", "ambient-user")
         monkeypatch.setenv("BIFROST_ADMIN_PASSWORD", "ambient-pass")
 
         monkeypatch.setattr(cove.cli, "maybe_reextract", lambda: False)

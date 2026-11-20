@@ -9,7 +9,7 @@
 `extract_resources()` uses `shutil.rmtree(target)` on the deployed compose dir
 (`~/.config/cove/compose/`) whenever the bundled content hash changes, then re-copies
 the bundle. This deletes the runtime `.env` — the file holding
-`COVE_DATA_ROOT`, `FORGEJO_DATA_ROOT`, speedtest/litellm secrets, etc.
+`COVE_DATA_ROOT`, `FORGEJO_DATA_ROOT`, speedtest/bifrost secrets, etc.
 
 AGENTS.md and `bringup.yml` treat the `.env` as first-boot-only; the docs (written in
 PR #46) assumed a promote would leave it in place. In reality every promote that
@@ -31,7 +31,7 @@ changes compose resources wipes it.
 ## Recovery performed (2026-09-02)
 
 Rebuilt `.env` from bringup's first-boot render contract (values from
-`group_vars/all.yml`, live container env for speedtest/litellm secrets, and the new
+`group_vars/all.yml`, live container env for speedtest/bifrost secrets, and the new
 `FORGEJO_WEBHOOK_ALLOWED_HOST_LIST=loopback`), then `docker compose up -d
 --force-recreate forgejo`. Verified: 3 users, 57 repos, API auth 200, webhook var
 present. Data was never lost — the wrong mount was empty, not the real one.

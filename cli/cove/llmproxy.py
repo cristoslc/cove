@@ -5,11 +5,10 @@ docs/services/bifrost.md, "Client endpoint"). It is also the authentication
 edge:
 
 * Clients hold a single cove-owned CLIENT TOKEN and nothing else. It is scoped
-  to the edge and outlives any backend swap, so a LiteLLM -> Bifrost cutover
-  never touches client config.
+  to the edge and outlives any backend swap, so a gateway swap never touches
+  client config.
 * The edge injects the ACTIVE backend credential toward the upstream (the
-  LiteLLM master key today, the Bifrost virtual key after the flip). Backend
-  credentials never reach clients.
+  Bifrost virtual key). Backend credentials never reach clients.
 
 This module owns the client token: resolve it from the operator override, the
 compose `.env`, or the Vault/1Password cache, and provision it into 1Password
@@ -17,9 +16,8 @@ compose `.env`, or the Vault/1Password cache, and provision it into 1Password
 is never printed and never written to the compose `.env` by this module; the
 rendered nginx config carries it at mode 0600.
 
-The backend keys are read from the compose `.env` at up time: `LITELLM_MASTER_KEY`
-(owned by `cove litellm`) and `BIFROST_CLIENT_VIRTUAL_KEY` (projected by
-`cove bifrost up`).
+The backend key is read from the compose `.env` at up time:
+`BIFROST_CLIENT_VIRTUAL_KEY` (projected by `cove bifrost up`).
 """
 
 import atexit
@@ -46,8 +44,7 @@ CLIENT_KEY_OP_REF = (
 
 # Operator override for the client token (CI/staging/explicit pin).
 CLIENT_KEY_ENV = "COVE_LLM_PROXY_CLIENT_KEY"
-# Backend credentials, read from the compose .env at render time only.
-LITELLM_KEY_ENV = "LITELLM_MASTER_KEY"
+# Backend credential, read from the compose .env at render time only.
 BIFROST_KEY_ENV = "BIFROST_CLIENT_VIRTUAL_KEY"
 
 # Token prefix keeps OpenAI-compatible client libraries that validate a key
@@ -181,17 +178,16 @@ def _env_value(key: str) -> str:
 
 
 def edge_secret_vars() -> dict[str, str]:
-    """The three values the edge templates render.
+    """The two values the edge templates render.
 
     * `llmproxy_client_key` — cove-owned client token (required).
-    * `llmproxy_litellm_key` / `llmproxy_bifrost_key` — the backend
-      credentials the map pairs with `$llmproxy_upstream`. Empty when the
-      respective service has never been provisioned; an empty backend key
-      fails closed at the upstream and is never a client credential.
+    * `llmproxy_bifrost_key` — the backend credential the map pairs with
+      `$llmproxy_upstream`. Empty when the gateway has never been
+      provisioned; an empty backend key fails closed at the upstream and is
+      never a client credential.
     """
     return {
         "llmproxy_client_key": ensure_client_key(),
-        "llmproxy_litellm_key": _env_value(LITELLM_KEY_ENV),
         "llmproxy_bifrost_key": _env_value(BIFROST_KEY_ENV),
     }
 

@@ -56,7 +56,6 @@ Each item is classified on the dimensions the governance policy will need:
 | Vault Raft storage `~/Documents/cove-data/vault/data/` | service-state | **yes** | NO | All Vault secrets incl. op-cache; encrypted at rest. |
 | Vault audit logs `~/Documents/cove-data/vault/logs/` | derived | no | yes | |
 | Speedtest DB `~/Documents/cove-data/speedtest/database.sqlite` | service-state | **yes** | NO | History + seeded admin row. |
-| LiteLLM Postgres `~/Documents/cove-data/litellm/pgdata/` | service-state | **yes** | NO | Optional profile. |
 | Pages static sites `~/Documents/cove-data/pages/sites/` | service-state | **yes** | yes (re-deploy) | Rebuildable from source, but durable by default. |
 
 ## C. Admin credentials & identities

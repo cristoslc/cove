@@ -1,5 +1,7 @@
 # Pre-existing LiteLLM test failures (2026-07-26)
 
+**Status:** CLOSED 2026-11-19 by the LiteLLM code removal — `cli/tests/test_litellm.py`, the route-whitelist assertions, and the retired service they described are deleted, so the drift cannot recur. Kept as history.
+
 Discovered while running the full suite for the vault-CLI fix. These failures
 exist on `main` at `cbe8abe` and are unrelated to the vault change.
 

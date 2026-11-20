@@ -282,7 +282,7 @@ It still cannot see:
 1. Confirm the proxy is up and the shared client token is cached:
 
    ```shell
-   cove litellm status
+   cove bifrost status
    cove creds vault-get 'op://Private/Cove LLM Proxy Client Key/client_key' >/dev/null && echo token-cached
    ```
 

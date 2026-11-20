@@ -17,7 +17,6 @@ from cove import __version__
 from cove.certs import ca_path, ensure_ca, root_ca_pem, sign_cert
 from cove.creds import creds
 from cove.ade import ade
-from cove.litellm import litellm
 from cove.bifrost import bifrost
 from cove.speedtest import speedtest
 from cove.runner import runner
@@ -220,8 +219,8 @@ def _unseal_restarted_vault(*, no_provision: bool) -> None:
 
 def _start_optional_services() -> None:
     """Start the optional services whose containers need credentials prepared
-    by the CLI first (LiteLLM proxy, Speedtest Tracker: 1Password/
-    Vault seeds injected into the compose .env before `docker compose up`).
+    by the CLI first (Speedtest Tracker: 1Password/Vault seeds injected into
+    the compose .env before `docker compose up`).
     Runner has no credential step: the bringup playbook starts it via its
     COMPOSE_PROFILES env (ADE is core since 0.8.0; ToolHive likewise has no
     credential step in phase 1 and joins the bringup profiles).
@@ -229,10 +228,11 @@ def _start_optional_services() -> None:
     A failure on one service is reported but does not abort `cove up` —
     optional services stay optional (same contract as `cove status`).
 
-    Bifrost is deliberately absent from this loop (additive phase): it starts
-    only via an explicit `cove bifrost up`, never as a side effect of
-    `cove up` / `cove up --all`, until the LiteLLM cutover is decided."""
-    for group, label in ((litellm, "litellm"), (speedtest, "speedtest")):
+    Bifrost is deliberately absent from this loop: it starts only via an
+    explicit `cove bifrost up`, never as a side effect of `cove up` /
+    `cove up --all` (its virtual key and config store are provisioned by that
+    command, so an implicit start would race the provisioning)."""
+    for group, label in ((speedtest, "speedtest"),):
         cmd = group.commands.get("up")
         if cmd is None or cmd.callback is None:
             continue
@@ -354,7 +354,7 @@ def _report_ansible_failure(playbook: Path, lines: list[str], logfile: Path) -> 
 @app.command()
 @click.option("--no-provision", is_flag=True, help="Skip Vault bootstrap and Forgejo provisioning")
 @click.option("--no-upgrade", is_flag=True, help="Skip version-based re-extraction of compose resources.")
-@click.option("--all", "all_", is_flag=True, help="Also start all optional services (LiteLLM, Runner, Speedtest). The tunnel is excluded: shares are created interactively with `cove tunnel up`.")
+@click.option("--all", "all_", is_flag=True, help="Also start all optional services (Runner, Speedtest). The tunnel is excluded: shares are created interactively with `cove tunnel up`.")
 @click.option("--log", is_flag=True, help="Write ansible output to ~/.local/share/cove/logs/")
 @click.option("--non-interactive", is_flag=True,
               help="No prompts (scheduled runs): skip the BECOME prompt; elevation "
@@ -454,10 +454,10 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
         become_pass = getpass.getpass("BECOME password: ")
         ansible_env["ANSIBLE_BECOME_PASS"] = become_pass
 
-    # `cove up --all` starts every optional service. LiteLLM and Speedtest
-    # need credentials prepared by the CLI (1Password/Vault seeds injected
-    # into the compose .env) BEFORE their containers start, so their profiles
-    # stay out of the bringup compose up and their `up` flows run after the
+    # `cove up --all` starts every optional service. Speedtest needs
+    # credentials prepared by the CLI (1Password/Vault seeds injected
+    # into the compose .env) BEFORE its container starts, so its profile
+    # stays out of the bringup compose up and its `up` flow runs after the
     # provisioning chain (Vault must be up for the vault-get/vault-put calls).
     # Runner has no such step: the bringup starts it via its COMPOSE_PROFILES
     # env (ADE is core since 0.8.0 — the bringup starts it unconditionally).
@@ -622,7 +622,6 @@ def sign(sans, key_file, cert_file):
 
 app.add_command(creds)
 app.add_command(ade)
-app.add_command(litellm)
 app.add_command(bifrost)
 app.add_command(speedtest)
 app.add_command(runner)
@@ -819,7 +818,6 @@ _expected_state.wrap_converge(up, "up")
 _expected_state.wrap_converge(down, "down")
 for _group, _service in (
     (ade, "ade"),
-    (litellm, "litellm"),
     (bifrost, "bifrost"),
     (speedtest, "speedtest"),
     (runner, "runner"),

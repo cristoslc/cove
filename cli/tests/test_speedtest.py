@@ -3,7 +3,7 @@ TLS SANs, and adversarial route-bypass attempts.
 
 Per the plan (`docs/plans/speedtest-tracker-internet-monitoring.md`), Speedtest
 Tracker is an optional profiled Cove service (`profile: speedtest`) that
-monitors the operator's WAN link. It mirrors the litellm hardening pattern.
+monitors the operator's WAN link. It follows the Cove optional-service hardening pattern.
 
 Unit/integration tests (always runnable):
   - Validate compose service definitions (profiles, ports, healthcheck, memory,

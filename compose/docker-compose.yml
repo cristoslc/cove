@@ -173,66 +173,6 @@ services:
       start_period: 15s
       retries: 5
 
-  litellm-db:
-    profiles: ["litellm"]
-    image: postgres:16-alpine
-    container_name: ${LITELLM_DB_CONTAINER_NAME:-cove-litellm-db}
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: litellm
-      POSTGRES_USER: litellm
-      POSTGRES_PASSWORD: ${LITELLM_DB_PASSWORD:-litellm}
-    volumes:
-      - ${COVE_DATA_ROOT}/litellm/pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U litellm"]
-      interval: 10s
-      start_period: 10s
-      retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: ${LITELLM_DB_MEM_LIMIT:-256M}
-
-  litellm:
-    profiles: ["litellm"]
-    build:
-      context: ./litellm
-      dockerfile: Dockerfile
-    image: ${LITELLM_IMAGE:-cove-litellm:1.84.0}
-    container_name: ${LITELLM_CONTAINER_NAME:-cove-litellm}
-    restart: unless-stopped
-    tmpfs:
-      - /tmp
-      - /var/log/litellm
-    ports:
-      - "127.0.0.1:${LITELLM_PORT:-4000}:4000"
-    volumes:
-      - ${COVE_DATA_ROOT}/litellm/config.yaml:/app/config.yaml
-    env_file:
-      - ${COVE_DATA_ROOT}/litellm/local.env
-    environment:
-      LITELLM_CONFIG: /app/config.yaml
-      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-}
-      DATABASE_URL: postgresql://litellm:${LITELLM_DB_PASSWORD:-litellm}@litellm-db:5432/litellm
-      UI_USERNAME: ${LITELLM_UI_USERNAME:-admin}
-      UI_PASSWORD: ${LITELLM_UI_PASSWORD:-}
-      PROXY_BASE_URL: https://litellm.cove.local
-      STORE_MODEL_IN_DB: "True"
-    depends_on:
-      litellm-db:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:4000/health/readiness"]
-      interval: 15s
-      start_period: 30s
-      retries: 5
-    deploy:
-      resources:
-        limits:
-          memory: ${LITELLM_MEM_LIMIT:-2G}
-
   forgejo-runner:
     profiles: ["runner"]
     image: ${FORGEJO_RUNNER_IMAGE:-data.forgejo.org/forgejo/runner:11}
@@ -415,9 +355,9 @@ services:
           memory: ${TUNNEL_MEM_LIMIT:-1G}
 
   # BIFROST ------------------------------------------------------------------
-  # LiteLLM replacement candidate, ADDITIVE phase (no cutover): lives entirely
-  # on the "bifrost" profile alongside the live litellm services. See
-  # docs/musings/litellm-exit.md and docs/services/bifrost.md.
+  # The LLM gateway `llmproxy.cove` fronts. LiteLLM was removed at Phase 2 of
+  # the exit (docs/services/bifrost.md); see docs/musings/litellm-exit.md for
+  # the history.
   #
   # bifrost-dns is the egress allowlist choke point: a fail-closed dnsmasq
   # sink that NXDOMAINs every hostname except the allowlisted inference
@@ -492,8 +432,7 @@ services:
       - ${COVE_DATA_ROOT}/bifrost/config.json:/app/data/config.json:ro
       - ${COVE_DATA_ROOT}/bifrost/config.db:/app/data/config.db
     env_file:
-      # Provider keys (e.g. SYNTHETIC_API_KEY); same pattern as litellm's
-      # local.env. Secrets never live in the repo.
+      # Provider keys (e.g. SYNTHETIC_API_KEY). Secrets never live in the repo.
       - ${COVE_DATA_ROOT}/bifrost/local.env
     environment:
       APP_PORT: "8080"
@@ -508,8 +447,7 @@ services:
       BIFROST_ADMIN_PASSWORD: ${BIFROST_ADMIN_PASSWORD:-}
       # Workstation-lane key ownership (2026-10-26 ruling): cove holds no new
       # custody of the ollama-cloud key — the workstation's SOPS role projects
-      # it into the deployed compose .env and this line passes it through,
-      # exactly as the litellm services receive it today.
+      # it into the deployed compose .env and this line passes it through.
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
     networks:
       - default

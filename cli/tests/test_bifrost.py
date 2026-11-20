@@ -1,4 +1,4 @@
-"""Bifrost gateway tests (LiteLLM replacement candidate, additive phase).
+"""Bifrost gateway tests (the llmproxy.cove serving gateway).
 
 Coverage:
 - compose/bifrost/config.json: the tier ladder as ordered fallback chains,
@@ -51,8 +51,8 @@ BIFROST_PINNED_IMAGE = (
     "@sha256:f5b18826349fe9e1c402c10d19f1cbb5567a3c800ad928580d07f72e69106ec7"
 )
 
-# Tier ladder expected chain order (provider/wire-id), from the litellm
-# configuration being replaced (docs/musings/litellm-exit.md).
+# Tier ladder expected chain order (provider/wire-id), carried over from the
+# retired LiteLLM configuration (docs/musings/litellm-exit.md).
 EXPECTED_CHAINS = {
     "text:light": [
         "syn-subscription/hf:zai-org/GLM-4.7-Flash",
@@ -407,8 +407,8 @@ class TestBifrostConfigValidation:
         120s provider timeout. `ttft_timeout_ms` on the routing TARGET turns
         that stall into an escalation at the measured tail.
 
-        25000ms is chosen from the observed distribution (7 days, LiteLLM
-        spend logs, syn-subscription): pooled light/standard p99 13.4s,
+        25000ms is chosen from the observed distribution (7 days of the
+        retired gateway's spend logs, syn-subscription): pooled light/standard p99 13.4s,
         p99.9 23.2s, max 37.8s; 7 of 16,859 requests exceeded 25s. The heavy
         tiers keep their 120s ceiling on purpose — 62 of 5,471 heavy requests
         (1.1%) run past 25s, so a cutoff there would escalate healthy traffic.
@@ -767,9 +767,8 @@ class TestBifrostNginxSurface:
     def test_neutral_endpoint_vhost_proxies_the_configured_upstream(self):
         """llmproxy.cove is THE canonical client-facing OpenAI-compatible
         endpoint: an alias vhost proxying to the ACTIVE proxy upstream —
-        one IaC line to change on a product swap — with the streaming
-        settings copied from the litellm vhost (the ladder serves
-        3600-second streams)."""
+        one IaC line to change on a product swap — with streaming settings
+        that keep the ladder's 3600-second streams alive."""
         rendered = _render_nginx()
         assert "server_name llmproxy.cove llmproxy.cove.local;" in rendered
         # The product-swap line names the currently active proxy.
@@ -777,17 +776,17 @@ class TestBifrostNginxSurface:
         block = _extract_server_block(rendered, "server_name llmproxy.cove")
         assert "proxy_pass $llmproxy_upstream$request_uri;" in block
         assert "resolver 127.0.0.11" in block
-        # Streaming-critical settings, copied from the litellm vhost.
+        # Streaming-critical settings.
         assert "proxy_buffering off;" in block
         assert "proxy_read_timeout 3600s;" in block
         assert "proxy_send_timeout 3600s;" in block
 
-    def test_product_hostnames_stay_admin_debug_surfaces(self):
-        """The neutral alias is additive: the litellm and bifrost vhosts
-        (admin/debug surfaces) must both still be present."""
+    def test_product_hostname_is_the_admin_debug_surface(self):
+        """bifrost.cove is the gateway's admin/debug vhost; the retired
+        litellm.cove vhost must not render (Phase 2 removed the service)."""
         rendered = _render_nginx()
-        assert "server_name litellm.cove litellm.cove.local;" in rendered
         assert "server_name bifrost.cove bifrost.cove.local;" in rendered
+        assert "litellm.cove" not in rendered
 
     def test_landing_page_carries_the_card(self):
         landing = (NGINX_DIR / "landing.html").read_text()
@@ -1124,11 +1123,11 @@ class TestBifrostCli:
         (nginx_dir / "default.conf").write_text(
             "server {\n"
             "    server_name llmproxy.cove llmproxy.cove.local;\n"
-            "    set $llmproxy_upstream http://litellm:4000;\n"
+            "    set $llmproxy_upstream http://bifrost:8080;\n"
             "}\n"
         )
         monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
-        assert bf._neutral_endpoint_upstream() == "http://litellm:4000"
+        assert bf._neutral_endpoint_upstream() == "http://bifrost:8080"
 
     def test_neutral_endpoint_upstream_missing_config_is_none(
         self, tmp_path, monkeypatch,
@@ -1191,7 +1190,7 @@ class TestBifrostFollowups:
             stdout="", returncode=0))
 
         def _fake_code(host):
-            return 401  # e.g. LiteLLM's master-key behavior, or gating
+            return 401  # e.g. a governance-enabled gateway gating the probe
 
         monkeypatch.setattr(bf, "_probe_health_code", _fake_code)
         result = CliRunner().invoke(bf.bifrost, ["status"], catch_exceptions=True)
@@ -1242,33 +1241,15 @@ class TestBifrostFollowups:
         assert "SYNTHETIC_API_KEY=explicit-provider-key-value" in local.read_text()
         assert stat.S_IMODE(local.stat().st_mode) == 0o600
 
-    def test_ensure_synthetic_key_projects_from_litellm(self, tmp_path, monkeypatch):
-        from cove import bifrost as bf
-        litellm_env = tmp_path / "litellm" / "local.env"
-        litellm_env.parent.mkdir(parents=True)
-        litellm_env.write_text("SYNTHETIC_API_KEY=litellm-source-of-record\n")
-        monkeypatch.setenv("COVE_DATA_ROOT", str(tmp_path))
-        monkeypatch.delenv("SYNTHETIC_API_KEY", raising=False)
-        bf._ensure_synthetic_key()
-        local = tmp_path / "bifrost" / "local.env"
-        assert "SYNTHETIC_API_KEY=litellm-source-of-record" in local.read_text()
-        assert stat.S_IMODE(local.stat().st_mode) == 0o600
-        # Idempotent: a second run keeps the single line.
-        bf._ensure_synthetic_key()
-        assert local.read_text().count("SYNTHETIC_API_KEY=") == 1
-
     def test_ensure_synthetic_key_reuses_existing_entry(self, tmp_path, monkeypatch):
         from cove import bifrost as bf
         bifrost_env = tmp_path / "bifrost" / "local.env"
         bifrost_env.parent.mkdir(parents=True)
         bifrost_env.write_text("SYNTHETIC_API_KEY=existing-bifrost-entry\n")
-        litellm_env = tmp_path / "litellm" / "local.env"
-        litellm_env.parent.mkdir(parents=True)
-        litellm_env.write_text("SYNTHETIC_API_KEY=other-source\n")
         monkeypatch.setenv("COVE_DATA_ROOT", str(tmp_path))
         monkeypatch.delenv("SYNTHETIC_API_KEY", raising=False)
         bf._ensure_synthetic_key()
-        # Never overwritten by the projection.
+        # Never overwritten.
         assert "SYNTHETIC_API_KEY=existing-bifrost-entry" in bifrost_env.read_text()
 
     def test_ensure_synthetic_key_fails_loud_message_names_source(
@@ -1282,7 +1263,8 @@ class TestBifrostFollowups:
         except SystemExit:
             pass
         except click.ClickException as e:
-            assert "LiteLLM local.env" in e.message and "SYNTHETIC_API_KEY" in e.message
+            assert "bifrost" in e.message and "local.env" in e.message
+            assert "SYNTHETIC_API_KEY" in e.message
 
     def test_ollama_passthrough_warning(self, tmp_path, monkeypatch, capsys):
         from cove import bifrost as bf

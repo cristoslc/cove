@@ -39,7 +39,6 @@ NGINX_DIR = COMPOSE_DIR / "nginx"
 AUTH_TEMPLATE = "llmproxy-auth.conf.j2"
 
 CLIENT_TOKEN = "sk-cove-test-client-token"
-LITELLM_KEY = "sk-litellm-backend-key"
 BIFROST_KEY = "sk-bf-bifrost-backend-key"
 
 
@@ -51,12 +50,10 @@ def _render(template: str, vars_: dict | None = None, strict: bool = True) -> st
 
 def _render_edge(
     client: str = CLIENT_TOKEN,
-    litellm: str = LITELLM_KEY,
     bifrost: str = BIFROST_KEY,
 ) -> str:
     return _render(AUTH_TEMPLATE, {
         "llmproxy_client_key": client,
-        "llmproxy_litellm_key": litellm,
         "llmproxy_bifrost_key": bifrost,
     })
 
@@ -103,7 +100,7 @@ class TestEdgeVhost:
         """default.conf is world-readable inside the container: it must only
         reference the variables, never hold a token or backend key."""
         rendered = _render("default.conf.j2")
-        for secret in (CLIENT_TOKEN, LITELLM_KEY, BIFROST_KEY):
+        for secret in (CLIENT_TOKEN, BIFROST_KEY):
             assert secret not in rendered
 
     def test_map_hash_bucket_size_accommodates_the_bearer_key(self):
@@ -153,17 +150,10 @@ class TestEdgeAuthConfig:
         assert auth_map.count(" 1;") == 1
         assert "default" in auth_map and "0;" in auth_map
 
-    @pytest.mark.parametrize(
-        "upstream, key",
-        [
-            ("http://litellm:4000", LITELLM_KEY),
-            ("http://bifrost:8080", BIFROST_KEY),
-        ],
-    )
-    def test_backend_key_pairs_with_the_upstream_variable(self, upstream, key):
+    def test_backend_key_pairs_with_the_upstream_variable(self):
         rendered = _render_edge()
-        assert f'"{upstream}"' in rendered
-        assert f'"Bearer {key}"' in rendered
+        assert '"http://bifrost:8080"' in rendered
+        assert f'"Bearer {BIFROST_KEY}"' in rendered
 
     def test_unknown_upstream_fails_closed(self):
         rendered = _render_edge()
@@ -177,8 +167,7 @@ class TestEdgeAuthConfig:
         vhost = _render("default.conf.j2")
         map_block = _render_edge()
         assert "set $llmproxy_upstream http://bifrost:8080;" in vhost
-        for upstream in ("http://litellm:4000", "http://bifrost:8080"):
-            assert f'"{upstream}"' in map_block
+        assert '"http://bifrost:8080"' in map_block
 
     def test_missing_client_token_fails_the_render(self):
         with pytest.raises(UndefinedError):
@@ -344,8 +333,7 @@ class TestEdgeVarsFile:
         monkeypatch.setattr(llmproxy, "ensure_client_key", lambda: CLIENT_TOKEN)
         monkeypatch.setattr(
             llmproxy, "_env_value",
-            lambda key: {"LITELLM_MASTER_KEY": LITELLM_KEY,
-                         "BIFROST_CLIENT_VIRTUAL_KEY": BIFROST_KEY}[key],
+            lambda key: {"BIFROST_CLIENT_VIRTUAL_KEY": BIFROST_KEY}[key],
         )
         path = llmproxy.edge_secret_vars_file()
         try:
@@ -353,19 +341,16 @@ class TestEdgeVarsFile:
             data = yaml.safe_load(path.read_text())
             assert data == {
                 "llmproxy_client_key": CLIENT_TOKEN,
-                "llmproxy_litellm_key": LITELLM_KEY,
                 "llmproxy_bifrost_key": BIFROST_KEY,
             }
         finally:
             os.unlink(path)
 
-    def test_backend_keys_are_read_from_the_compose_env(self, edge_compose):
+    def test_backend_key_is_read_from_the_compose_env(self, edge_compose):
         from cove import llmproxy
         (edge_compose / ".env").write_text(
-            "LITELLM_MASTER_KEY=sk-litellm-from-env\n"
             "BIFROST_CLIENT_VIRTUAL_KEY=sk-bf-from-env\n"
         )
-        assert llmproxy._env_value("LITELLM_MASTER_KEY") == "sk-litellm-from-env"
         assert (
             llmproxy._env_value("BIFROST_CLIENT_VIRTUAL_KEY") == "sk-bf-from-env"
         )
@@ -383,13 +368,12 @@ class TestBifrostStatusStatesTheModel:
         (compose_dir / ".env").write_text("COVE_DATA_ROOT=x\n")
         (nginx_dir / "default.conf").write_text(
             "server_name llmproxy.cove llmproxy.cove.local;\n"
-            "set $llmproxy_upstream http://litellm:4000;\n"
+            "set $llmproxy_upstream http://bifrost:8080;\n"
         )
         (nginx_dir / "llmproxy-auth.conf").write_text(
             'map $llmproxy_upstream $llmproxy_upstream_key {\n'
             '    default                 "";\n'
-            '    "http://litellm:4000"   "Bearer sk-injected";\n'
-            '    "http://bifrost:8080"   "Bearer ";\n'
+            '    "http://bifrost:8080"   "Bearer sk-injected";\n'
             "}\n"
         )
         monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
@@ -414,10 +398,10 @@ class TestBifrostStatusStatesTheModel:
         (compose_dir / "inventory.yml").write_text("all:\n  hosts: {}\n")
         (compose_dir / ".env").write_text("COVE_DATA_ROOT=x\n")
         (nginx_dir / "default.conf").write_text(
-            "set $llmproxy_upstream http://litellm:4000;\n"
+            "set $llmproxy_upstream http://bifrost:8080;\n"
         )
         (nginx_dir / "llmproxy-auth.conf").write_text(
-            '"http://litellm:4000"   "Bearer ";\n'
+            '"http://bifrost:8080"   "Bearer ";\n'
         )
         monkeypatch.setenv("COVE_COMPOSE_DIR", str(compose_dir))
         assert bf._neutral_endpoint_backend_key_state() == "missing"

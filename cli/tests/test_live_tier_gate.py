@@ -48,7 +48,6 @@ LIVE_GATE = TESTS_DIR / "live_tier_gate.py"
 # `test_container_touching_classes_carry_live_marker` below.
 LIVE_CLASSES = {
     "test_e2e_dns.py": "TestE2EDNSEndpoints",
-    "test_litellm.py": "TestE2ELitellmStack",
     "test_speedtest.py": "TestE2ESpeedtestStack",
 }
 
@@ -100,8 +99,8 @@ class TestMutationDetection:
             (["docker", "compose", "--project-directory", "/x", "config"], False),
             (["docker", "compose", "ps"], False),
             (["docker", "compose", "--profile", "tunnel", "exec", "-T", "tunnel", "zrok2", "list", "shares"], False),
-            (["docker", "exec", "cove-litellm", "whoami"], False),
-            (["docker", "inspect", "cove-litellm"], False),
+            (["docker", "exec", "cove-bifrost", "true"], False),
+            (["docker", "inspect", "cove-bifrost"], False),
             (["docker", "logs", "cove-nginx"], False),
             (["docker", "info"], False),
             (["docker", "version"], False),

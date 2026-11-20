@@ -48,7 +48,7 @@
     },
     {
       "description": "Locally built images have no upstream to look up; their build base is covered by the dockerfile manager instead.",
-      "matchPackageNames": ["cove-litellm", "cove-ade", "cove-bifrost-dns"],
+      "matchPackageNames": ["cove-ade", "cove-bifrost-dns"],
       "enabled": false
     },
     {

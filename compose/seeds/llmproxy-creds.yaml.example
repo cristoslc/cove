@@ -8,8 +8,8 @@
 # This item holds ONE credential: the client-scoped token that machine clients
 # (opencode, omp, pi) present to `https://llmproxy.cove`. It is keyed to the
 # endpoint URL (NOT per-hostname), so every machine and every client shares the
-# same stable token. It is NOT the LiteLLM master key: backend credentials stay
-# server-side in the rendered nginx config and the backend service envs.
+# same stable token. It is NOT a backend credential: those stay server-side in
+# the rendered nginx config and the backend service envs.
 #
 # Rotation: regenerate this field, then `cove creds vault-put
 # 'op://Private/Cove LLM Proxy Client Key/client_key'` and re-render the edge

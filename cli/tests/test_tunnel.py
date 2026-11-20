@@ -279,11 +279,11 @@ class TestServiceDiscovery:
             "}\n"
             "server {\n"
             "    listen 443 ssl;\n"
-            "    server_name litellm.cove litellm.cove.local;\n"
+            "    server_name bifrost.cove bifrost.cove.local;\n"
             "    resolver 127.0.0.11 valid=10s;\n"
-            "    set $litellm_upstream http://litellm:4000;\n"
+            "    set $bifrost_upstream http://bifrost:8080;\n"
             "    location / {\n"
-            "        proxy_pass $litellm_upstream$request_uri;\n"
+            "        proxy_pass $bifrost_upstream$request_uri;\n"
             "    }\n"
             "}\n"
             "server {\n"
@@ -307,7 +307,7 @@ class TestServiceDiscovery:
         )
         services = t.discover_services(compose)
         names = [s.name for s in services]
-        assert names == ["ingress", "git", "vault", "litellm", "pages"]
+        assert names == ["ingress", "git", "vault", "bifrost", "pages"]
 
     def test_discovery_targets_resolve_upstreams(self, tmp_path):
         import cove.tunnel as t
@@ -318,7 +318,7 @@ class TestServiceDiscovery:
         services = {s.name: s for s in t.discover_services(compose)}
         assert services["git"].route == "http://forgejo:3000"
         assert services["vault"].route == "http://vault:8200"
-        assert services["litellm"].route == "http://litellm:4000"
+        assert services["bifrost"].route == "http://bifrost:8080"
 
     def test_discovery_static_routes(self, tmp_path):
         import cove.tunnel as t

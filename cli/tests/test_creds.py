@@ -3,7 +3,7 @@
 Incident 20261026-145212: `cove creds vault-put` printed a live 1Password-
 resolved credential value unmasked into an agent transcript. vault-put must
 never print the resolved secret — stdout carries the same `****************`
-mask batch-pull uses. Internal callers (tunnel/litellm/speedtest up-flows)
+mask batch-pull uses. Internal callers (tunnel/speedtest up-flows)
 resolve the value in-process via `cove.vault_cache.vault_put_op_ref`, never
 via stdout.
 """

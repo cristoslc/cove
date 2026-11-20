@@ -1,9 +1,9 @@
 """CLI commands for the Bifrost gateway lifecycle.
 
-LiteLLM replacement candidate, ADDITIVE phase (docs/musings/litellm-exit.md):
-`cove bifrost` manages the bifrost compose profile alongside the live
-litellm services — nothing is removed and no client is re-pointed by this
-module (the client-facing re-point is a later, workstation-lane-gated phase).
+The gateway `llmproxy.cove` fronts. `cove bifrost` manages the bifrost
+compose profile and provisions its credentials; the client-facing endpoint
+itself is the llmproxy.cove edge (cli/cove/llmproxy.py), which injects this
+gateway's virtual key server-side.
 """
 
 import base64
@@ -164,7 +164,7 @@ def _ensure_secret(
     op_ref: str,
     generate,
 ) -> str:
-    """One secret, in the litellm/speedtest order: explicit env → compose
+    """One secret, in the established order: explicit env → compose
     .env reuse → shared 1Password item reuse → generate + 1P item + Vault."""
     # 1. Operator explicitly opted into the ambient value — honor directly.
     #    Without COVE_ALLOW_AMBIENT_CREDENTIALS the files of record are the only
@@ -363,15 +363,13 @@ def _upsert_local_env(name: str, value: str) -> None:
 
 
 def _ensure_synthetic_key() -> None:
-    """Project the Synthetic provider key into the bifrost local.env.
+    """Ensure the Synthetic provider key is present in the bifrost local.env.
 
-    One key, one source of record: the LiteLLM local.env is the deployed
-    env LiteLLM's own provider config already runs on, so the projection
-    copies from there in-process (same 1Password-sourced value, zero new
-    custody artifacts). Precedence: explicit SYNTHETIC_API_KEY env >
-    an existing bifrost local.env entry > the litellm local.env projection.
-    Fail loud when no source exists; the key is the subscription hop's
-    credential, the gateway is degraded without it. Never prints."""
+    The gateway's local.env is the only file of record for this key now that
+    LiteLLM is gone. Precedence: explicit SYNTHETIC_API_KEY env > an existing
+    bifrost local.env entry. Fail loud when neither exists; the key is the
+    subscription hop's credential, the gateway is degraded without it. Never
+    prints."""
     explicit = credential_from_ambient(
         "SYNTHETIC_API_KEY", _compose_env_path().parent
     )
@@ -382,22 +380,13 @@ def _ensure_synthetic_key() -> None:
     if _local_env_flag_set("SYNTHETIC_API_KEY"):
         return
 
-    litellm_env = _cove_data_root() / "litellm" / "local.env"
-    projected = _read_file_var(litellm_env, "SYNTHETIC_API_KEY")
-    if projected:
-        _upsert_local_env("SYNTHETIC_API_KEY", projected)
-        click.echo(
-            "Projected SYNTHETIC_API_KEY from the LiteLLM local.env "
-            "(same source of record, value never printed)."
-        )
-        return
-
     raise click.ClickException(
-        "SYNTHETIC_API_KEY is missing. The deployed LiteLLM local.env "
-        f"({litellm_env}) is the source of record for the Synthetic "
-        "subscription key. Copy the key into that file (or set "
-        "SYNTHETIC_API_KEY together with COVE_ALLOW_AMBIENT_CREDENTIALS=1 to "
-        "opt into the ambient environment) and re-run `cove bifrost up`."
+        "SYNTHETIC_API_KEY is missing from the gateway's local.env "
+        f"({_cove_data_root() / 'bifrost' / 'local.env'}), which is the only "
+        "file of record for the Synthetic subscription key. Add the key there "
+        "(or set SYNTHETIC_API_KEY together with "
+        "COVE_ALLOW_AMBIENT_CREDENTIALS=1 to opt into the ambient environment) "
+        "and re-run `cove bifrost up`."
     )
 
 
@@ -577,9 +566,8 @@ def _classify_health(code: int | None) -> str:
     """Classify a /health probe result: "ok" (2xx/3xx), "auth-gated"
     (401/403 — the service answered and requires a credential; auth is a
     separate question from reachability), or "unreachable" (probe failed,
-    4xx-other, or 5xx). LiteLLM answers /health with 401 when its master
-    key is absent from the probe; Bifrost with governance enabled can do
-    the same — neither is an outage."""
+    4xx-other, or 5xx). A governance-enabled gateway can answer /health
+    with 401 when the probe carries no credential; that is not an outage."""
     if code is None:
         return "unreachable"
     if code in (401, 403):
@@ -613,10 +601,9 @@ def _probe_health_hosts(hosts: tuple[str, ...]) -> tuple[int | None, str]:
 def bifrost():
     """Manage the Bifrost gateway (optional harbor service).
 
-    LiteLLM replacement candidate, additive phase: runs on the bifrost
-    compose profile alongside the live litellm services. Client-facing at
-    https://bifrost.cove.local/ (the client re-point is a later, gated
-    phase; litellm remains the agent traffic path today).
+    Runs on the bifrost compose profile. Admin/debug surface at
+    https://bifrost.cove.local/; agents reach the same gateway through the
+    product-neutral llmproxy.cove edge.
     """
 
 

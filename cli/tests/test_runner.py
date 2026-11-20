@@ -3,7 +3,7 @@ bringup greps, provision greps, and resource sync integrity.
 
 Per the plan (`docs/plans/forgejo-actions-runner.md`), the runner is an optional
 profiled Cove service (`profile: runner`) that polls Forgejo for Actions
-workflows. It mirrors the litellm/speedtest pattern for optional services.
+workflows. It follows the established pattern for optional services.
 
 Run all:   pytest cli/tests/test_runner.py
 Run unit:  pytest cli/tests/test_runner.py -m "not e2e and not staging"

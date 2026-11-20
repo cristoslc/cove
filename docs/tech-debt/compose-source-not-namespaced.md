@@ -55,7 +55,7 @@ guard catches an *incorrectly-resolved* path.
   data root *is* the canonical one.
 - `ensure_compose_source_ready` — the composite entry point, called by
   `cove up`, `cove down`, `cove uninstall --all`, and every service
-  `up`/`down` (ade, speedtest, toolhive, runner, litellm, tunnel).
+  `up`/`down` (ade, speedtest, toolhive, runner, bifrost, tunnel).
 
 `compose/bringup.yml`: `Assert the compose .env carries a usable COVE_DATA_ROOT`
 immediately before the compose invocation, covering a direct

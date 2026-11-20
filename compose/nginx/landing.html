@@ -49,14 +49,6 @@
     </div>
   </a>
 
-  <a class="card" href="https://litellm.cove.local/ui/" id="litellm">
-    <span class="status-dot" id="dot-litellm"></span>
-    <div class="card-content">
-      <div class="card-title">LiteLLM</div>
-      <div class="card-url">litellm.cove.local/ui</div>
-    </div>
-  </a>
-
   <a class="card" href="https://bifrost.cove.local/" id="bifrost">
     <span class="status-dot" id="dot-bifrost"></span>
     <div class="card-content">
@@ -106,7 +98,7 @@
 </div>
 
 <script>
-const services = ['forgejo', 'vault', 'litellm', 'bifrost', 'llmproxy', 'speedtest', 'pages'];
+const services = ['forgejo', 'vault', 'bifrost', 'llmproxy', 'speedtest', 'pages'];
 async function checkHealth() {
   let anyDown = false;
   for (const svc of services) {

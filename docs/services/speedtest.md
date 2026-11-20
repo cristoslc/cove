@@ -1,6 +1,6 @@
 # Speedtest Tracker for Cove
 
-Speedtest Tracker monitors the operator's **internet connection** — uptime, latency, download/upload bandwidth, jitter, and packet loss — via scheduled Ookla `speedtest` CLI runs. It is an **optional, profiled** Cove service (`profile: speedtest`), mirroring the `litellm` pattern. It does **not** monitor Cove's own services (that stays with OpenObserve via the blackbox prober).
+Speedtest Tracker monitors the operator's **internet connection** — uptime, latency, download/upload bandwidth, jitter, and packet loss — via scheduled Ookla `speedtest` CLI runs. It is an **optional, profiled** Cove service (`profile: speedtest`), following the established optional-service pattern. It does **not** monitor Cove's own services (that stays with OpenObserve via the blackbox prober).
 
 ## Quick Start
 

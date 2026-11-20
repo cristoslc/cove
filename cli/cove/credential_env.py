@@ -48,10 +48,6 @@ import click
 CREDENTIAL_ENV_NAMES: tuple[str, ...] = (
     "SYNTHETIC_API_KEY",
     "OLLAMA_API_KEY",
-    "LITELLM_MASTER_KEY",
-    "LITELLM_DB_PASSWORD",
-    "LITELLM_UI_USERNAME",
-    "LITELLM_UI_PASSWORD",
     "BIFROST_ENCRYPTION_KEY",
     "BIFROST_ADMIN_USERNAME",
     "BIFROST_ADMIN_PASSWORD",
@@ -134,10 +130,10 @@ def _read_env_file_value(path: Path, name: str) -> str | None:
 def file_of_record_values(name: str, compose_dir: Path) -> dict[str, str]:
     """Every file the compose set resolves ``name`` from, in precedence order.
 
-    ``.env`` is the Compose interpolation surface. ``litellm/local.env`` is the
-    LiteLLM service's declared ``env_file`` and the source of record for the
-    Synthetic key; ``bifrost/local.env`` is its projection. Values are never
-    returned in warning text — only labels and fingerprints.
+    ``.env`` is the Compose interpolation surface. ``bifrost/local.env`` is the
+    gateway service's declared ``env_file`` and the source of record for the
+    Synthetic key. Values are never returned in warning text — only labels and
+    fingerprints.
     """
     values: dict[str, str] = {}
     env_value = _read_env_file_value(compose_dir / ".env", name)
@@ -145,7 +141,6 @@ def file_of_record_values(name: str, compose_dir: Path) -> dict[str, str]:
         values["compose .env"] = env_value
     data_root = resolve_data_root(compose_dir / ".env")
     for label, path in (
-        ("litellm/local.env", data_root / "litellm" / "local.env"),
         ("bifrost/local.env", data_root / "bifrost" / "local.env"),
     ):
         value = _read_env_file_value(path, name)

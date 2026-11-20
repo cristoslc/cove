@@ -83,7 +83,7 @@ dependencies.
 | `compose/*/Dockerfile` `FROM` | `dockerfile` | yes, 18 deps | `apt`/`apk` installs are extracted then skipped (`unspecified-version`, `unknown-registry`). |
 | `.forgejo/workflows/*.yml`, `.github/workflows/*.yml` | `github-actions` | yes, 6 deps | needs `GITHUB_COM_TOKEN` for github.com lookups; without it those updates are skipped with a warning. |
 | `compose/requirements.yml` | `ansible-galaxy` | yes, 1 dep | `community.docker`. |
-| `compose/litellm/docker-compose.yml`, `compose/docker-compose.staging.yml` | `docker-compose` | yes, 0 deps | every image is a bare `${VAR}`, so there is nothing to rewrite; the values live in the main compose file. |
+| `compose/docker-compose.staging.yml` | `docker-compose` | yes, 0 deps | every image is a bare `${VAR}`, so there is nothing to rewrite; the values live in the main compose file. |
 
 `pinDigests: true` applies to the `FROM` lines, the action pins, and the compose
 images that are not templated per-host. Two exceptions are deliberate:
@@ -102,7 +102,6 @@ each one has a named owner path:
 |---|---|---|
 | `compose/bringup.yml` image defaults (`:812-852`) | a second copy of the same pins in the `.env` template | removed by `docs/musings/digest-pinning-plan.md` Phase 0 |
 | `vault_image_tag` + `vault_image_digest` | two keys, digest not derivable | operator, runbook |
-| `compose/litellm/Dockerfile` `litellm[proxy]==1.84.0` | pip pin inside a `RUN` line; the version also appears in the image tag and `.env` | operator, runbook |
 | `compose/ade/Dockerfile` `ARG BB_APP_VERSION` | npm pin inside `RUN`; `cove ade update` already owns the pin | `cove ade update` |
 | `compose/bifrost/Dockerfile` `dnsmasq=2.91-r1` | apk pin, extracted then skipped as `unknown-registry` | operator, Alpine release |
 | `cli/cove/tunnel.py` per-arch zrok2 digests | a map, not a single reference | operator, with a test tying children to the declared index digest |
@@ -327,9 +326,8 @@ preflight step re-checks the same endpoint before every run.
 | `renovate/ghcr.io-stacklok-toolhive-0.x` | `stacklok/toolhive` v0.51.4 → v0.59.0 | `compose/docker-compose.yml` | minor |
 | `renovate/maximhq-bifrost-2.x` | `maximhq/bifrost` v2.3.2 → v2.4.0 | `compose/docker-compose.yml` | minor |
 | `renovate/node-26.x` | `node` 24-bookworm-slim → 26-bookworm-slim | `compose/ade/Dockerfile` | major |
-| `renovate/python-3.x` | `python` 3.13-slim → 3.15-slim | `compose/litellm/Dockerfile` | minor |
 | `renovate/alpine-3.x` | `alpine` 3.23.7 → 3.24.3 and 3.21 → 3.24 | `compose/bifrost/Dockerfile`, `compose/dnsmasq/Dockerfile` | minor |
-| `renovate/patch-dependencies` (group) | digest pins for `postgres`, `forgejo/runner`, `speedtest-tracker`, `node`, `alpine`, `python`; `openziti/zrok2` 2.0.4 → 2.0.8 in both compose files | `compose/**` | patch / digest |
+| `renovate/patch-dependencies` (group) | digest pins for `forgejo/runner`, `speedtest-tracker`, `node`, `alpine`; `openziti/zrok2` 2.0.4 → 2.0.8 in both compose files | `compose/**` | patch / digest |
 | `renovate/lock-file-maintenance` | `uv.lock` refresh (Monday schedule) | `cli/uv.lock` | maintenance |
 
 Every branch above touches `compose/`, so the merge automation would hold all

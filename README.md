@@ -48,7 +48,7 @@ cove uninstall --yes     # Destroy everything: containers, data, keychain, cache
 |---------|---------|
 | `cove up` | Full pipeline: batch-pull → bringup → bootstrap Vault → provision Forgejo |
 | `cove up --no-provision` | Bring up containers only |
-| `cove up --all` | Full pipeline + all optional services: Runner starts with the pod (ADE is core), LiteLLM and Speedtest flows run right after the provisioning chain (credentials first). Tunnel excluded — `cove tunnel up` creates shares interactively |
+| `cove up --all` | Full pipeline + all optional services: Runner starts with the pod (ADE is core), the Speedtest flow runs right after the provisioning chain (credentials first). Tunnel excluded — `cove tunnel up` creates shares interactively |
 | `cove down` | Stop containers (data preserved) |
 | `cove down --volumes` | Stop containers and remove volumes |
 | `cove uninstall --yes` | Destroy all cove containers, data, keychain entries, and cache |

@@ -60,18 +60,18 @@ def test_up_marks_core_running_and_optional_as_observed(state_file, monkeypatch)
     for core in expected_state.CORE_CONTAINERS:
         assert services[core]["expected"] == "running"
     assert services["cove-bifrost"]["expected"] == "running"
-    assert services["cove-litellm"]["expected"] == "stopped"
+    assert services["cove-forgejo-runner"]["expected"] == "stopped"
     assert payload["converge_incomplete"] is False
 
 
 def test_up_preserves_an_explicit_expectation_when_docker_is_unreachable(
     state_file, monkeypatch
 ):
-    monkeypatch.setattr(expected_state, "_running_containers", lambda: {"cove-litellm"})
+    monkeypatch.setattr(expected_state, "_running_containers", lambda: {"cove-bifrost"})
     expected_state.record_up(state_file)
     monkeypatch.setattr(expected_state, "_running_containers", lambda: None)
     payload = expected_state.record_up(state_file)
-    assert payload["services"]["cove-litellm"]["expected"] == "running"
+    assert payload["services"]["cove-bifrost"]["expected"] == "running"
 
 
 def test_down_marks_everything_stopped(state_file):

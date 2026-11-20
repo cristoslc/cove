@@ -15,8 +15,8 @@ playbook-level non-determinisms remained, and they are pinned here:
      converge that changed nothing.
 
   3. Ambient credential variables were interpolated ahead of the compose
-     `.env`, so two shells with different exports changed the litellm/bifrost
-     config hashes (2026-10-27). `cove.credential_env` now scrubs them from the
+     `.env`, so two shells with different exports changed the
+     bifrost config hash (2026-10-27). `cove.credential_env` now scrubs them from the
      child environment; the differently-equipped-shell equality is pinned in
      `test_credential_env.py`.
 

@@ -81,8 +81,6 @@ LIVE_CONTAINER_NAMES = {
     "cove-dnsmasq",
     "cove-dnsproxy",
     "cove-ade-server",
-    "cove-litellm",
-    "cove-litellm-db",
     "cove-speedtest-tracker",
     "cove-forgejo-runner",
     "cove-tunnel",
@@ -94,13 +92,13 @@ LIVE_CONTAINER_NAMES = {
 # owns 443 directly since the pf shim drop; dnsmasq moved to 5354 —
 # UDP 5353 is squatted on this Mac by GLKVM Helper):
 # nginx 443/tcp + 8080/tcp + 80/tcp, dnsmasq 5354/udp, forgejo ssh 2222,
-# litellm 4000, speedtest 8982.
-LIVE_HOST_PORTS = {"443", "80", "8080", "5354", "2222", "4000", "8982"}
+# bifrost 4002, speedtest 8982.
+LIVE_HOST_PORTS = {"443", "80", "8080", "5354", "2222", "4002", "8982"}
 
 # The live stack's data root (never mounted, never written by staging).
 LIVE_DATA_ROOT = Path("~/Documents/cove-data").expanduser()
 
-ALL_PROFILES = ["ade", "litellm", "bifrost", "speedtest", "runner", "tunnel"]
+ALL_PROFILES = ["ade", "bifrost", "speedtest", "runner", "tunnel"]
 
 pytestmark = pytest.mark.skipif(
     shutil.which("docker") is None, reason="docker compose CLI not available"
@@ -125,10 +123,7 @@ def _render(*, profiles: list[str] | None = None, with_override: bool = True,
 
     env = dict(os.environ)
     fake_staging_root = tmp_root / "cove-data-staging"
-    litellm_dir = fake_staging_root / "litellm"
-    litellm_dir.mkdir(parents=True, exist_ok=True)
-    (litellm_dir / "local.env").touch(mode=0o600, exist_ok=True)
-    # Bifrost's env_file is validated at compose config time too.
+    # Bifrost's env_file is validated at compose config time.
     bifrost_dir = fake_staging_root / "bifrost"
     bifrost_dir.mkdir(parents=True, exist_ok=True)
     (bifrost_dir / "local.env").touch(mode=0o600, exist_ok=True)
@@ -394,55 +389,6 @@ class TestTeardownProfileCoverage:
 
 
 class TestStagingRuntimeFiles:
-    def test_deploy_isolated_uses_nofollow_env_setup_before_compose_up(self, tmp_path):
-        script = (PROJECT_ROOT / "scripts" / "staging" / "deploy-isolated.sh").read_text()
-        directory_helper = (
-            '"$STAGING_VENV/bin/python" "$COMPOSE_DIR/litellm/config_overlay.py" '
-            '--ensure-private-dir "$STAGING_DATA_ROOT/litellm" '
-            '--trusted-root "$STAGING_DATA_ROOT"'
-        )
-        env_helper = (
-            '"$STAGING_VENV/bin/python" "$COMPOSE_DIR/litellm/config_overlay.py" '
-            '--ensure-env-file "$STAGING_DATA_ROOT/litellm/local.env" '
-            '--trusted-root "$STAGING_DATA_ROOT"'
-        )
-        compose_up = '"${COMPOSE_CMD[@]}" up -d --build'
-
-        for required in (directory_helper, env_helper):
-            assert required in script, f"staging deploy must run {required}"
-        assert 'mkdir -p "$STAGING_DATA_ROOT/litellm"' not in script
-        assert 'chmod 700 "$STAGING_DATA_ROOT/litellm"' not in script
-        assert 'touch "$STAGING_DATA_ROOT/litellm/local.env"' not in script
-        assert 'chmod 600 "$STAGING_DATA_ROOT/litellm/local.env"' not in script
-        assert script.index(directory_helper) < script.index(env_helper)
-        assert script.index(env_helper) < script.index(compose_up)
-        assert "STAGING_DATA_ROOT_REAL" in script
-        assert "LIVE_DATA_ROOT_REAL" in script
-
-        # Exercise the shared directory helper wired into staging against a
-        # symlink; the target must not be chmodded or receive env files.
-        trusted_root = tmp_path / "staging-root"
-        trusted_root.mkdir()
-        target = tmp_path / "outside-litellm"
-        target.mkdir()
-        target.chmod(0o755)
-        (trusted_root / "litellm").symlink_to(target, target_is_directory=True)
-        result = subprocess.run(
-            [
-                sys.executable,
-                str(COMPOSE_DIR / "litellm" / "config_overlay.py"),
-                "--ensure-private-dir",
-                str(trusted_root / "litellm"),
-                "--trusted-root",
-                str(trusted_root),
-            ],
-            text=True,
-            capture_output=True,
-        )
-        assert result.returncode != 0
-        assert list(target.iterdir()) == []
-        assert target.stat().st_mode & 0o777 == 0o755
-
     def test_deploy_isolated_rejects_canonical_live_root_alias(self, tmp_path):
         live_root = tmp_path / "live-data"
         live_root.mkdir()

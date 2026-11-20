@@ -2,7 +2,7 @@
 
 **Filed:** 2026-09-22
 **Severity:** Medium (staging tier-2 gate is red on trunk; new sashays can't get a clean E2E signal)
-**Status:** Open
+**Status:** CLOSED for the litellm half 2026-11-19 (the service, its E2E class, and its staging profile are removed; the speedtest APP_KEY half was fixed separately). Kept as history.
 
 ## Symptom
 

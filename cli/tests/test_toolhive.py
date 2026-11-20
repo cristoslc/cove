@@ -1,5 +1,5 @@
 """Unit guard tests for the ToolHive MCP gateway: seed files, compose config,
-nginx routing, CLI module, and the LiteLLM disable_mcp cross-guard.
+nginx routing, and CLI module.
 
 All tests here are unit guards (always runnable, no live stack):
   - Validate compose/toolhive/registry.json parses and has no unpinned image refs
@@ -11,7 +11,6 @@ All tests here are unit guards (always runnable, no live stack):
   - Validate bringup.yml seeds the registry and sets .env defaults
   - Validate the CLI module imports and has correct subcommands (subprocess
     mocked — no live compose calls)
-  - Cross-guard: LiteLLM config still disables MCP (CVE-2026-42271)
 
 No e2e coverage exists for toolhive in this file: the live-stack paths
 (compose up with --profile mcp, /health through nginx on a running stack,
@@ -61,9 +60,6 @@ FULL_TEMPLATE_VARS = {
     "profile_uuid": "00000000-0000-0000-0000-000000000003",
     "root_ca_b64": "dGVzdC1jYS1iNjQ=",
 }
-
-LITELLM_DIR = COMPOSE_DIR / "litellm"
-
 
 def _load_compose() -> dict:
     with open(COMPOSE_DIR / "docker-compose.yml") as f:
@@ -373,7 +369,7 @@ class TestNginxConfig:
 
     def test_mcp_upstream_is_deferred_dns_variable(self):
         """Variable upstream + Docker resolver so nginx starts when the mcp
-        profile is off (same pattern as litellm/speedtest/ade blocks)."""
+        profile is off (same pattern as the speedtest/ade blocks)."""
         rendered = _render_nginx()
         assert "$toolhive_upstream" in rendered
         assert "set $toolhive_upstream http://toolhive:8080;" in rendered, (
@@ -491,7 +487,7 @@ class TestBringupIntegration:
 
     def test_registry_mount_target_guard(self):
         """The registry.json bind-mount target must be guarded against the
-        Docker auto-created-directory wedge (same as litellm config.yaml)."""
+        Docker auto-created-directory wedge (same as the other data-root files)."""
         with open(COMPOSE_DIR / "bringup.yml") as f:
             content = f.read()
         assert "toolhive/registry.json" in content
@@ -500,27 +496,6 @@ class TestBringupIntegration:
         with open(COMPOSE_DIR / "bringup.yml") as f:
             content = f.read()
         assert "mcp.cove" in content, "bringup.yml cert validation must include mcp.cove"
-
-
-class TestLitellmMcpGuard:
-    """Cross-guard: LiteLLM's MCP endpoints stay disabled (CVE-2026-42271).
-    ToolHive is the only MCP surface in Cove (docs/plans/toolhive-mcp-gateway.md)."""
-
-    def test_disable_mcp_still_true(self):
-        with open(LITELLM_DIR / "config.base.yaml") as f:
-            content = f.read()
-        assert "disable_mcp: true" in content, (
-            "LiteLLM disable_mcp: true must stay (CVE-2026-42271); ToolHive is the MCP surface"
-        )
-
-    def test_litellm_toolhive_cross_reference_present(self):
-        """The plan mandates a comment cross-referencing the ToolHive plan so
-        nobody 'helpfully' re-enables MCP endpoints."""
-        with open(LITELLM_DIR / "config.base.yaml") as f:
-            content = f.read()
-        assert "toolhive" in content.lower(), (
-            "config.base.yaml must cross-reference the ToolHive MCP gateway plan"
-        )
 
 
 class TestCLI:
@@ -567,7 +542,7 @@ class TestCLI:
         """docker compose requires --profile as a GLOBAL flag BEFORE the
         subcommand (Docker Compose 5.4.0). `cove toolhive up` must pass
         `--profile mcp` before `up`, not after (same regression root cause
-        as litellm/speedtest)."""
+        as the other optional services)."""
         from cove.toolhive import toolhive
 
         captured: list[list[str]] = []

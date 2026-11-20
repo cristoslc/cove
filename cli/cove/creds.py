@@ -175,7 +175,7 @@ def vault_put(op_ref: str, force_refresh: bool):
 
     Stdout carries the batch-pull-style mask only — the resolved secret must
     never land in a terminal or agent transcript. Internal callers (tunnel,
-    litellm, speedtest up-flows) resolve the value in-process via
+    speedtest up-flows) resolve the value in-process via
     ``cove.vault_cache.vault_put_op_ref`` instead of parsing stdout.
 
     Examples:

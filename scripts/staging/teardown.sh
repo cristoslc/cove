@@ -11,7 +11,7 @@
 #      `cove-staging` — `compose down -v` for that project plus removal of its
 #      staging data root (~/Documents/cove-data-staging by default).
 #   B. LEGACY in-live mode (deploy.sh): stop the staging-only profile
-#      containers (cove-litellm) and remove the staging venv.
+#      containers and remove the staging venv.
 #
 # Production safety: the live project's containers (cove-forgejo, cove-vault,
 # cove-nginx, cove-dnsmasq, cove-dnsproxy, cove-ade-server, ...) are NEVER
@@ -34,12 +34,12 @@ LIVE_DATA_ROOT="${COVE_LIVE_DATA_ROOT:-$HOME/Documents/cove-data}"
 
 # --- Production safety guards -------------------------------------------------
 
-# Guard 1: Resource names MUST NOT match known production names. Since the
-# isolated staging mode, cove-litellm IS a live-stack (production) container
-# whenever the operator runs that profile — teardown never stops
-# anything whose name matches production. Stopping live optional profiles is
-# the operator's explicit `cove litellm down`, not a staging teardown.
-PRODUCTION_CONTAINERS="cove-forgejo cove-nginx cove-vault cove-dnsmasq cove-dnsproxy cove-ade-server cove-litellm cove-litellm-db cove-speedtest-tracker cove-forgejo-runner cove-tunnel"
+# Guard 1: Resource names MUST NOT match known production names. A live
+# optional service is a production container whenever the operator runs its
+# profile — teardown never stops anything whose name matches production.
+# Stopping live optional profiles is the operator's explicit per-service
+# `cove <service> down`, not a staging teardown.
+PRODUCTION_CONTAINERS="cove-forgejo cove-nginx cove-vault cove-dnsmasq cove-dnsproxy cove-ade-server cove-bifrost cove-bifrost-dns cove-speedtest-tracker cove-forgejo-runner cove-toolhive cove-tunnel"
 STAGING_CONTAINERS=""
 
 for container in $STAGING_CONTAINERS; do
@@ -100,11 +100,10 @@ if docker info >/dev/null 2>&1; then
             # Enable every profile declared by Compose; a profile-gated
             # service whose profile is NOT enabled here is not part of the
             # project for this down (and --remove-orphans does not catch it),
-            # leaving an orphan container behind (observed for ToolHive and
-            # LiteLLM during isolated staging teardown).
+            # leaving an orphan container behind (observed for ToolHive during
+            # isolated staging teardown).
             --profile ade
             --profile mcp
-            --profile litellm
             --profile bifrost
             --profile runner
             --profile speedtest

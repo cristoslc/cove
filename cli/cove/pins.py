@@ -33,7 +33,6 @@ _ENV_DEFAULT_RE = re.compile(r"\$\{[A-Z_0-9]+:-(.+)\}$")
 # Repo-relative compose files that carry pins, in stable read order.
 PINNED_COMPOSE_FILES = (
     "docker-compose.yml",
-    "litellm/docker-compose.yml",
     "tunnel.yml",
 )
 

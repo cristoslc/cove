@@ -886,10 +886,10 @@ class TestCoveUpCommand:
 
     def test_up_all_passes_runner_to_bringup(self, tmp_path, monkeypatch, _fake_ansible_popen):
         """cove up --all must include the runner profile in the bringup
-        COMPOSE_PROFILES (no credential dance for the runner). Litellm and
-        speedtest must NOT be in it: their containers need CLI-prepared
-        credentials first, so they start through their own flows right after
-        the provisioning chain. ADE is core since 0.8.0 — no profile."""
+        COMPOSE_PROFILES (no credential dance for the runner). Speedtest must
+        NOT be in it: its container needs CLI-prepared credentials first, so it
+        starts through its own flow right after the provisioning chain. ADE is
+        core since 0.8.0 — no profile."""
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -918,11 +918,11 @@ class TestCoveUpCommand:
                 f"ADE is core (no profile) — must not appear in profiles, got: {bringup_args}"
             )
 
-    def test_up_all_starts_litellm_and_speedtest_after_bringup(
+    def test_up_all_starts_speedtest_after_bringup(
         self, tmp_path, monkeypatch
     ):
-        """cove up --all must run the litellm and speedtest up flows after the
-        bringup (they prepare credentials, then start their containers)."""
+        """cove up --all must run the speedtest up flow after the bringup
+        (it prepares credentials, then starts its container)."""
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -936,10 +936,6 @@ class TestCoveUpCommand:
         ), patch("cove.status.check_all") as mock_check, patch(
             "cove.cli._detect_running_optional_profiles", return_value=[]
         ), patch.object(
-            cove.litellm.litellm.commands["up"],
-            "callback",
-            side_effect=lambda: calls.append("litellm"),
-        ), patch.object(
             cove.speedtest.speedtest.commands["up"],
             "callback",
             side_effect=lambda: calls.append("speedtest"),
@@ -951,15 +947,14 @@ class TestCoveUpCommand:
                 "up", no_provision=True, no_upgrade=True, all_=True, log=False
             )
 
-            assert calls == ["litellm", "speedtest"], (
-                f"litellm and speedtest up flows must run after bringup, got: {calls}"
+            assert calls == ["speedtest"], (
+                f"speedtest up flow must run after bringup, got: {calls}"
             )
 
     def test_up_all_tolerates_optional_service_failure(self, tmp_path, monkeypatch):
-        """A credential failure on one optional service must not abort
+        """A credential failure on an optional service must not abort
         `cove up --all` — optional services stay optional (same contract as
-        `cove status`). The remaining service flow and the status check must
-        still run."""
+        `cove status`). The status check must still run."""
         compose_sub = tmp_path / "compose"
         compose_sub.mkdir()
         (compose_sub / "inventory.yml").write_text("---\n")
@@ -972,11 +967,9 @@ class TestCoveUpCommand:
         ), patch("cove.status.check_all") as mock_check, patch(
             "cove.cli._detect_running_optional_profiles", return_value=[]
         ), patch.object(
-            cove.litellm.litellm.commands["up"],
+            cove.speedtest.speedtest.commands["up"],
             "callback",
-            side_effect=click.ClickException("Cove Admin item missing"),
-        ), patch.object(
-            cove.speedtest.speedtest.commands["up"], "callback"
+            side_effect=click.ClickException("Speedtest APP_KEY missing"),
         ) as mock_speedtest:
             mock_run.return_value.returncode = 0
             mock_check.return_value = []
@@ -1146,7 +1139,9 @@ class TestCoveStatusCommand:
             "cove.status._check_dns"
         ) as mock_dns, patch(
             "cove.status._check_resolver_port", return_value=None
-        ):
+        ), patch(
+            "cove.status._check_llmproxy"
+        ) as mock_llmproxy:
             from cove.status import CheckResult
             mock_containers.return_value = [
                 CheckResult(name="Forgejo", ok=True, detail="Up 2 hours"),
@@ -1159,11 +1154,14 @@ class TestCoveStatusCommand:
             mock_forgejo.return_value = CheckResult(name="Forgejo API", ok=True, detail="ok")
             mock_vault.return_value = CheckResult(name="Vault API", ok=True, detail="initialized, unsealed")
             mock_dns.return_value = CheckResult(name="DNS resolution", ok=True, detail="git.cove.local → 127.0.0.1")
+            mock_llmproxy.return_value = CheckResult(
+                name="LLM proxy edge", ok=True, detail="reachable, client auth enforced"
+            )
 
             runner = CliRunner()
             result = runner.invoke(cove.cli.app, ["status"])
             assert result.exit_code == 0, result.output
-            assert "5/5" in result.output or "9/9" in result.output
+            assert "10/10" in result.output
 
     def test_status_fails_on_container_down(self, tmp_path, monkeypatch):
         with patch("cove.status._check_containers") as mock_containers, patch(
@@ -1176,7 +1174,9 @@ class TestCoveStatusCommand:
             "cove.status._check_dns"
         ) as mock_dns, patch(
             "cove.status._check_resolver_port", return_value=None
-        ):
+        ), patch(
+            "cove.status._check_llmproxy"
+        ) as mock_llmproxy:
             from cove.status import CheckResult
             mock_containers.return_value = [
                 CheckResult(name="Forgejo", ok=False, detail="Container cove-forgejo is not running",
@@ -1224,7 +1224,9 @@ class TestCoveStatusCommand:
             "cove.status._check_dns"
         ) as mock_dns, patch(
             "cove.status._check_resolver_port", return_value=None
-        ):
+        ), patch(
+            "cove.status._check_llmproxy"
+        ) as mock_llmproxy:
             from cove.status import CheckResult
             mock_containers.return_value = [
                 CheckResult(name="Forgejo", ok=True, detail="Up"),

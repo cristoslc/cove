@@ -29,7 +29,8 @@ masking the problem.
   `default.conf`, `landing.html`, `pages.html`, `cove-config-locations.conf`,
   `cove-pages-locations.conf` under `nginx_conf_dir`.
 - `Assert data-root bind-mount targets are not directories` — stats
-  `dnsmasq/cove.conf`, `nginx/config.html`, `litellm/config.yaml` under
+  `dnsmasq/cove.conf`, `nginx/config.html`, `bifrost/config.json`,
+  `bifrost/config.db`, `toolhive/registry.json` under
   `cove_data_root`.
 
 If any exists as a directory, the playbook fails loudly with the exact

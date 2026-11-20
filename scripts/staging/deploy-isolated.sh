@@ -102,12 +102,6 @@ python3 -m venv "$STAGING_VENV"
 echo "Preparing staging data root: $STAGING_DATA_ROOT" >&2
 mkdir -p "$STAGING_DATA_ROOT"/{certs,dnsmasq,pages/sites,vault/data,vault/logs,ade,nginx/user.d,nginx/config/dns,nginx-conf,toolhive/config,toolhive/state,toolhive/profiles}
 
-# LiteLLM's generated YAML is readable by container UID 1000, so keep its
-# parent directory private on the host. Provider values remain in this 0600
-# env file and are never copied into config.yaml.
-"$STAGING_VENV/bin/python" "$COMPOSE_DIR/litellm/config_overlay.py" --ensure-private-dir "$STAGING_DATA_ROOT/litellm" --trusted-root "$STAGING_DATA_ROOT" >/dev/null
-"$STAGING_VENV/bin/python" "$COMPOSE_DIR/litellm/config_overlay.py" --ensure-env-file "$STAGING_DATA_ROOT/litellm/local.env" --trusted-root "$STAGING_DATA_ROOT" >/dev/null
-
 # Certs: reuse the live mkcert pair if present (READ-only copy from the live
 # root — never a mount, never a write). Otherwise generate a self-signed pair
 # into the staging root. Never touches 1Password/biometric paths.
@@ -167,9 +161,8 @@ default = env.get_template("default.conf.j2").render({"ade_port": ade_port})
 Path(dest_dir, "default.conf").write_text(default)
 auth = env.get_template("llmproxy-auth.conf.j2").render({
     "llmproxy_client_key": os.environ["STAGING_LLMPROXY_CLIENT_KEY"],
-    # Staging has no real backends; these placeholders never leave the
+    # Staging has no real backend; this placeholder never leaves the
     # isolated staging project.
-    "llmproxy_litellm_key": "sk-staging-litellm",
     "llmproxy_bifrost_key": "sk-staging-bifrost",
 })
 auth_path = Path(dest_dir, "llmproxy-auth.conf")

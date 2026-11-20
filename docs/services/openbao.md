@@ -31,7 +31,7 @@ The image is an OCI index, not a single-arch manifest. `docker buildx imagetools
 
 ### What consumes it
 
-Only the operator's CLI and the Ansible playbooks talk to the secrets server. The KV cache backs credential resolution for `cove up`, `cove creds`, `cove tunnel`, `cove litellm`, `cove bifrost`, `cove speedtest`, and the Forgejo admin provisioning playbook. No service container reads it at runtime.
+Only the operator's CLI and the Ansible playbooks talk to the secrets server. The KV cache backs credential resolution for `cove up`, `cove creds`, `cove tunnel`, `cove bifrost`, `cove speedtest`, and the Forgejo admin provisioning playbook. No service container reads it at runtime.
 
 ## Why OpenBao
 

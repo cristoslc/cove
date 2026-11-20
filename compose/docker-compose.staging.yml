@@ -69,14 +69,6 @@ services:
   vault:
     container_name: cove-staging-vault
 
-  litellm-db:
-    container_name: cove-staging-litellm-db
-
-  litellm:
-    container_name: cove-staging-litellm
-    # Loopback-only in base; dropped entirely in staging (nginx fronts it).
-    ports: !override []
-
   forgejo-runner:
     container_name: cove-staging-forgejo-runner
 

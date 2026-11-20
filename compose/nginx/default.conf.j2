@@ -34,9 +34,9 @@ upstream vault_backend {
     server vault:8200;
 }
 
-# litellm is an optional profiled service — it may not be running.
+# Optional profiled services (bifrost, speedtest, ...) may not be running.
 # Using a variable in proxy_pass with a resolver defers DNS resolution
-# to request time, so nginx starts even when litellm is absent.
+# to request time, so nginx starts even when the service is absent.
 # The resolver uses Docker's embedded DNS (127.0.0.11).
 
 include /etc/nginx/user.d/*.conf;
@@ -149,41 +149,11 @@ server {
     }
 }
 
-# litellm.cove — LiteLLM proxy
-# litellm is an optional profiled service. Using a variable for the
-# upstream host defers DNS resolution to request time, so nginx starts
-# even when the litellm container is not running.
-# All paths are proxied — isolation is from the 127.0.0.1 port binding,
-# not route whitelisting. Admin UI is enabled with a master key.
-server {
-    listen 443 ssl;
-    server_name litellm.cove litellm.cove.local;
-
-    ssl_certificate     /certs/cove.local.pem;
-    ssl_certificate_key /certs/cove.local-key.pem;
-
-    resolver 127.0.0.11 valid=10s;
-    set $litellm_upstream http://litellm:4000;
-
-    location / {
-        proxy_pass $litellm_upstream$request_uri;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto https;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-        proxy_buffering off;
-    }
-}
-
-# bifrost.cove — Bifrost gateway (LiteLLM replacement candidate, additive)
+# bifrost.cove — Bifrost gateway admin/debug surface
 # bifrost is an optional profiled service. Using a variable for the upstream
 # host defers DNS resolution to request time, so nginx starts even when the
 # bifrost container is not running. Streaming (SSE) is the primary traffic
-# shape, so buffering stays off and the timeouts match the litellm vhost.
-# The client-facing lane (re-pointing agents) is a later, gated phase — this
-# vhost only exposes the gateway; litellm remains the agent traffic path.
+# shape, so buffering stays off and the timeouts are long.
 server {
     listen 443 ssl;
     server_name bifrost.cove bifrost.cove.local;
@@ -210,10 +180,10 @@ server {
 # THE canonical client-facing LLM endpoint. The client contract is
 # OpenAI-compatible HTTP, so the hostname must outlive any single product:
 # clients point at llmproxy.cove, and a product swap changes only the
-# upstream variable below. The product hostnames (litellm.cove, bifrost.cove)
-# remain the admin/debug surfaces. Streaming-critical settings match the
-# litellm vhost: the ladder serves 3600-second streams, so buffering stays
-# off and the read/send timeouts are long.
+# upstream variable below. The product hostname (bifrost.cove) remains the
+# admin/debug surface. Streaming-critical settings: the ladder serves
+# 3600-second streams, so buffering stays off and the read/send timeouts are
+# long.
 #
 # This vhost is also the AUTHENTICATION EDGE: clients present ONE cove-owned
 # client token (never a backend key), nginx rejects anything else with 401
@@ -229,11 +199,10 @@ server {
 
     resolver 127.0.0.11 valid=10s;
     # THE PRODUCT-SWAP LINE: the one IaC line that changes when the serving
-    # product swaps. It names the ACTIVE proxy upstream — litellm today;
-    # http://bifrost:8080 from cutover day (docs/services/bifrost.md,
-    # "Client endpoint" + the cutover runbook). The matching backend key is
-    # already in llmproxy-auth.conf's map, so the flip is this line, not a
-    # client change.
+    # product swaps. It names the ACTIVE proxy upstream — bifrost today
+    # (docs/services/bifrost.md, "Client endpoint"). The matching backend key
+    # is in llmproxy-auth.conf's map, so a swap is this line, not a client
+    # change.
     set $llmproxy_upstream http://bifrost:8080;
 
     # Client auth at the edge. $llmproxy_authorized is an exact-match map of

@@ -76,3 +76,56 @@ def test_the_human_table_still_exits_non_zero_on_failure(monkeypatch):
     outcome = CliRunner().invoke(app, ["status"])
     assert outcome.exit_code == 1
     assert "Forgejo" in outcome.output
+
+
+class TestLlmProxyEdgeCheck:
+    """The row that replaced the retired LiteLLM row: the client endpoint.
+
+    A 401 proves the vhost routes and the 0600 auth map rendered, without a
+    credential; a 200 would mean the edge stopped enforcing client auth.
+    """
+
+    def _stub(self, monkeypatch, status_code):
+        import types
+
+        calls = []
+
+        def fake_get(url, **kwargs):
+            calls.append((url, kwargs))
+            return types.SimpleNamespace(status_code=status_code, text="")
+
+        monkeypatch.setattr(status_module.requests, "get", fake_get)
+        return calls
+
+    def test_401_is_healthy_and_names_the_host(self, monkeypatch):
+        calls = self._stub(monkeypatch, 401)
+        result = status_module._check_llmproxy()
+        assert result.ok is True
+        assert result.name == "LLM proxy edge"
+        assert "auth enforced" in result.detail
+        assert calls[0][1]["headers"]["Host"] == "llmproxy.cove.local"
+        assert calls[0][0].endswith("/v1/models")
+
+    def test_200_without_a_token_is_a_failure(self, monkeypatch):
+        self._stub(monkeypatch, 200)
+        result = status_module._check_llmproxy()
+        assert result.ok is False
+        assert "without a client token" in result.detail
+        assert result.hints
+
+    def test_other_statuses_report_the_code_not_connection_refused(self, monkeypatch):
+        self._stub(monkeypatch, 502)
+        result = status_module._check_llmproxy()
+        assert result.ok is False
+        assert "HTTP 502" in result.detail
+
+    def test_connection_refused_is_unreachable(self, monkeypatch):
+        import requests as requests_module
+
+        def fake_get(url, **kwargs):
+            raise requests_module.exceptions.ConnectionError()
+
+        monkeypatch.setattr(status_module.requests, "get", fake_get)
+        result = status_module._check_llmproxy()
+        assert result.ok is False
+        assert result.detail == "Connection refused"

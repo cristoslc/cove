@@ -44,7 +44,6 @@ SERVICES = [
 ]
 
 OPTIONAL_SERVICES = [
-    ("cove-litellm", "LiteLLM", "litellm"),
     ("cove-bifrost", "Bifrost", "bifrost"),
     ("cove-bifrost-dns", "Bifrost DNS", "bifrost"),
     ("cove-speedtest-tracker", "Speedtest", "speedtest"),
@@ -197,6 +196,61 @@ def _check_vault() -> CheckResult:
     )
 
 
+def _check_llmproxy() -> CheckResult:
+    """The canonical client LLM endpoint (llmproxy.cove) is reachable and the
+    auth edge still rejects an unauthenticated request.
+
+    It replaced the LiteLLM vhost when the exit landed, so it is the row that
+    stands where the LiteLLM row used to: the edge answering 401 proves the
+    vhost routes and the 0600 auth map rendered, without needing a credential.
+    A 200 here would mean the edge is not enforcing client auth at all.
+    """
+    last_status: int | None = None
+    for host in ("llmproxy.cove.local", "llmproxy.cove"):
+        try:
+            resp = requests.get(
+                f"https://127.0.0.1:{NGINX_HTTPS_PORT}/v1/models",
+                headers={"Host": host},
+                verify=False,
+                timeout=10,
+            )
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout):
+            continue
+        last_status = resp.status_code
+        if resp.status_code == 401:
+            return CheckResult(
+                name="LLM proxy edge", ok=True, detail="reachable, client auth enforced"
+            )
+        if resp.status_code == 200:
+            return CheckResult(
+                name="LLM proxy edge",
+                ok=False,
+                detail="reachable, but answered without a client token",
+                hints=[
+                    "The llmproxy auth edge is not enforcing client auth; re-render it: `cove up`",
+                ],
+            )
+    if last_status is not None:
+        return CheckResult(
+            name="LLM proxy edge",
+            ok=False,
+            detail=f"HTTP {last_status} (expected 401 from the auth edge)",
+            hints=[
+                "Is the gateway up? `cove bifrost status`",
+                "Check nginx: `docker logs cove-nginx`",
+            ],
+        )
+    return CheckResult(
+        name="LLM proxy edge",
+        ok=False,
+        detail="Connection refused",
+        hints=[
+            "Is nginx up? Run `cove up`",
+            "Check the gateway: `cove bifrost status`",
+        ],
+    )
+
+
 def _check_dns() -> CheckResult:
     for name in ("git.cove.local", "git.cove"):
         try:
@@ -260,6 +314,7 @@ def check_all() -> list[CheckResult]:
     results: list[CheckResult] = []
     results.extend(_check_containers())
     results.append(_check_nginx_ingress())
+    results.append(_check_llmproxy())
     results.append(_check_forgejo())
     results.append(_check_vault())
     results.append(_check_dns())

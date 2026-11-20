@@ -1,24 +1,22 @@
 # Bifrost Gateway for Cove
 
-**Status: additive replacement candidate; cutover plan approved.** Bifrost
-runs alongside the live LiteLLM services on the `bifrost` compose profile.
-Nothing is removed and no client is re-pointed yet; the four previously
-pending cutover decisions were approved by the operator on 2026-10-26 and
-the checklist at the bottom is now a resolved two-phase runbook. Design and
+**Status: serving gateway.** Bifrost owns the model ladder behind
+`llmproxy.cove` on the `bifrost` compose profile. The LiteLLM exit completed
+in two phases (client cutover, then teardown on 2026-11-19); no LiteLLM
+service, CLI group, vhost, or config remains in this repository. Design and
 evaluation: [the LiteLLM exit musing](../musings/litellm-exit.md).
 
 - **What it is**: [Bifrost](https://github.com/maximhq/bifrost) (Bifrost
   transports v2.3.2), an OpenAI-compatible LLM gateway with config-file
-  governance, virtual keys, and ordered fallback routing. It carries the same
-  model ladder LiteLLM serves today, re-expressed as Bifrost routing rules with
-  fallback chains.
+  governance, virtual keys, and ordered fallback routing. It carries the model
+  ladder the retired LiteLLM deployment served, re-expressed as Bifrost routing
+  rules with fallback chains.
 - **Where it lives**: https://bifrost.cove/ and https://bifrost.cove.local/
   through nginx (loopback port bind `127.0.0.1:4002`). The dashboard is
   protected by the shared Cove Admin identity (ADR-017).
-- **Client traffic**: none yet. LiteLLM remains the agent traffic path;
-  clients re-point to the product-neutral `llmproxy.cove` endpoint (see
-  "Client endpoint" below) on cutover day, on a date the workstation lane
-  sets.
+- **Client traffic**: all of it. Agents reach the gateway through the
+  product-neutral `llmproxy.cove` endpoint (see "Client endpoint" below);
+  `bifrost.cove` is the admin/debug surface.
 
 ## Quick Start
 
@@ -30,7 +28,9 @@ cove bifrost down      # stop (data preserved)
 ```
 
 `cove up` never starts Bifrost as a side effect — it is deliberately absent
-from `_start_optional_services()` until the cutover is decided.
+from `_start_optional_services()`, because provisioning its virtual key and
+config store is that command's own job. Starting it implicitly would race
+that provisioning.
 
 ## Client endpoint: llmproxy.cove (product-neutral)
 
@@ -42,22 +42,20 @@ touching a single client.
 
 - **The product-swap line**: the alias vhost proxies to one IaC variable in
   `compose/nginx/default.conf.j2` — `set $llmproxy_upstream ...;`. That line
-  names the ACTIVE proxy upstream: `http://litellm:4000` today (LiteLLM
-  still serves agent traffic), flipped to `http://bifrost:8080` on cutover
-  day. One line changes; nothing else does.
+  names the ACTIVE proxy upstream: `http://bifrost:8080`. A future engine swap
+  changes that line and its key in `llmproxy-auth.conf.j2`; nothing else does.
 - **Edge authentication (clients hold ONE token)**: `llmproxy.cove` is the
   authentication edge, not a thin alias. Clients present a **client-scoped,
   cove-owned token** — never a backend credential — and nginx rejects anything
   else with `401` before an upstream sees the request. It then injects the
-  ACTIVE backend credential toward the upstream (the LiteLLM master key
-  today, the Bifrost virtual key after the flip). Backend credentials never
-  reach clients, so a proxy swap cannot strand a client credential.
+  ACTIVE backend credential toward the upstream (the Bifrost virtual key).
+  Backend credentials never reach clients, so a proxy swap cannot strand a
+  client credential.
 
   | credential | who holds it | where it lives | where it is read |
   | --- | --- | --- | --- |
   | client token | machine clients (opencode, omp, pi) | 1Password item `Cove LLM Proxy Client Key` (URL-keyed `https://llmproxy.cove.local/`, field `client_key`; shared across machines) plus the Vault `op-cache` entry | `cove up` resolves it (env `COVE_LLM_PROXY_CLIENT_KEY` -> compose `.env` -> Vault cache -> provision the item) and renders it into `nginx/llmproxy-auth.conf` at mode 0600 |
-  | LiteLLM master key | the edge and LiteLLM only | 1Password `LiteLLM Proxy` item -> compose `.env` `LITELLM_MASTER_KEY` | `cove up` reads `.env` and renders it into the same 0600 file; the client never sees it |
-  | Bifrost virtual key | the edge and Bifrost only | gateway-generated, projected into compose `.env` as `BIFROST_CLIENT_VIRTUAL_KEY` | same render path; used only when the active upstream is `http://bifrost:8080` |
+  | Bifrost virtual key | the edge and Bifrost only | gateway-generated, projected into compose `.env` as `BIFROST_CLIENT_VIRTUAL_KEY` | `cove up` renders it into the same 0600 file; the client never sees it |
 
   The rendered credential file (`compose/nginx/llmproxy-auth.conf`, rendered
   at mode `0600` and gitignored) carries two `map`s: one exact-match map of
@@ -68,44 +66,32 @@ touching a single client.
   the map gets an empty key and fails closed at the upstream rather than
   borrowing another product's credential. `cove up` refuses to render when
   the client token is missing (never an unauthenticated or wildcard edge).
-- **Streaming-critical settings** are copied from the litellm vhost:
-  `proxy_buffering off` and 3600s read/send timeouts, because the ladder
-  serves 3600-second streams.
-- **Product hostnames stay admin/debug surfaces only**: `bifrost.cove` is
-  the gateway console, `litellm.cove` is LiteLLM's UI while it drains. They
-  are not client surfaces and are not removed.
+- **Streaming-critical settings**: `proxy_buffering off` and 3600s read/send
+  timeouts, because the ladder serves 3600-second streams.
+- **Product hostname is an admin/debug surface only**: `bifrost.cove` is the
+  gateway console. It is not a client surface.
 - **Wiring**: cert SANs, the bringup TLS-validation loop, the `/etc/hosts`
   entry, the landing card, and the `cove bifrost status` health probe plus
   upstream report. The dnsmasq resolver is wildcard-based
   (`address=/cove/` and `address=/cove.local/`), so both neutral names
   resolve with no per-name entry.
 
-### Migration and rollback (edge auth)
+### Edge auth (completed migration)
 
-The edge gate turns on the moment this release's `cove up` renders nginx, so the
-credential swap below is the lane's one coordinated change. Cove executes none
-of it.
+Clients hold only the edge token from
+`op://Private/Cove LLM Proxy Client Key/client_key` and point at
+`https://llmproxy.cove/v1`; nginx injects the Bifrost virtual key server-side.
+The former LiteLLM master-key credential is gone (it lived in the deleted
+`LiteLLM Proxy` item).
 
-- **Migration**: replace each client's credential slot (today
-  `~/.config/workstation/secrets/litellm-master-key`, sent straight to
-  `litellm.cove`) with the edge token from
-  `op://Private/Cove LLM Proxy Client Key/client_key`, and point its base URL
-  at `https://llmproxy.cove/v1`. Clients then reach LiteLLM through the edge,
-  which injects the master key server-side. The LiteLLM master key stops being
-  a client credential entirely — it is an edge/backend credential from then on.
-- **Rollback (before the drain window closes)**: flip `$llmproxy_upstream`
-  back to `http://litellm:4000`, release, and re-render. Clients need no
-  change: the client token and the server-side injection are independent of
-  which backend is active.
-- **Rolling back the edge itself** (a prior wheel): the old `default.conf` has
-  no edge auth and forwards the client's own `Authorization` header, so a
-  client already holding the edge token starts failing against the backend.
-  Reverting the edge is therefore a coordinated change with the lane, exactly
-  like a client re-point — not a quiet rollback.
+Rollback is no longer a product swap: the LiteLLM surface is deleted and its
+database was secure-deleted at teardown. Recovering that deployment would mean
+restoring the pre-teardown release wheel **and** a backup of the deleted
+pgdata, and re-pointing clients — a project, not a flip.
 
 ## Configuration ownership
 
-IaC-first, with the same split as LiteLLM:
+IaC-first, with the same split the retired LiteLLM deployment used:
 
 - **`compose/bifrost/config.json`** (git-tracked): the governance source. It
   carries `source_of_truth: "config.json"`, the auth settings, the three
@@ -138,27 +124,26 @@ IaC-first, with the same split as LiteLLM:
   (or `x-bf-vk:`); requests with no credential get 401 (`enforce_auth_on_inference`).
 - **`dnsmasq.conf`** (git-tracked): the egress allowlist (see Security
   posture). Seeded first boot only.
-- **`local.env`**: the provider key file (`0600`). `SYNTHETIC_API_KEY` is
-  projected here by `cove bifrost up` from the LiteLLM local.env (the one
-  deployed source of record the LiteLLM provider config already runs on —
-  copied in-process, never printed; an existing entry is never overwritten;
-  missing everywhere fails loudly with instructions). An ambient
-  `SYNTHETIC_API_KEY` is not an input unless `COVE_ALLOW_AMBIENT_CREDENTIALS=1`
-  is set deliberately; a divergence is reported with fingerprints, never
-  values. `OLLAMA_API_KEY` is NOT written here: it
-  arrives through the compose pass-through from the deployed `.env` where
-  the workstation lane's SOPS projection lands it.
+- **`local.env`**: the provider key file (`0600`) and the only file of record
+  for `SYNTHETIC_API_KEY`. `cove bifrost up` writes an explicitly provided key
+  and never overwrites an existing entry; with neither present it fails loudly
+  with instructions. An ambient `SYNTHETIC_API_KEY` is not an input unless
+  `COVE_ALLOW_AMBIENT_CREDENTIALS=1` is set deliberately; a divergence is
+  reported with fingerprints, never values. `OLLAMA_API_KEY` is NOT written
+  here: it arrives through the compose pass-through from the deployed `.env`
+  where the workstation lane's SOPS projection lands it.
 - **The ollama-cloud key** is NOT Cove's to hold (workstation-lane ownership
   ruling, 2026-10-26): the workstation's SOPS role projects
   `OLLAMA_API_KEY` into the deployed compose `.env`, and the compose service
-  passes it through — exactly as the LiteLLM services receive it today.
+  passes it through.
 
 ## The model ladder
 
 Twelve tier aliases re-express as CEL routing rules (`model == '<tier>'`)
 with ordered fallback chains. Eleven are chat tiers whose chain order is the
 spend-first order: Synthetic subscription (1), ollama-cloud metered (2), the
-infinite backstop (3). Wire ids are unchanged from the LiteLLM configuration.
+infinite backstop (3). Wire ids are unchanged from the retired LiteLLM
+configuration.
 The twelfth, `vision:system1-classifier`, is a **decision tier** and is not
 part of that ladder (see "The System One decision tier" below).
 
@@ -273,10 +258,8 @@ to the old ids keep working on merge night. Removing the deprecated rules is a
    (the workstation-lane opencode provider config, the `omp` models template,
    `scripts/synthetic_catalog.py`, `tests/python/test_cove_alias_modality.py`).
 2. The 34 remembered bb project defaults re-pointed to `vision:standard`.
-3. The LiteLLM overlay in `~/Documents/cove-data/` re-pointed (only while
-   LiteLLM still drains; Bifrost is the target path).
-4. The cove Bifrost cutover complete, so `vision:standard` is the live name
-   through `llmproxy.cove`.
+3. The cove Bifrost cutover complete (done: `vision:standard` is the live name
+   through `llmproxy.cove`).
 
 Until then the deprecated rules must stay; a hard rename would 404 every
 remembered default.
@@ -286,8 +269,8 @@ the same Synthetic endpoint, gated to `chat_completion_stream` only via
 `allowed_requests`. That makes the streaming-only restriction structural: a
 non-streaming request cannot reach the instance at all (verified in the live
 smoke test — nothing reaches upstream). The non-streaming tiers simply omit
-the backstop from their chains. This closes the LiteLLM gap where a
-streaming-only backstop had to be trusted to configuration discipline.
+the backstop from their chains. This closes a gap the retired gateway had,
+where a streaming-only backstop had to be trusted to configuration discipline.
 
 ## Stalled-stream escalation (TTFT cutoff)
 
@@ -319,8 +302,8 @@ attempt yields a first token.
 
 ### Measured distribution and the chosen threshold
 
-Source: the live traffic path's spend logs (LiteLLM `LiteLLM_SpendLogs`), because
-Bifrost's own `logs_store` is disabled by the adoption gate. Window: the seven
+Source: the retired gateway's spend logs (`LiteLLM_SpendLogs`, measured before
+the exit), because Bifrost's own `logs_store` is disabled by the adoption gate. Window: the seven
 days to 2026-11-03. `completionStartTime - startTime` is time to first token;
 `request_duration_ms` is the whole request.
 
@@ -573,14 +556,15 @@ build is superseded: the rotating, authoritative token lives in the gateway
 `cove bifrost up` — provision credentials (1Password `Bifrost Gateway` item:
 config-store encryption key and dashboard admin password; the admin username
 comes from the shared Cove Admin item, ADR-017), seed the runtime files,
-project the provider keys, and start the profile (`up -d --build`, the sink
-image is built locally); after boot it fetches the gateway-GENERATED client
+ensure the Synthetic provider key is present in `local.env`, and start the
+profile (`up -d --build`, the sink image is built locally); after boot it
+fetches the gateway-GENERATED client
 virtual key from the admin API and projects it into the compose `.env`.
 
 `cove bifrost status` — compose ps, credential-wiring booleans (SET/missing,
-names never values), and the nginx health probe (an auth answer like
-LiteLLM's master-key 401 counts REACHABLE; only a dead probe or an
-unhealthy HTTP answer is UNREACHABLE).
+names never values), and the nginx health probe (an auth answer such as a
+governance-gated 401 counts REACHABLE; only a dead probe or an unhealthy HTTP
+answer is UNREACHABLE).
 
 `cove bifrost down` / `cove bifrost logs [-n N] [-f]` as for other optional
 services.
@@ -592,7 +576,7 @@ clients ──https──> nginx :443
          llmproxy.cove ── auth edge: client token only (401 otherwise)
                         ├─ injects $llmproxy_upstream_key (backend key, server-side)
                         └─> $llmproxy_upstream (the ACTIVE proxy; one IaC line)
-                        ├─ today: litellm :4000 — from cutover: bifrost :8080 (127.0.0.1:4002)
+                        ├─ bifrost :8080 (published 127.0.0.1:4002)
          bifrost.cove (admin console) ─> bifrost :8080
                                            │  config.json (ro) + config.db (rw)
                                            │  env_file local.env + compose .env
@@ -613,75 +597,52 @@ the file-seeded VK, ordered fallback (stream and non-stream), the single-hop
 tiers, and the structural streaming-only gate. Rows live in
 `docs/test-coverage-matrix.yaml`.
 
-## Cutover checklist (decisions approved 2026-10-26; NOT yet executed)
+## Cutover record (complete)
 
-The operator approved all four previously-pending decisions on 2026-10-26,
-so this is a resolved plan, not a set of options. Execution is two phases:
-cutover day, then teardown one week later.
+The operator approved all four cutover decisions on 2026-10-26 and both
+phases ran. This section records what happened; the runbook itself is
+history and lives in [the exit musing](../musings/litellm-exit.md).
 
-**Resolved decisions**
+**Resolved decisions, as executed**
 
-- **pgdata disposal**: secure-delete the `litellm-db` postgres volume at
-  teardown — it can hold prompt-bearing request logs.
-- **Key-rotation timing**: at cutover. The Synthetic and ollama-cloud keys
-  rotate on cutover day; the ollama half is scheduled by the workstation
-  lane against the date cove sends.
-- **1Password `LiteLLM Proxy` item**: retained until the drain window
-  closes (so a prior-wheel rollback still authenticates), then deleted.
-- **Drain window**: one week between client re-point and LiteLLM removal.
-- **Client re-point target**: `llmproxy.cove` (see "Client endpoint"
-  above). The workstation lane controls the re-point timing; cove sends the
-  cutover date once the neutral endpoint is merged and verified.
+- **pgdata disposal**: the `litellm-db` postgres volume was secure-deleted at
+  teardown (it held prompt-bearing request logs).
+- **Key-rotation timing**: at cutover. The Synthetic key moved to the gateway's
+  `local.env`; the ollama-cloud half stayed workstation-lane property.
+- **1Password `LiteLLM Proxy` item**: retained through the drain week. The
+  item itself is a workstation-lane/operator cleanup (the vault move leaves it
+  unreachable from this host); the host's Vault cache entry is deleted.
+- **Drain window**: one week between the client re-point and the teardown.
+- **Client re-point target**: `llmproxy.cove` (see "Client endpoint" above).
 
-### Phase 1 — cutover day
+### Phase 1 — cutover (done)
 
-1. Flip the product-swap line to `http://bifrost:8080` in
-   `compose/nginx/default.conf.j2`, release, reinstall, and `cove up` so
-   nginx re-renders with the new upstream.
-2. Start the bifrost profile: `cove bifrost up` (skip if already running).
-3. Smoke the neutral endpoint with a real streaming request through the
-   ladder: a `stream: true` chat completion against
-   `https://llmproxy.cove/v1/chat/completions` with the CLIENT TOKEN (the
-   edge injects the Bifrost virtual key server-side; the virtual key is no
-   longer a client credential).
-4. Rotate the Synthetic key (provider side, then into both env copies —
-   Bifrost's `local.env` and LiteLLM's, which still drains for a week).
-5. Notify the workstation lane with the cutover date; the lane has already
-   replaced the clients' credential slot with the edge client token (see
-   "Migration and rollback" above) and schedules the ollama-cloud key
-   rotation for the same day.
-6. Watch the old `litellm.cove` vhost drain over the week.
+The product-swap line moved to `http://bifrost:8080`; the bifrost profile was
+started; the neutral endpoint was smoke-tested with a real streaming request
+through the ladder with the client token; the Synthetic key was rotated into
+the gateway's `local.env`; the workstation lane replaced client credentials
+with the edge token and scheduled the ollama-cloud rotation; the old vhost
+drained for a week.
 
-### Phase 2 — teardown day (T+7)
+### Phase 2 — teardown (done, 2026-11-19)
 
-1. Stop LiteLLM and disable the `litellm` compose profile.
-2. Secure-delete the `litellm-db` postgres pgdata volume (prompt-bearing
-   request logs; irreversible, operator sign-off).
-3. Drop the `OLLAMA_API_KEY` pass-through line from the deployed compose
-   `.env` (workstation-lane property; the lane provisioned the key into
-   Bifrost directly at cutover). **Do not do this before the compose
-   `environment:` entry is gone.** Bifrost receives `OLLAMA_API_KEY` twice:
-   once from `${COVE_DATA_ROOT}/bifrost/local.env` through `env_file:`, and
-   once as `OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}` under the service's
-   `environment:` block. Compose gives `environment` precedence over
-   `env_file`, and an unset variable interpolates to the empty string, so
-   removing the `.env` line alone leaves the gateway with a blank key and
-   every ollama-cloud route returning 401, even when `local.env` carries a
-   good value. Remove the `environment:` entry (or rewrite it to read only
-   from `local.env`) in the same change that drops the `.env` line, and only
-   after the workstation lane has provisioned `local.env` and verified it by
-   fingerprint.
-4. Delete the 1Password `LiteLLM Proxy` item and its Vault cache entries —
-   the drain window closed today, so the retention rule is satisfied.
-5. Prune the litellm image.
+1. LiteLLM stopped; both containers removed; the 374 MB prompt-bearing
+   `pgdata` secure-deleted; the `cove-litellm:1.84.0` image pruned.
+2. The host's `op-cache/private/litellm-proxy` Vault entry was deleted. The
+   1Password `LiteLLM Proxy` item is left to the operator or the workstation
+   lane: the vault move makes it unreachable from this host.
+3. The code surface followed in one change: compose services and the
+   `litellm` build context, the `litellm.cove` vhost and its auth-map entry,
+   the `cove litellm` CLI group, the tests, the SBOM entries, and the
+   operator docs.
 
-Rollback shape: before teardown day, the prior release's wheel restores the
-whole surface and the product-swap line flips back to
-`http://litellm:4000` with no client re-re-point. After teardown, the
-secure-delete is the point of no return (which is why it is gated to T+7
-with explicit sign-off). The full removal order (compose services, CLI
-group, tests, docs, SBOM) remains in
-[the exit musing](../musings/litellm-exit.md#exit-plan-removal-order-once-the-replacement-is-chosen).
+**Still open by design:** the compose `OLLAMA_API_KEY` pass-through under the
+Bifrost service's `environment:` block stays until the workstation lane
+provisions `bifrost/local.env` and verifies it by fingerprint. Removing the
+deployed `.env` line first would leave the gateway with a blank key (Compose
+gives `environment` precedence over `env_file`, and an unset variable
+interpolates to the empty string). That removal is a coordinated, separate
+change; until then `local.env` and the pass-through must both resolve.
 
 ## Troubleshooting
 
