@@ -17,6 +17,7 @@ entry records the native reference it came from.
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import platform
 import subprocess
@@ -104,15 +105,31 @@ def _require_scheme(ref: str, schemes: tuple[str, ...]) -> None:
         )
 
 
+def _sdk_available() -> bool:
+    """Whether the optional SDK extra is installed in this environment.
+
+    The token alone cannot decide the provider. The SDK is an optional extra,
+    so a machine that exported a token without installing it would otherwise
+    lose the read path, even though `op` resolves the same reference from that
+    same token with no prompt and no session.
+    """
+    try:
+        return importlib.util.find_spec("onepassword") is not None
+    except (ImportError, ValueError):  # pragma: no cover - broken install
+        return False
+
+
 def provider_for(ref: str) -> SecretProvider:
     """Pick the provider for a reference.
 
-    A service account token selects the unattended SDK path; without one, the
-    interactive CLI path. Both speak the same `op://` scheme, so the choice is
-    about how the machine authenticates, not about where the secret lives.
+    A service account token selects the unattended SDK path when the extra is
+    installed; otherwise the CLI, which honours a token without a session.
+    Both speak the same `op://` scheme, so the choice is about how the machine
+    authenticates, not about where the secret lives.
     """
     _require_scheme(ref, SUPPORTED_SCHEMES)
-    if os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip():
+    token = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN", "").strip()
+    if token and _sdk_available():
         return OnePasswordSdk()
     return OnePasswordCli()
 
