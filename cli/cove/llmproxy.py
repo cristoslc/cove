@@ -30,10 +30,11 @@ from pathlib import Path
 import click
 import yaml
 
+from cove import opvault
 from cove.stateless import resolve_compose_dir
 
 
-LLMPROXY_OP_VAULT = "Private"
+LLMPROXY_OP_VAULT = opvault.OP_VAULT
 LLMPROXY_ITEM_TITLE = "Cove LLM Proxy Client Key"
 CLIENT_KEY_FIELD = "client_key"
 # Shared across the operator's machines (URL-keyed item, ADR-017 pattern) —

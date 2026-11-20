@@ -60,3 +60,26 @@ export COVE_OP_VAULT="<vault name>"
 ```
 
 A vault move is therefore one exported variable plus a converge, not thirteen reference edits. An empty value falls back to `Private` rather than naming a blank vault. Warming the cache afterwards still needs a working read path (a signed-in CLI or `OP_SERVICE_ACCOUNT_TOKEN`), because every reference under the new name is a cache miss by definition.
+
+## What Cove needs from the vault
+
+References resolve by **item title and field id**, so a vault move has to carry the items whole: moving one and retitling it breaks the reference that names it.
+
+Read on every converge or service start:
+
+- `Forgejo {hostname} Admin` — `password`, the forge admin login.
+- `Vault {hostname} {username}` — `password`, the OpenBao userpass entry.
+- `Cove Admin` — `username` and `password`, the shared service admin identity (ADR-017), read by Bifrost and Speedtest.
+- `Bifrost Gateway` — `encryption_key` and `admin_password`.
+- `Cove LLM Proxy Client Key` — `client_key`, the token clients present at `llmproxy.cove`.
+- `Speedtest Tracker` — `app_key`.
+- `Renovate Bot (git.cove)` — `token`, read by the nightly merge automation.
+
+Read only when the matching service exists:
+
+- `MinIO {hostname} Root` — `password`. No MinIO service is in this stack today, so the reference is dormant.
+- `Zrok Account` — `account_token` and `share_token`. Read only when the `tunnel` profile runs.
+
+Every one of these is a **read**. Cove writes to 1Password only through `cove creds item-put`, which is a rotation action a person runs, so a service account granted **read-only** on the vault is sufficient for unattended operation.
+
+That makes a narrow vault the right shape: one vault holding exactly the items above, granted to the service account and nothing else. The account cannot see the rest of the account's vaults, and a leak of its token exposes only the credentials Cove already reads on every converge.

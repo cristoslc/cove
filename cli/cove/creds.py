@@ -8,16 +8,13 @@ from pathlib import Path
 
 import click
 
-from cove import op_bulk_write, vault_cache
+from cove import op_bulk_write, opvault, vault_cache
 from cove.stateless import detect_hostname
 
 
-# The vault every reference names. One setting, because a vault move is
-# install state rather than source: the operator moves items between vaults
-# (service accounts cannot read Private), and that must not mean editing
-# thirteen references. `cove up` passes COVE_OP_VAULT through to Ansible, whose
-# `op_vault` reads the same variable, so both halves agree by construction.
-OP_VAULT = os.environ.get("COVE_OP_VAULT", "").strip() or "Private"
+# The vault every reference names, resolved in one place so the per-service
+# modules and the batch refs cannot disagree. See cove/opvault.py.
+OP_VAULT = opvault.OP_VAULT
 
 OP_REFS = {
     "forgejo_admin": f"op://{OP_VAULT}/Forgejo {{hostname}} Admin/password",

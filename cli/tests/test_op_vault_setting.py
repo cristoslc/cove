@@ -14,12 +14,15 @@ import yaml
 
 
 def _reload(monkeypatch, value: str | None):
-    from cove import creds
+    from cove import creds, opvault
 
     if value is None:
         monkeypatch.delenv("COVE_OP_VAULT", raising=False)
     else:
         monkeypatch.setenv("COVE_OP_VAULT", value)
+    # opvault resolves the name at import and creds reads that constant, so the
+    # setting is reloaded first and then the module that consumes it.
+    importlib.reload(opvault)
     importlib.reload(creds)
     return creds
 
@@ -53,3 +56,34 @@ def test_ansible_reads_the_same_variable():
     value = str(data["op_vault"])
     assert "COVE_OP_VAULT" in value, value
     assert "Private" in value, "the default must still be Private"
+
+def test_every_module_names_the_same_vault(monkeypatch):
+    """The per-service modules build their own refs, so they must agree.
+
+    A vault move that only reached the batch-pulled references would leave the
+    Bifrost, llmproxy, Speedtest and tunnel refs pointing at Private, and each
+    would fail separately at the moment it was used.
+    """
+    import importlib
+
+    from cove import opvault
+
+    monkeypatch.setenv("COVE_OP_VAULT", "Cove Ops")
+    importlib.reload(opvault)
+    try:
+        assert opvault.OP_VAULT == "Cove Ops"
+        for name in ("bifrost", "llmproxy", "speedtest", "tunnel", "creds"):
+            module = importlib.reload(importlib.import_module(f"cove.{name}"))
+            constant = {
+                "bifrost": "BIFROST_OP_VAULT",
+                "llmproxy": "LLMPROXY_OP_VAULT",
+                "speedtest": "SPEEDTEST_OP_VAULT",
+                "tunnel": "TUNNEL_OP_VAULT",
+                "creds": "OP_VAULT",
+            }[name]
+            assert getattr(module, constant) == "Cove Ops", f"{name} disagrees"
+    finally:
+        monkeypatch.delenv("COVE_OP_VAULT", raising=False)
+        importlib.reload(opvault)
+        for name in ("bifrost", "llmproxy", "speedtest", "tunnel", "creds"):
+            importlib.reload(importlib.import_module(f"cove.{name}"))

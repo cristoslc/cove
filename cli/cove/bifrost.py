@@ -20,6 +20,7 @@ from pathlib import Path
 
 import click
 
+from cove import opvault
 from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import (
     resolve_compose_dir,
@@ -37,7 +38,7 @@ from cove.speedtest import _passphrase as _friendly_passphrase
 
 
 BIFROST_URL = "https://bifrost.cove.local/"
-BIFROST_OP_VAULT = "Private"
+BIFROST_OP_VAULT = opvault.OP_VAULT
 BIFROST_ITEM_TITLE = "Bifrost Gateway"
 # The shared Cove admin identity (ADR-017) lives in a cove.local-keyed item,
 # NOT a per-service item. Encryption key and dashboard password live in the

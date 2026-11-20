@@ -7,13 +7,14 @@ import subprocess
 
 import click
 
+from cove import opvault
 from cove.constants import NGINX_HTTPS_PORT
 from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
 from cove.credential_env import credential_from_ambient, scrubbed_environment
 
 
 SPEEDTEST_URL = "https://speedtest.cove.local/"
-SPEEDTEST_OP_VAULT = "Private"
+SPEEDTEST_OP_VAULT = opvault.OP_VAULT
 SPEEDTEST_ITEM_TITLE = "Speedtest Tracker"
 # The shared Cove admin identity (ADR-017) lives in a cove.local-keyed item,
 # NOT a per-service item. The Speedtest APP_KEY stays in the Speedtest Tracker

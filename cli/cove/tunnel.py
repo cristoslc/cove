@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import click
 
+from cove import opvault
 from cove.stateless import resolve_compose_dir, ensure_compose_source_ready
 from cove.credential_env import credential_from_ambient, scrubbed_environment
 
@@ -21,7 +22,7 @@ ZROK2_DIGESTS = {
     "amd64": "sha256:f607c294b79613f05e8f3dd255d3ef8bd853851dc5c8d806cc5b6d9092c83d16",
     "arm64": "sha256:8864ba64136cc690c6fddd556b679e5f344b06855de74f0fafce9c3eb9300f76",
 }
-TUNNEL_OP_VAULT = "Private"
+TUNNEL_OP_VAULT = opvault.OP_VAULT
 TUNNEL_ITEM_TITLE = "Zrok Account"
 ACCOUNT_TOKEN_OP_REF = f"op://{TUNNEL_OP_VAULT}/{TUNNEL_ITEM_TITLE}/account_token"
 SHARE_TOKEN_OP_REF = f"op://{TUNNEL_OP_VAULT}/{TUNNEL_ITEM_TITLE}/share_token"
