@@ -41,6 +41,7 @@ def test_the_sdk_provider_refuses_without_a_token(monkeypatch):
 
 
 def test_read_secret_routes_through_the_selected_provider(monkeypatch):
+    monkeypatch.setattr(secret_providers, "_sdk_available", lambda: True)
     monkeypatch.setenv("OP_SERVICE_ACCOUNT_TOKEN", "fake-token")
     monkeypatch.setattr(
         secret_providers.OnePasswordSdk, "read", lambda self, ref: f"sdk:{ref}"
