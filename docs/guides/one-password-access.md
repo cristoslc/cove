@@ -14,7 +14,11 @@ The CLI keeps no session between agent calls: inside an agent shell `op whoami` 
 2. Export its token as `OP_SERVICE_ACCOUNT_TOKEN` in the environment of whatever runs unattended.
 3. Install the optional extra: `uv pip install onepassword-sdk` (or `onepassword-sdk>=0.4.2,<1`).
 
-With the token present, `cove` prefers the SDK for reads: `vault-put`, `batch-pull` and the provisioning plays resolve references through it instead of `op`. Without the token they fall back to the CLI path unchanged.
+With the token present **and the SDK installed**, `cove` prefers the SDK for reads: `vault-put`, `batch-pull` and the provisioning plays resolve references through it instead of `op`. Without the token they use the CLI path unchanged.
+
+The token alone is not enough to select the SDK, because the SDK is an optional extra (`cove[onepassword]`) that nothing installs by default. Exporting a token onto a machine without it would otherwise take the working path away: `op` resolves the same reference from that same token, with no prompt and no session. Selection therefore checks both, and a token without the extra reads through the CLI rather than failing.
+
+Both paths were proven against one item on 2026-11-20: `op read` and the SDK returned values of the same length with the same SHA-256 prefix.
 
 Writing an item unattended uses the SDK as well:
 
