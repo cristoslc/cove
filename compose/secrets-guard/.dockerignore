@@ -1,0 +1,6 @@
+# The ruleset is mounted at run time, never built in, so a stray generated copy
+# in the context must not reach the image.
+gitleaks.toml
+# Host-only: the tests read the repo's fixture corpus and .gitleaks.toml.
+*_test.go
+README.md

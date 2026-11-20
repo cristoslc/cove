@@ -67,6 +67,9 @@ cli/.pytest_cache/
 compose/nginx/default.conf
 # Rendered llmproxy edge credentials (client token + active backend key), 0600.
 compose/nginx/llmproxy-auth.conf
+# Generated copy of the repo's one .gitleaks.toml for the edge secrets check
+# (build artifact — cli/scripts/sync_compose_resources.py writes it).
+compose/secrets-guard/gitleaks.toml
 
 # Dispatch artifacts (opencode subagent dispatch)
 .subagents/

@@ -467,6 +467,75 @@ services:
         limits:
           memory: ${BIFROST_MEM_LIMIT:-512M}
 
+  # EDGE SECRETS CHECK (observe-only) --------------------------------------
+  # Operator ruling dec_8trphpel0p3c: a secrets check in front of Bifrost,
+  # ahead of any semantic prompt-injection filter. Observe-only first, to
+  # measure the false-positive rate on real prompts before anything blocks.
+  #
+  # Placement: a long-lived sidecar, NOT a Bifrost plugin. Bifrost v2.3.2 has
+  # the request-body plugin surface, but the pinned official image is
+  # statically linked, so it cannot load a Go plugin; the plugin route would
+  # mean building our own Bifrost image and breaking the digest pin. See
+  # docs/services/secrets-guard.md for the full argument and the measurement.
+  #
+  # Own profile on purpose: `cove bifrost up` (profile `bifrost`) does NOT
+  # start it, and no converge touches it. Nothing routes client traffic here
+  # yet either: starting the profile exposes the loopback port for a client or
+  # a probe to point at, and the nginx product-swap line stays where it is.
+  #
+  # The ruleset mount is the wheel's generated copy of the repo's one
+  # `.gitleaks.toml` (same file the commit-hook gate reads), refreshed by
+  # `cove secrets-guard up`. The image bakes no ruleset of its own: one image
+  # works with any rules, and the file in force is readable instead of buried
+  # in a layer. The mount is a file, so a container started before the seed
+  # would find a directory and exit naming the ruleset rather than scanning
+  # with something else.
+  secrets-guard:
+    profiles: ["secrets-guard"]
+    build:
+      context: ./secrets-guard
+      dockerfile: Dockerfile
+    image: ${SECRETS_GUARD_IMAGE:-cove-secrets-guard:0.1.0}
+    container_name: ${SECRETS_GUARD_CONTAINER_NAME:-cove-secrets-guard}
+    restart: unless-stopped
+    # No shell, no package manager, no writable path: the image is a static
+    # Go binary on distroless, and the process only reads the ruleset.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    user: "65532:65532"
+    ports:
+      # Loopback-only, like every cove optional service. nginx is the ingress;
+      # this port exists for a client or a probe to point at while observing.
+      - "127.0.0.1:${SECRETS_GUARD_PORT:-4003}:8080"
+    environment:
+      SECRETS_GUARD_LISTEN: ":8080"
+      # The gateway is the only backend. The scanner has no other egress and
+      # needs no resolver beyond compose's own service discovery.
+      SECRETS_GUARD_UPSTREAM: "http://bifrost:8080"
+      SECRETS_GUARD_RULES: /etc/secrets-guard/gitleaks.toml
+      SECRETS_GUARD_MAX_BODY_BYTES: ${SECRETS_GUARD_MAX_BODY_BYTES:-4194304}
+      # all | hits | off
+      SECRETS_GUARD_LOG: ${SECRETS_GUARD_LOG:-all}
+    volumes:
+      - ${COVE_DATA_ROOT}/secrets-guard/gitleaks.toml:/etc/secrets-guard/gitleaks.toml:ro
+    networks:
+      - default
+    healthcheck:
+      # The binary health-checks itself: distroless has no shell or wget.
+      test: ["CMD", "/usr/local/bin/secrets-guard", "healthcheck"]
+      interval: 15s
+      start_period: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${SECRETS_GUARD_MEM_LIMIT:-256M}
+
 networks:
   # The project network gets a declared subnet so nginx's fixed address is
   # guaranteed on every start rather than allocated at random. 172.28.0.0/24

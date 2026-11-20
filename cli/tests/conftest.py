@@ -80,6 +80,10 @@ def _copy_cli_tree(repo: Path, dst: Path) -> None:
         shutil.copytree(
             repo / sub, dst / sub, ignore=_ignore, symlinks=True
         )
+    # The edge secrets check's ruleset travels with the wheel: the build step
+    # (`sync_compose_resources.py`) copies this repo-root file into the bundled
+    # compose dir, so the isolated build tree needs it or the build fails loud.
+    shutil.copy2(repo / ".gitleaks.toml", dst / ".gitleaks.toml")
 
 
 def _build_wheel(cli_dir: Path, out_dir: Path) -> Path:

@@ -10,6 +10,15 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 SRC = REPO_ROOT / "compose"
 DST = REPO_ROOT / "cli" / "cove" / "resources" / "compose"
 
+# The edge secrets check must scan with the SAME ruleset the commit-hook gate
+# reads. That file is the repository's one `.gitleaks.toml`; the wheel is the
+# runtime source of truth, so the ruleset travels with the bundled compose
+# resources. `compose/secrets-guard/gitleaks.toml` is a GENERATED artifact
+# (gitignored): copying it here is what keeps a single source instead of a
+# second hand-maintained rules file.
+RULES_SRC = REPO_ROOT / ".gitleaks.toml"
+RULES_DST = DST / "secrets-guard" / "gitleaks.toml"
+
 EXCLUDE_NAMES = {".env", "default.conf", "cove.conf", "llmproxy-auth.conf"}
 EXCLUDE_SUFFIXES = {".env"}
 EXCLUDE_DIRS = {"data", "logs", "raft", "__pycache__"}
@@ -33,7 +42,27 @@ def _should_exclude(path: Path, relative: Path) -> bool:
         return True
     if EXCLUDE_SEEDS_YAML and parts[0] == "seeds" and name.endswith(".yaml") and not name.endswith(".example"):
         return True
+    # A `go build` run in the scanner's directory drops its compiled binary
+    # beside the sources. It is never a deploy artifact (the image builds its
+    # own), and shipping it would put a machine-local path into the wheel.
+    if relative == Path("secrets-guard") / "secrets-guard":
+        return True
     return False
+
+
+def sync_rules(src: Path = RULES_SRC, dst: Path = RULES_DST) -> Path:
+    """Copy the repo's one gitleaks ruleset into the bundled compose dir.
+
+    Raises rather than skipping: a wheel without the ruleset would build an
+    edge scanner with no detection, which looks exactly like a clean scan.
+    """
+    if not src.is_file():
+        raise SystemExit(f"gitleaks rules not found at {src}")
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(src, dst)
+    if dst.read_bytes() != src.read_bytes():  # pragma: no cover - defensive
+        raise SystemExit(f"rules copy at {dst} does not match {src}")
+    return dst
 
 
 def sync() -> None:
@@ -56,6 +85,7 @@ def sync() -> None:
         dst = DST / relative
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
+    sync_rules()
     print(f"Synced {SRC} -> {DST}")
 
 

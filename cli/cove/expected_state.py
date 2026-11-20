@@ -47,6 +47,7 @@ CORE_CONTAINERS = (
 SERVICE_CONTAINERS: dict[str, tuple[str, ...]] = {
     "ade": ("cove-ade-server",),
     "bifrost": ("cove-bifrost", "cove-bifrost-dns"),
+    "secrets-guard": ("cove-secrets-guard",),
     "runner": ("cove-forgejo-runner",),
     "speedtest": ("cove-speedtest-tracker",),
     "toolhive": ("cove-toolhive",),

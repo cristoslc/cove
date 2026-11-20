@@ -9,6 +9,35 @@
 [extend]
 useDefault = true
 
+# Two shapes the default rule set leaves open, both measured against the edge
+# fixtures in `scripts/spikes/edge-secrets/corpus/` (see
+# docs/musings/2026-11-19-edge-secrets-check-spike.md):
+#
+# 1. Forgejo/Gitea tokens are bare 40-hex strings with no prefix. The default
+#    `generic-api-key` rule needs context and entropy it does not get from
+#    prose, so the shape that actually leaked from this repo passed through
+#    untouched. A bare `\b[0-9a-f]{40}\b` would fire on every quoted commit
+#    SHA, so this rule is context-aware: 40 hex only within 40 characters of a
+#    credential keyword. A 40-hex commit SHA in prose stays silent.
+# 2. Modern provider project keys use the `sk-proj-` form; the default rule
+#    covers the legacy `sk-` form only.
+#
+# Both rules are shared by the commit-hook gate and the observe-only edge
+# scanner (`compose/secrets-guard/`), which reads THIS file. Do not fork them
+# into a second config.
+[[rules]]
+id = "forgejo-token-context"
+description = "40-hex credential near a credential keyword"
+regex = '''(?i)(?:token|bearer|password|secret|api[_-]?key)[^\n]{0,40}\b([0-9a-f]{40})\b'''
+secretGroup = 1
+keywords = ["token", "bearer", "password", "secret", "api_key", "api-key"]
+
+[[rules]]
+id = "openai-project-key"
+description = "OpenAI project or legacy key"
+regex = '''\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}\b'''
+keywords = ["sk-"]
+
 # Verbatim third-party issue threads archived under docs/troves carry upstream
 # example JWTs, AWS keys, and API keys. They are quoted source text, not Cove
 # credentials, and the archive is meaningless if it is scrubbed.
@@ -21,6 +50,21 @@ paths = ['''docs/troves/harness-catalog/sources/''']
 description = "Fake API key in the vault cache test fixture"
 regexes = ['''sk-abcdef123''']
 
+# Fake sk- sentinels in the CLI test suite. These strings assert that a
+# credential is never printed, so they cannot be real credentials — but the
+# openai-project-key rule deliberately matches every sk- shape (provider keys
+# and Bifrost virtual keys), and a blanket path exemption for the test directory
+# is exactly where a real leak would hide. Allowlist the four values, not the
+# files.
+[[allowlists]]
+description = "Fake sk- sentinels in CLI tests"
+regexes = [
+  '''sk-cove-test-client-token''',
+  '''sk-bf-bifrost-backend-key''',
+  '''sk-bf-value-never-printed''',
+  '''sk-bf-generated-token-never-printed-42''',
+]
+
 # age public keys are published by design; the matching private key never lands
 # in the repo. Gitleaks' generic-api-key rule cannot tell a public key from a
 # secret, so pin the shape instead of allowlisting the document.
@@ -28,9 +72,10 @@ regexes = ['''sk-abcdef123''']
 description = "age public keys are not secrets"
 regexes = ['''age1[a-z0-9]{20,}''']
 
-# Deliberate fixtures for the edge-secrets spike: every value is fake but the
-# shape is real, which is the point of the corpus. The gate must not fire on
-# the file that exists to prove the gate works.
+# Deliberate fixtures for the edge secrets check: every value is fake but the
+# shape is real, which is the point of the corpus. Both readers use it — the
+# spike's run.py and the scanner's Go tests (compose/secrets-guard) — and the
+# gate must not fire on the files that exist to prove the gate works.
 [[allowlists]]
 description = "Fake secret shapes in the edge-secrets spike corpus"
 paths = ['''scripts/spikes/edge-secrets/corpus/''']

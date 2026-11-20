@@ -741,3 +741,24 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "Edge secrets check (observe-only): all six positive fixture shapes fire, all six negatives stay silent, a hitting request is delivered byte-identical, the log carries no matched text, the rule set loads once per process, and the shipped ruleset is one file promoted from .gitleaks.toml"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable
+  - path: "Edge secrets check wiring: its own compose profile (never started by cove up or cove bifrost up), loopback-only, read-only rootfs, digest-pinned image stages, the gitleaks library release pinned to the commit-hook gate's version, and no per-request process spawn"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: skip
+  - path: "cove secrets-guard up seeds the bundled ruleset (byte-identical to .gitleaks.toml) into the data root and starts only its own profile, and fails loud when the generated ruleset is missing"
+    blast_radius: medium
+    coverage:
+      happy: executable
+      sad: executable
+      edge: executable
+      corner: executable

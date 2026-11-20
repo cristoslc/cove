@@ -46,3 +46,7 @@ Every scan was a fresh process: **median 246 ms**, range 240 to 277 ms. That is 
 ## Recommendation
 
 Build the check as an in-process plugin with the two extra rules, run it in observe-only mode first so the false-positive rate on real prompts is measured before anything blocks, and keep the transcript-side and rotation controls as the layers that cover what the edge cannot see.
+
+## Follow-through
+
+The build landed as [PR #185 — feat(secrets-guard): observe-only secrets check in front of Bifrost](https://git.cove.local/cristos/cove/pulls/185). Two findings changed the recommended placement, and the PR body carries the evidence: Bifrost does have the request-body plugin hooks, but the pinned official image is statically linked and cannot load a Go plugin, so a plugin would mean a custom gateway image and a broken digest pin. The check therefore runs as a long-lived sidecar in `compose/secrets-guard/`, linking gitleaks v8.30.0 as a Go library and reading this repository's one `.gitleaks.toml`. The two rules measured here are promoted into that file (the spike's `spike.toml` is deleted, so there is no second copy to drift) and are shared with the commit-hook gate. Placement, measured warm-scan cost, what the scanner does not see, and the shape of turning it into blocking are in [the service page](../services/secrets-guard.md).

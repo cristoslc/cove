@@ -108,6 +108,7 @@ if docker info >/dev/null 2>&1; then
             --profile runner
             --profile speedtest
             --profile tunnel
+            --profile secrets-guard
             down -v --remove-orphans)
         DOWN_CMD=(docker compose)
         if [[ -f "$STAGING_DATA_ROOT/staging.env" ]]; then

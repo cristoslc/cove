@@ -22,6 +22,7 @@ from cove.speedtest import speedtest
 from cove.runner import runner
 from cove.tunnel import tunnel
 from cove.toolhive import toolhive
+from cove.secrets_guard import secrets_guard
 from cove.serve import serve
 from cove.sudoers import sudo, passwordless_sudo_ok
 from cove.vault import UNSEAL_HINT, vault
@@ -623,6 +624,7 @@ def sign(sans, key_file, cert_file):
 app.add_command(creds)
 app.add_command(ade)
 app.add_command(bifrost)
+app.add_command(secrets_guard)
 app.add_command(speedtest)
 app.add_command(runner)
 app.add_command(tunnel)
@@ -819,6 +821,7 @@ _expected_state.wrap_converge(down, "down")
 for _group, _service in (
     (ade, "ade"),
     (bifrost, "bifrost"),
+    (secrets_guard, "secrets-guard"),
     (speedtest, "speedtest"),
     (runner, "runner"),
     (tunnel, "tunnel"),

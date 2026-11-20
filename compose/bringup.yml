@@ -39,6 +39,7 @@
       TOOLHIVE_IMAGE: "{{ toolhive_image | default('ghcr.io/stacklok/toolhive:v0.51.4@sha256:5e1e253610db23188e3cab766949612f8b0c138627ec55fb754562a9610d4f9a') }}"
       BIFROST_IMAGE: "{{ bifrost_image | default('maximhq/bifrost:v2.3.2@sha256:f5b18826349fe9e1c402c10d19f1cbb5567a3c800ad928580d07f72e69106ec7') }}"
       BIFROST_DNS_IMAGE: "{{ bifrost_dns_image | default('cove-bifrost-dns:0.1.0') }}"
+      SECRETS_GUARD_IMAGE: "{{ secrets_guard_image | default('cove-secrets-guard:0.1.0') }}"
       FORGEJO_RUNNER_IMAGE: "{{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}"
       TUNNEL_IMAGE: "{{ tunnel_image | default('openziti/zrok2:2.0.4') }}"
       ADE_IMAGE: "{{ ade_image | default('cove-ade:' ~ (ade_bb_app_version | default('0.44.0'))) }}"
@@ -586,6 +587,7 @@
         - "{{ cove_data_root }}/toolhive/registry.json"
         - "{{ cove_data_root }}/bifrost/config.json"
         - "{{ cove_data_root }}/bifrost/config.db"
+        - "{{ cove_data_root }}/secrets-guard/gitleaks.toml"
       register: data_mount_targets
     - name: List contents of wedged data-root mount directories
       ansible.builtin.find:
@@ -673,6 +675,28 @@
       ansible.builtin.file:
         path: "{{ cove_data_root }}/bifrost/config.db"
         mode: "0600"
+
+    # EDGE SECRETS CHECK (observe-only) ---------------------------------------
+    # The scanner mounts its ruleset read-only from the data root. The file is
+    # generated from the repo's one .gitleaks.toml when the wheel is built
+    # (cli/scripts/sync_compose_resources.py), so the deployed copy is always
+    # the wheel's ruleset. No converge starts the container: its profile is
+    # `secrets-guard`, started only by `cove secrets-guard up`.
+    - name: Create the edge secrets check data directory
+      ansible.builtin.file:
+        path: "{{ cove_data_root }}/secrets-guard"
+        state: directory
+        mode: "0755"
+
+    - name: Seed the edge secrets check ruleset
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/secrets-guard/gitleaks.toml"
+        dest: "{{ cove_data_root }}/secrets-guard/gitleaks.toml"
+        mode: "0644"
+        # Checksum-idempotent: a rules change in the wheel lands on the next
+        # converge, an unchanged file is not rewritten. Never hand-edited —
+        # edit the repo's .gitleaks.toml instead.
+        force: true
 
     # TOOLHIVE -----------------------------------------------------------------
     # IaC: the curated registry, the default permission profile, and the
@@ -817,6 +841,10 @@
           BIFROST_DNS_CONTAINER_NAME={{ bifrost_dns_container_name | default('cove-bifrost-dns') }}
           BIFROST_PORT={{ bifrost_port | default('4002') }}
           BIFROST_MEM_LIMIT={{ bifrost_mem_limit | default('512M') }}
+          SECRETS_GUARD_IMAGE={{ secrets_guard_image | default('cove-secrets-guard:0.1.0') }}
+          SECRETS_GUARD_CONTAINER_NAME={{ secrets_guard_container_name | default('cove-secrets-guard') }}
+          SECRETS_GUARD_PORT={{ secrets_guard_port | default('4003') }}
+          SECRETS_GUARD_MEM_LIMIT={{ secrets_guard_mem_limit | default('256M') }}
           TUNNEL_IMAGE={{ tunnel_image | default('openziti/zrok2:2.0.4') }}
           FORGEJO_RUNNER_IMAGE={{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}
           FORGEJO_RUNNER_CONTAINER_NAME={{ forgejo_runner_container_name | default('cove-forgejo-runner') }}
