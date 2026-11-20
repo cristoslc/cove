@@ -29,7 +29,9 @@ vault_key_threshold: 3
 vault_keystore_prefix: "cove/vault"
 
 # --- 1Password ---
-op_vault: "Private"
+# Same setting as creds.py's OP_VAULT. `cove up` passes COVE_OP_VAULT through,
+# so a vault move is one exported variable rather than a reference sweep.
+op_vault: "{{ lookup('env', 'COVE_OP_VAULT') | default('Private', true) }}"
 forgejo_admin_op_ref: "op://{{ op_vault }}/Forgejo {{ ansible_hostname }} Admin/password"
 vault_user_op_ref: "op://{{ op_vault }}/Vault {{ ansible_hostname }} {{ admin_username }}/password"
 vault_ui_username: "{{ admin_username }}"

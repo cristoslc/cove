@@ -12,23 +12,30 @@ from cove import op_bulk_write, vault_cache
 from cove.stateless import detect_hostname
 
 
+# The vault every reference names. One setting, because a vault move is
+# install state rather than source: the operator moves items between vaults
+# (service accounts cannot read Private), and that must not mean editing
+# thirteen references. `cove up` passes COVE_OP_VAULT through to Ansible, whose
+# `op_vault` reads the same variable, so both halves agree by construction.
+OP_VAULT = os.environ.get("COVE_OP_VAULT", "").strip() or "Private"
+
 OP_REFS = {
-    "forgejo_admin": "op://Private/Forgejo {hostname} Admin/password",
-    "vault_user": "op://Private/Vault {hostname} {username}/password",
-    "minio_root": "op://Private/MinIO {hostname} Root/password",
+    "forgejo_admin": f"op://{OP_VAULT}/Forgejo {{hostname}} Admin/password",
+    "vault_user": f"op://{OP_VAULT}/Vault {{hostname}} {{username}}/password",
+    "minio_root": f"op://{OP_VAULT}/MinIO {{hostname}} Root/password",
     # Shared (non-hostname) items — ADR-017 unified Cove admin identity and the
     # Speedtest Tracker APP_KEY. These have no {hostname}/{username} placeholders,
     # so .format() is a no-op. Pulled by batch-pull so `cove speedtest up` can
     # resolve the admin identity + APP_KEY on a fresh machine.
-    "cove_admin_username": "op://Private/Cove Admin/username",
-    "cove_admin_password": "op://Private/Cove Admin/password",
-    "speedtest_app_key": "op://Private/Speedtest Tracker/app_key",
+    "cove_admin_username": f"op://{OP_VAULT}/Cove Admin/username",
+    "cove_admin_password": f"op://{OP_VAULT}/Cove Admin/password",
+    "speedtest_app_key": f"op://{OP_VAULT}/Speedtest Tracker/app_key",
     # Durable store for the Renovate merge automation's Forgejo token. The
     # resolver in scripts/renovate/age_gated_merge.py reads FORGEJO_TOKEN first,
     # then `cove creds vault-get forgejo-token`; this entry is what makes that
     # second path resolve to a real reference. The token belongs to the
     # `renovate-bot` Forgejo account (docs/guides/renovate.md).
-    "forgejo_token": "op://Private/Renovate Bot (git.cove)/token",
+    "forgejo_token": f"op://{OP_VAULT}/Renovate Bot (git.cove)/token",
 }
 
 # Credentials only operator automation needs. batch-pull runs on every
