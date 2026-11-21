@@ -559,6 +559,13 @@ workflow_paths:
       sad: executable
       edge: executable
       corner: skip
+  - path: "isolated staging provisioning boundary (OpenBao left uninitialized by design; one docker socket gid shared with ToolHive and the Forgejo runner)"
+    blast_radius: high
+    coverage:
+      happy: executable
+      sad: executable
+      edge: manual
+      corner: skip
   - path: "ade.cove access control (allow loopback + private ranges + tailnet; deny public)"
     blast_radius: high
     coverage:

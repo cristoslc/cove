@@ -244,24 +244,32 @@ services:
 EOF
 echo "  runner: config rendered for network ${STAGING_PROJECT}_default (override: $STAGING_COMPOSE_OVERRIDE)" >&2
 
-# --- Runner socket gid -------------------------------------------------------
-# The runner image runs as uid 1000 and the Colima socket is root:root 660. The
-# live .env pins the gid; the compose default (991) is wrong here and shows up
-# as a crash loop with "permission denied ... /var/run/docker.sock". Resolve the
-# value from the environment, then the live .env, then a read-only socket probe
-# as a container sees it (same mount the runner gets).
-STAGING_RUNNER_DOCKER_GID="${FORGEJO_RUNNER_DOCKER_GID:-}"
-if [[ -z "$STAGING_RUNNER_DOCKER_GID" && -f "$HOME/.config/cove/compose/.env" ]]; then
-    STAGING_RUNNER_DOCKER_GID=$(sed -n 's/^FORGEJO_RUNNER_DOCKER_GID=//p' \
+# --- Docker socket gid -------------------------------------------------------
+# Two staging services mount /var/run/docker.sock: the Forgejo runner (profile
+# runner) and ToolHive (profile mcp, started by this script when the branch
+# declares it). Both images run as uid 1000 and the socket is root:root 660 in
+# the VM. The live .env pins the gid; the compose default (991) is wrong on
+# this host and shows up as a crash loop: the runner logs "permission denied
+# ... /var/run/docker.sock", ToolHive logs "no container runtime available".
+# Resolve one gid and pass it to BOTH services. Read it from the environment,
+# then the live .env (same daemon, same socket), then a read-only probe as a
+# container sees it (the same mount both services get).
+STAGING_DOCKER_GID="${FORGEJO_RUNNER_DOCKER_GID:-${TOOLHIVE_DOCKER_GID:-}}"
+if [[ -z "$STAGING_DOCKER_GID" && -f "$HOME/.config/cove/compose/.env" ]]; then
+    STAGING_DOCKER_GID=$(sed -n 's/^FORGEJO_RUNNER_DOCKER_GID=//p' \
         "$HOME/.config/cove/compose/.env" | tail -1)
 fi
-if [[ -z "$STAGING_RUNNER_DOCKER_GID" ]]; then
-    STAGING_RUNNER_DOCKER_GID=$(docker run --rm \
+if [[ -z "$STAGING_DOCKER_GID" && -f "$HOME/.config/cove/compose/.env" ]]; then
+    STAGING_DOCKER_GID=$(sed -n 's/^TOOLHIVE_DOCKER_GID=//p' \
+        "$HOME/.config/cove/compose/.env" | tail -1)
+fi
+if [[ -z "$STAGING_DOCKER_GID" ]]; then
+    STAGING_DOCKER_GID=$(docker run --rm \
         -v /var/run/docker.sock:/var/run/docker.sock \
         --entrypoint stat alpine:3.21 -c '%g' /var/run/docker.sock 2>/dev/null || true)
 fi
-if [[ -z "$STAGING_RUNNER_DOCKER_GID" ]]; then
-    echo "deploy-isolated.sh: could not determine the docker socket gid; the runner profile would not reach the socket" >&2
+if [[ -z "$STAGING_DOCKER_GID" ]]; then
+    echo "deploy-isolated.sh: could not determine the docker socket gid; the runner and toolhive profiles would not reach the socket" >&2
     exit 1
 fi
 
@@ -277,7 +285,11 @@ STAGING_NGINX_HTTPS_PORT=$STAGING_HTTPS_PORT
 FORGEJO_ROOT_URL=https://git.cove.local:$STAGING_HTTPS_PORT/
 FORGEJO_DOMAIN=git.cove.local
 FORGEJO_SSH_DOMAIN=git.cove.local
-FORGEJO_RUNNER_DOCKER_GID=$STAGING_RUNNER_DOCKER_GID
+FORGEJO_RUNNER_DOCKER_GID=$STAGING_DOCKER_GID
+# ToolHive mounts the same socket; the compose default (991) does not match the
+# Colima/OrbStack root:root 660 socket and surfaces as a restart loop with
+# "no container runtime available".
+TOOLHIVE_DOCKER_GID=$STAGING_DOCKER_GID
 NGINX_IP=172.29.0.10
 FORGEJO_TRUSTED_PROXY=172.29.0.10
 EOF

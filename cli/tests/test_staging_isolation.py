@@ -388,6 +388,52 @@ class TestTeardownProfileCoverage:
         assert sentinel.read_text() == "live data"
 
 
+class TestStagingProvisioningContract:
+    """The isolated deploy provisions compose, not Ansible or Vault state.
+
+    Staging selects option 2 of the staging decision: OpenBao is left
+    uninitialized and the vault dependency is optional. These guards keep that
+    choice from drifting silently in either direction.
+    """
+
+    def test_deploy_isolated_does_not_run_provisioning(self):
+        text = (
+            PROJECT_ROOT / "scripts" / "staging" / "deploy-isolated.sh"
+        ).read_text()
+        for forbidden in ("ansible-playbook", "operator init", "vault kv put"):
+            assert forbidden not in text, (
+                f"deploy-isolated.sh now runs {forbidden!r}; isolated staging "
+                f"is supposed to leave OpenBao uninitialized (option 2). "
+                f"Update docs/guides/staging.md and the vault boundary test "
+                f"together if option 1 landed."
+            )
+
+    def test_deploy_isolated_shares_docker_socket_gid(self):
+        """Both socket consumers get the same resolved gid.
+
+        ToolHive's compose default (991) does not match the Colima/OrbStack
+        root:root 660 socket; the mismatch is a restart loop that reports
+        "no container runtime available" and turns the mcp.cove E2E into 502s.
+        """
+        text = (
+            PROJECT_ROOT / "scripts" / "staging" / "deploy-isolated.sh"
+        ).read_text()
+        for key in ("FORGEJO_RUNNER_DOCKER_GID", "TOOLHIVE_DOCKER_GID"):
+            assert re.search(
+                rf"^{key}=\$STAGING_DOCKER_GID$", text, re.MULTILINE
+            ), (
+                f"staging.env does not set {key} from the resolved socket gid; "
+                f"the socket-consuming container would crash-loop"
+            )
+
+    def test_e2e_runs_the_vault_boundary_module(self):
+        text = (PROJECT_ROOT / "scripts" / "staging" / "e2e.sh").read_text()
+        assert "tests/test_e2e_vault_staging.py" in text, (
+            "the isolated staging target no longer runs the vault boundary "
+            "test; a sealed vault would become invisible in the tier-2 output"
+        )
+
+
 class TestStagingRuntimeFiles:
     def test_deploy_isolated_rejects_canonical_live_root_alias(self, tmp_path):
         live_root = tmp_path / "live-data"

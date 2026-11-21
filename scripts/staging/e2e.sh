@@ -25,7 +25,11 @@ CLI_DIR="$REPO_ROOT/cli"
 TARGET=""
 case "$STAGING_URL" in
     *:9443)
-        TARGET="tests/test_e2e_ade_staging.py tests/test_e2e_toolhive_staging.py"
+        TARGET="tests/test_e2e_ade_staging.py tests/test_e2e_toolhive_staging.py tests/test_e2e_vault_staging.py"
+        # The isolated deploy never runs Ansible: OpenBao starts uninitialized
+        # and sealed, and no KV path is seeded. Say so in the run output so a
+        # sealed vault is not mistaken for a failed provision.
+        echo "Provisioning boundary: OpenBao is intentionally uninitialized in isolated staging; no tier-2 test reads Vault KV (docs/guides/staging.md)." >&2
         ;;
 esac
 
