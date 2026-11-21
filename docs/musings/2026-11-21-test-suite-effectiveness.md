@@ -195,6 +195,89 @@ Three experiments, each a day or less, before any command is designed.
 
 If the first experiment shows a survivor rate that a developer would act on, and the third shows the host-dependence class repeating, then the CLI subcommand is worth a week. If the survivors are mostly equivalent or trivial, the honest move is to keep the flaky-rate report and skip mutation testing for now.
 
+## Addendum (2026-11-21): cadence, selection cost, and a correction
+
+*Addendum to a published musing. What changed and why: a peer measured the worked survivor and it is killed at HEAD, the runtime is a range rather than a point, and the defect-population sentence is marked as an unsettled hypothesis. Everything above this section is unchanged so the published argument stays comparable.*
+
+### The worked survivor was killed
+
+The published text says that replacing `if token and _sdk_available():` with `if token:` leaves every test passing. It does not. At `6293912`, `test_a_token_without_the_sdk_falls_back_to_the_cli` in `cli/tests/test_provider_selection.py` sets a token and stubs `_sdk_available` to `False`, then asserts the CLI provider. The mutant returns the SDK provider and the test fails. I reproduced it in a clean copy: one failed, nineteen passed across the three provider test modules.
+
+The peer swept eight mutants over `provider_for` and `_sdk_available`: six killed, two survived. The survivors are the interesting part. `_sdk_available()` hardcoded to `True` survives, and hardcoded to `False` survives. I reproduced the first against the full unit tier with the function's body replaced by `return True`: 1,247 passed, 11 skipped, 23 deselected. The body is never executed by the suite, because every test that reaches it stubs it. The caller is well pinned and the implementation behind the seam is unconstrained.
+
+That is a better example for this document than the one it replaces, because it shows the converse of the coverage failure. Coverage asks whether the line ran. This gap is a line that ran in no test at all while every caller was tested. A stub at the seam can pin the call and leave the thing behind the seam free to be wrong. The survivor to cite is `_sdk_available: always True`, not `provider_for: drop the SDK check`.
+
+The motivating incident stands. The 2026-11-20 tests inherited the package from the host and changed verdict between machines, and the fixes declared it. But the incident is motivation, not proof of that mutant.
+
+The second experiment in "What I would measure first" also needs a fix. The peer reports that at `955e8e8` the suite already fails three tests on a host without the extra, for an unrelated token-parse reason, so a pass/fail count there measures the fake token rather than the defect. Run the same test file on a bare and an equipped environment and diff the verdicts, or use the mutation sweep above.
+
+### The cost is a range
+
+The table's 84.36 s is one cold run. The same tier measured 67.23 s and 54.11 s in the peer's runs, and 63.92 s in my clean copy. Read it as roughly 55 to 85 seconds depending on machine and cache. A second operator set counted 3,089 proxy sites against my 2,979, so read roughly 3,000. Neither correction moves the conclusion: a serial sweep of 1,000 to 3,000 mutants is tens of CPU-hours.
+
+### Three tiers are the only shape that fits
+
+At 55 to 85 seconds per full-suite run, 1,000 mutants cost 15 to 24 CPU-hours and 3,000 cost 46 to 71. The two blocking pull-request workflows in this repository cap at ten minutes, on one runner. A per-push whole-repo mutation run cannot fit in that envelope. The tiers below are not a preference; they are the only shape that fits.
+
+- **Pull request.** Run only when Python source or tests change. Mutate changed lines in the touched modules, and run only the tests that reach each mutant. Cap the job at five to ten minutes. Keep it advisory. Cancel superseded runs on the same pull request. Skip docs, compose, and Ansible-only changes.
+- **Nightly.** The anchor set of modules, budgeted or sharded, off the critical path. This is the trend line.
+- **Periodic full sweep.** Weekly or monthly. It catches collateral damage from edits elsewhere and test-only changes, which a diff-scoped run cannot see. This is the run that makes the other two honest.
+
+The existing unit, integration, and staging tiers do not change. Mutation sits beside them.
+
+### Selection levers and their costs
+
+| Lever | What it saves | What it costs |
+|-|-|-|
+| Test selection | Runs only tests that reach the mutant; the largest saving | Needs per-test coverage; import-time and static mutants fall back to the whole suite |
+| Diff-scoped mutants | Only changed lines, so a normal pull request is minutes | Misses collateral damage; a test-only diff produces no mutants |
+| Anchor-set mutants | A stable, comparable trend | Blind to regressions outside the set |
+| Sampling | A bounded run when the set is large | Noisy score; rare survivors hide |
+| Caching or incremental results | Reuses unchanged results across runs | Stale when dependencies or configuration change; tools differ in what they detect |
+| Time budget | A hard cap on wall time | The score covers only part of the set; the rest must report "not measured", never pass |
+
+The mitigations are a persistent survivor ledger so a diff run does not forget old survivors, a periodic full sweep, and a printed scope and denominator on every report. Never compare a sampled score to a full one; that manufactures a trend.
+
+### Survivors need triage before they are work
+
+A survivor list is a candidate list. In the peer's 20-site sample, nine survivors reduced to six real gaps: two were harness artifacts (a docstring line and an error-message string) and one was an equivalent mutant behind an existing guard. A report that does not classify survivors will send someone chasing a comment.
+
+Classify each survivor at minimum as real gap, equivalent, unreachable behind a guard, or harness artifact. A docstring and string-literal mask is an afternoon's work and belongs in the first commit. The `_sdk_available` survivors above are real gaps, which is what makes them useful.
+
+### Prior art
+
+Execution is solved per ecosystem: mutmut and cosmic-ray for Python, Stryker for JS/TS, PIT for Java, cargo-mutants for Rust. Diff-scoped and incremental modes are standard.
+
+Reporting and pull-request integration are partly solved. [Stryker Dashboard](https://stryker-mutator.io/docs/General/dashboard/) hosts reports for any framework that emits the mutation testing report schema, free for open source, with GitHub login. [arcmutate](https://docs.arcmutate.com/docs/github/overview.html) mutates only the lines a pull request changes and annotates survivors in the GitHub diff; it is commercial, PIT, and GitHub. Neither GitLab nor SonarQube runs mutants natively. Predictive mutation testing is research ([MutationBERT](https://clairelegoues.com/assets/papers/jainContextualPMT.pdf)), not a product.
+
+The delta for Cove is cross-language orchestration, Forgejo-native reporting, and a local budget policy. That is glue, not novel science, which is another reason the script comes first.
+
+### A hard constraint: run against a copy
+
+`uv run` rewrites `cli/uv.lock` when the lock is stale; it did so in this worktree during the measurements for the original document. A runner that executes the suite thousands of times will thrash any file the toolchain touches. A crash between rewriting a source file and restoring it can leave a mutant in the tree, and a later `git commit -a` would carry it into history.
+
+Run mutation against a copy or a clone, never against a working tree someone is editing. Record the commit and the tool version with every run, because a score that cannot be attributed to a commit is useless once trunk moves.
+
+### The defect-population claim is still a hypothesis
+
+The published text says:
+
+> Most of this repository's defects are integration-shaped: host state, container state, Ansible ordering, DNS resolution, certificate drift.
+
+That is an impression from a small sample of incidents and near misses, not a count. The peer cross-check did not test it: the audit covered eight projects and measured mutation behavior, not a classification of this repository's defects. One peer conversation cannot settle a claim about a defect population, and neither can this addendum.
+
+Treat the sentence as a working hypothesis. Settling it needs an incident ledger with a date and a root-cause class, which the defect-escape signal needs anyway. Until then, the recommendation to build the cheap signals first stands on cost, not on that classification.
+
+### Evidence the published version was missing
+
+The peer's audit of eight projects found line coverage overstating discriminating power by 15 to 20 points, including a project with 89.6% weighted coverage against a 69.1% mutation score and six modules at 100% line coverage. The same result has been measured at scale:
+
+- Inozemtseva and Holmes found only a low to moderate correlation between coverage and effectiveness once suite size was controlled, and stronger coverage types added no insight ([ICSE 2014](https://www.cs.ubc.ca/~rtholmes/papers/icse_2014_inozemtseva.pdf)).
+- Just et al. found mutant detection a good proxy for real-fault detection, and the relationship held independently of coverage ([FSE 2014](https://homes.cs.washington.edu/~rjust/publ/mutants_real_faults_fse_2014.pdf)).
+- Zhang and Mesbah found assertion count strongly correlated with effectiveness even with suite size controlled, which is the empirical backing the assertion-strength section lacked ([FSE 2015](https://people.ece.ubc.ca/amesbah/resources/papers/fse15.pdf)).
+- ASSENT found mutation score among the best metrics tested, while warning that substituting mutants for real faults overestimates effectiveness by more than 20% ([TOSEM 2024](https://dl.acm.org/doi/10.1145/3635713)). That is the quantitative form of this document's false-confidence objection.
+- Petrović et al. analyzed almost 15 million mutants at Google and found that developers using mutation testing wrote more tests, reduced survivors, and that mutants were coupled with real faults ([ICSE 2021](https://arxiv.org/abs/2103.07189)).
+
 ## Sources
 
 - [mutmut documentation](https://mutmut.readthedocs.io/en/latest/)
