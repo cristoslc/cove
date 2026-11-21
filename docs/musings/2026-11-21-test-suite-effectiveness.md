@@ -278,6 +278,128 @@ The peer's audit of eight projects found line coverage overstating discriminatin
 - ASSENT found mutation score among the best metrics tested, while warning that substituting mutants for real faults overestimates effectiveness by more than 20% ([TOSEM 2024](https://dl.acm.org/doi/10.1145/3635713)). That is the quantitative form of this document's false-confidence objection.
 - Petrović et al. analyzed almost 15 million mutants at Google and found that developers using mutation testing wrote more tests, reduced survivors, and that mutants were coupled with real faults ([ICSE 2021](https://arxiv.org/abs/2103.07189)).
 
+## First measurements
+
+*Measured 2026-11-21 (UTC) on an arm64 laptop, four workers. Tool: mutmut 3.8.1, run from a throwaway mirror of `cli/` so the project's own dependency set and working tree stayed untouched. Nothing under `cli/` was edited to make the tool cooperate.*
+
+Experiment 1 is now a measured result instead of a reasoned one. The numbers below are observed; where I extrapolate, I say so.
+
+### What ran
+
+| | `cli/cove/pins.py` | `cli/cove/update.py` |
+|-|-|-|
+| Module size | 182 lines | 548 lines |
+| Test module | `tests/test_pins.py` | `tests/test_update.py` |
+| Tests in that module | 7 | 36 |
+| That module alone, pytest | 7 passed in 0.37 s | 36 passed in 0.63 s |
+| Mutants generated | 343 | 573 |
+| Killed | 251 | 293 |
+| Survived | 75 | 280 |
+| No tests | 17 | 0 |
+| Timeout | 0 | 0 |
+| Suspicious | 0 | 0 |
+| Mutation score, killed/(killed+survived) | 77.0% | 51.1% |
+| Module wall clock, whole run | 6.8 s cold, 5.3 s on a repeat | 77.1 s |
+| Per-mutant test time, median | 0.049 s | 0.173 s |
+| Per-mutant test time, mean / max | 0.059 s / 0.309 s | 0.507 s / 4.558 s |
+| One mutant, end to end | 1.02 s | 2.19 s |
+
+Wall clock is `/usr/bin/time -p` around the whole `mutmut run`, so it includes mutant generation, the one-time stats pass over the test module, and the clean-test check. "One mutant, end to end" is a second `mutmut run <mutant-name>` on cached state, so it includes the tool's own start-up, not just the test call. Mutmut has no unviable verdict, and none appeared; it also reports no skipped mutants.
+
+The mutator set matters as much as the version here: a score is not comparable across either. Mutmut 3.8.1 generates, via libcst: number literals shifted by one; string literals wrapped in `XX` or case-flipped; `True`/`False` and `is`/`in`/`break`/`continue` swaps; assignment values replaced with `None` or `""`; unary operators dropped; call arguments and keyword arguments removed; `lower`/`upper`, `lstrip`/`rstrip`, `find`/`rfind` and `split`/`rsplit` swaps; lambda bodies replaced; operator swaps across boolean, comparison and arithmetic operators; match cases removed; ternaries forced down one branch.
+
+### The commands
+
+The mirror exists because mutmut copies the source into `mutants/` and runs pytest from there, and these test modules resolve the repo root as `Path(__file__).parents[2]`. Inside the mirror that lands on the CLI directory, so the repo-root files the tests read have to be present one level up from `tests/`.
+
+```sh
+SCRATCH=$(mktemp -d)
+rsync -a cli/ "$SCRATCH/cli/"
+rsync -a compose/ "$SCRATCH/compose/"
+rsync -a compose/ "$SCRATCH/cli/compose/"     # what test_pins.py reads as the repo root
+cp .gitleaks.toml "$SCRATCH/.gitleaks.toml"
+cd "$SCRATCH" && python3 cli/scripts/sync_compose_resources.py
+
+uv venv --python 3.13 "$SCRATCH/venv"
+uv pip install --python "$SCRATCH/venv/bin/python" \
+  "mutmut==3.8.1" pytest click pyyaml cryptography jinja2 requests
+```
+
+Temporary `cli/setup.cfg` in the mirror only, rewritten between the two runs (mutmut reads `[tool.mutmut]` from `pyproject.toml` first, then falls back to `setup.cfg`):
+
+```ini
+[mutmut]
+source_paths = .
+only_mutate = cove/pins.py            # cove/update.py for the second run
+pytest_add_cli_args_test_selection =
+    tests/test_pins.py                # tests/test_update.py for the second run
+use_git_change_detection = false
+```
+
+```sh
+cd "$SCRATCH/cli"
+/usr/bin/time -p "$SCRATCH/venv/bin/python" -m mutmut run --max-children 4
+"$SCRATCH/venv/bin/python" -m mutmut results
+"$SCRATCH/venv/bin/python" -m mutmut show <mutant-name>
+/usr/bin/time -p "$SCRATCH/venv/bin/python" -m mutmut run <mutant-name>   # single-mutant timing
+```
+
+Test selection is per module on purpose: the unit tier as a whole does not survive the mirror, because 126 of its cases failed or errored on repo-root paths that `cli/` alone does not carry. Mutmut's own per-test selection narrows each mutant to the tests that reach its function, which is why a mutant costs 0.05-0.17 s instead of the 0.37-0.63 s the whole test module takes.
+
+### The first five survivors, `pins.py`
+
+Verdicts are mine; the mutation is quoted from the tool.
+
+| Mutant | Mutation | Verdict | Why |
+|-|-|-|-|
+| `x__render_simple__mutmut_8` | `[A-Za-z_0-9]` → `[a-za-z_0-9]` | Missing test | No test renders a template through `_render_simple` directly, and every variable name in `compose/` is lowercase, so dropping `A-Z` changes nothing the suite can see. An uppercase name would no longer be substituted. |
+| `x__render_simple__mutmut_13` | `variables.get(m.group(1), m.group(0))` → `variables.get(m.group(1), None)` | Missing test | The fallback that leaves an unknown placeholder intact is unpinned. No test renders a template whose variable is absent. |
+| `x__render_simple__mutmut_15` | `.get(m.group(1), m.group(0))` → `.get(m.group(1), )` | Missing test | Same rule as above, reached by a different operator: the default argument is removed, so a missing variable yields `None`. |
+| `x__render_simple__mutmut_19` | default `m.group(0)` → `m.group(1)` | Missing test | Same gap again: the mutant substitutes the bare name instead of the whole `{{ name }}`, which is observable only when the variable is missing. |
+| `x__from_group_vars__mutmut_10` | `key.endswith("_image") and isinstance(value, str)` → `... or ...` | Missing test | Only an `*_image` key holding a non-string value tells the two apart, and no fixture has one. With such a value the mutant would reach `_render_simple` and raise. |
+
+### The first five survivors, `update.py`
+
+All five land in one function, which is itself a result about where the mutator spends its budget.
+
+| Mutant | Mutation | Verdict | Why |
+|-|-|-|-|
+| `x__repo_url__mutmut_3` | `Path.home() / "Documents" / "code" / "cove"` → `None` | Missing test | No test asserts the path passed to `git -C`. `test_env_override_wins` only asserts the probe is skipped, and the other tests stub `subprocess.run`, so the argument is never inspected. |
+| `x__repo_url__mutmut_7` | `"Documents"` → `"XXDocumentsXX"` | Missing test | Same gap: the probe path is unasserted, so any corrupted path survives. |
+| `x__repo_url__mutmut_8` | `"Documents"` → `"documents"` | Missing test | Same gap, case variant. |
+| `x__repo_url__mutmut_9` | `"Documents"` → `"DOCUMENTS"` | Missing test | Same gap, upper-case variant. |
+| `x__repo_url__mutmut_10` | `"code"` → `"XXcodeXX"` | Missing test | Same gap, second path segment. |
+
+None of these are equivalent: a wrong path makes the probe fail in production and `_repo_url` raise. None are dead. The suite simply never looks at which directory is probed.
+
+Because the first five were all one shape, here are five more from elsewhere, chosen to show the other two verdict classes the experiment asks about.
+
+| Mutant | Mutation | Verdict | Why |
+|-|-|-|-|
+| `x__classifier__mutmut_32` | `ref.rsplit(":", 1)[-1]` → `ref.rsplit(None, 1)[-1]` | Equivalent mutant (dead code) | In `_classifier`, the block guarded by `if ":" in ref and "/" not in ...` returns `"tag"`, and so does the line after it. The block computes `digits` and throws it away, so `last_segment` and every mutation inside the block are unobservable. 23 of the 75 `pins.py` survivors sit in this dead block. |
+| `x__convergence_pending__mutmut_6` | `return True` → `return False` where the bundled tree cannot be read | Missing test | The comment says "cannot prove no-impact → converge (fail loud)". `test_wheel_without_compose_reads_as_pending` builds a wheel whose compose tree is empty (`{}`, not `None`), so the branch is never taken and the fail-loud rule is unpinned. |
+| `x__do_update__mutmut_42` | `_converge(..., wheel_path=wheel_path)` → `wheel_path=None` | Missing test | This is the issue #80 regression itself. The test's deployed fixture is built from the same bundled tree the current process reads, so both sides of the comparison agree and the test cannot tell the two calls apart. |
+| `x__cove_bin__mutmut_12` | `is_absolute() and is_file() and os.access(...)` → `... and is_file() or os.access(...)` | Missing test | The suite covers "resolvable binary" and "nothing resolvable". It has no case for an absolute path that exists but is not executable, which is the only input that separates `and` from `or` here. |
+| `x__install_wheel__mutmut_33` | `check=True` → `check=False` on `git worktree add` | Missing test | Every test stubs `subprocess.run` and accepts `**kwargs` without inspecting them, so the fail-loud `check=True` discipline the module documents is unasserted. |
+
+### What the survivors look like
+
+Counting the patch text of all 280 `update.py` survivors by pattern: 64 wrap a string in `XX`, 70 change only letter case, 61 replace an expression with `None`, and 85 are structural. The first three groups are 70% of the survivors and they are all real behaviour changes, not equivalents, but they land in log lines, error text and `subprocess` plumbing. "Fix every survivor" is not a useful response to `"docker ps failed"` becoming `"XXdocker ps failedXX"`.
+
+In `pins.py`, 30 of the 75 survivors are in `_classifier`, and 23 of those are the dead block above. That is 31% of that module's survivors that no test could ever kill, and it is a code defect the mutation run found for free.
+
+The 17 "no tests" mutants are all in `main()`. That verdict is wrong in a useful way: `test_pins_module_json_output` does cover `main()`, by running `python -m cove.pins` in a subprocess, which mutmut's in-process test tracing cannot see. "No tests" here means "no test in this process reached it", not "untested".
+
+### What this changes in the argument
+
+The arithmetic in this document charges one full suite run (84 s) per mutant, and the tool does not: with per-test selection the measured cost is 0.05-0.5 s per mutant, which is the difference between a nightly job and a check that fits inside a pull request.
+
+This also corrects the cost paragraph in the addendum above, which prices 1,000 mutants at 15 to 24 CPU-hours from a 55-85 s full-suite run each. Measured per-test selection puts a 1,000-mutant run on `update.py`-shaped code at about two minutes of wall clock on four workers. The three-tier design above still stands and gains headroom; what does not stand is the per-mutant cost it was derived from.
+
+That projection is inferred, not observed: at the `update.py` throughput (7.8 mutants/s with four workers), 3,000 mutants would take about six and a half minutes, and the whole-repo figure in the arithmetic section assumed a full suite run per mutant, which no tool here does by default.
+
+The other correction is to the guess about equivalence. The document speculated a five percent equivalent rate. This run measured 31% of `pins.py`'s survivors as unkillable by construction, in one dead branch, before counting any judgement calls. That does not make the score useless; it makes the survivor count per module, not the percentage, the number a developer can act on, which is the design the measurement section already proposed.
+
 ## Sources
 
 - [mutmut documentation](https://mutmut.readthedocs.io/en/latest/)
