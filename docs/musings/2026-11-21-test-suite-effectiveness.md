@@ -400,6 +400,57 @@ That projection is inferred, not observed: at the `update.py` throughput (7.8 mu
 
 The other correction is to the guess about equivalence. The document speculated a five percent equivalent rate. This run measured 31% of `pins.py`'s survivors as unkillable by construction, in one dead branch, before counting any judgement calls. That does not make the score useless; it makes the survivor count per module, not the percentage, the number a developer can act on, which is the design the measurement section already proposed.
 
+## What the service offers a project
+
+*This section is the point the document was circling. The preceding measurements examine one repository because that is how the engine was calibrated; the product is a service other projects on the forge can use. It also supersedes one claim in the addendum above: the tier list stands, but the "only shape that fits" justification does not survive the measured cost.*
+
+The product is not that examination. It is a service that any project on the Cove forge can point at its own suite, whatever its language and whatever its test command.
+
+### The project contract
+
+A project commits a configuration file, for example `.cove/quality.yml`. It declares:
+
+- the languages and the test command for each;
+- the mutation engine per language, pinned by version;
+- the module or path scope;
+- the budget in wall-clock minutes and worker count;
+- the schedule: pull request, nightly, periodic, or more than one;
+- exclusions, and survivor allowlist entries with a reason.
+
+The service reads the file, clones the repository at a commit into a disposable workspace, runs the declared engine there, normalizes the result into one schema, stores it against the project and the commit, and reports a score, classified survivors, a trend, and the cost. The project owns its test command, engine choice, scope, and allowlist decisions. The service owns scheduling, isolation, engine invocation, normalization, storage, reporting, and policy. The schema in the addendum above carries over, with a project key on every row and a cost column on the run.
+
+### Languages are adapters, not the core
+
+The core does not mutate anything. It invokes a pinned engine per language family: mutmut or cosmic-ray for Python, Stryker for JS/TS, PIT for Java, [Gremlins](https://github.com/go-gremlins/gremlins) for Go, cargo-mutants for Rust, Infection for PHP. A project with no mature engine, such as a shell or Ansible repository, gets the signals that do not need mutation (flaky rate, assertion smells) and an explicit "mutation not applicable" rather than a fabricated score. A polyglot project declares one entry per language and gets one merged report.
+
+### Isolation is part of the offer
+
+Every run uses a copy at a specific commit, inside a pinned image for that language family, with the repository's own lockfile, no network by default, and CPU, memory, and wall-clock caps. The service never mutates a working tree, never mounts project secrets, and never writes to the repository. A run that exceeds its budget stops and reports "not measured" for the remainder. Runs are queued per project and capped globally, so one project cannot starve the others. "First measurements" shows why the copy matters: the tool copies source into its own scratch tree, and the tests resolve paths relative to it.
+
+### Onboarding is a command
+
+`cove quality init <project>` detects the languages and test commands, writes a conservative configuration, and prints an estimated cost from one unmutated suite run and a mutant-count estimate. `cove quality run <project> [--diff BASE]` executes the configured tier. `cove quality report <project>` prints the trend and the survivor queue. `cove quality survivors <project>` lists candidates with their classification and allowlist state.
+
+### The service surface
+
+`cove quality up|down|status|logs` manages a `quality` profile, with a dashboard at `quality.cove` and JSON for automation. The dashboard is per project: last run, scope, score, surviving mutants by class, cost, and schedule. There is no cross-project league table, because scores are not comparable across languages, engines, or budgets.
+
+### Policy is per project and advisory by default
+
+A project opts into a pull-request check. A gate, if enabled, is zero new survivors on changed lines, never a percentage. A project sets its own budget and schedule. The service records who allowed a survivor and why. The default is to report, not to block.
+
+### The cadence, corrected by the measurement
+
+The addendum above calls a per-push whole-repo run arithmetically impossible. That argument charged a full suite run per mutant. The measured run in "First measurements" replaces that assumption with observed per-test selection, and the cost falls by orders of magnitude; that section carries the numbers and their caveats. The premise was wrong, not the tier list.
+
+The tiers survive for different reasons. A pull-request check should finish inside the review cycle and stay focused on the change. A nightly anchor set gives a stable series. A periodic full sweep catches collateral damage and test-only changes. Those are feedback and review constraints, not CPU limits. A project with a fast suite can run a full sweep on every merge if it wants, and the service should allow it. Diff-scoping is a default, not a law.
+
+### Tenant zero
+
+This repository is the first tenant. The corrected survivor, the measured throughput, and the survivor classes above are calibration results, not the product. They are what the service would report for one project, and they are why the report needs survivor classes and a cost line rather than a single score.
+
+The service does not generate tests, replace coverage measurement, or run the project's CI. It does not keep a scoreboard across projects. It does not require the project's secrets. It owns one job: run a pinned mutation engine against a commit, in isolation, and turn the result into something a project can act on.
+
 ## Sources
 
 - [mutmut documentation](https://mutmut.readthedocs.io/en/latest/)
