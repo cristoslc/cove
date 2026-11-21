@@ -80,6 +80,23 @@ Read only when the matching service exists:
 - `MinIO {hostname} Root` — `password`. No MinIO service is in this stack today, so the reference is dormant.
 - `Zrok Account` — `account_token` and `share_token`. Read only when the `tunnel` profile runs.
 
-Every one of these is a **read**. Cove writes to 1Password only through `cove creds item-put`, which is a rotation action a person runs, so a service account granted **read-only** on the vault is sufficient for unattended operation.
+Runtime access is entirely **read**. The only write is `cove creds item-put`, a rotation action. The operator's ruling (`dec_kiq0c0erjrda`) grants the account **read-write** on a dedicated vault so that rotation can also run unattended; a read-only grant would have been sufficient for converge alone.
 
 That makes a narrow vault the right shape: one vault holding exactly the items above, granted to the service account and nothing else. The account cannot see the rest of the account's vaults, and a leak of its token exposes only the credentials Cove already reads on every converge.
+
+## Moving Cove to a dedicated vault
+
+1. Create the vault. Any name works; it goes into `COVE_OP_VAULT`, and nothing else names it.
+2. Put the nine items above in it, keeping each **title** and **field id** unchanged. References resolve by title and field, so a retitled item stops resolving and fails as a missing item.
+3. Create the service account, grant it **read-write on that vault only**, and copy its token.
+4. Put the token where the CLI reads it: `OP_SERVICE_ACCOUNT_TOKEN` in `~/.config/workstation/secrets/1password.env` (0600), replacing the retired one.
+5. Warm the cache from the new vault, forcing a real read rather than reusing the last copy:
+
+   ```shell
+   export COVE_OP_VAULT="<vault name>"
+   cove creds batch-pull --force-refresh
+   ```
+
+6. Verify one cold read per reference rather than trusting the batch summary, then restart the services that render from the cache: `cove speedtest up`, and `cove bifrost up` if the gateway item moved.
+
+A missing item surfaces as that reference failing by name, so a half-finished move reports the item it stopped on instead of a smaller count pulled.
