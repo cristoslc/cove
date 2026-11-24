@@ -205,6 +205,37 @@ class TestBifrostConfigValidation:
         # No request log store at all (body-capable OSS log).
         assert self.config["logs_store"] == {"enabled": False}
 
+    def test_otel_plugin_keeps_content_logging_off(self):
+        """The collector is fed by the otel plugin, so its own content flag is
+        a second gate. Bifrost honours `disable_content_logging` per plugin;
+        with it false the spans would carry prompt text into a file on disk.
+        Measured with a marker prompt: 45 attributes, zero marker, zero events
+        (docs/services/bifrost.md, "Metadata spans")."""
+        plugins = self.config["plugins"]
+        otel = [p for p in plugins if p["name"] == "otel"]
+        assert len(otel) == 1, f"expected exactly one otel plugin, got {plugins}"
+        cfg = otel[0]["config"]
+        assert cfg["disable_content_logging"] is True
+        # Plugin hook spans dominate volume (39 -> 2 per request when filtered),
+        # so the filter is retention, not cosmetics.
+        assert cfg["export_overhead_spans"] is False
+        assert cfg["plugin_span_filter"]["mode"] == "exclude"
+        # Provenance: this list was read against the plugin names Bifrost
+        # v2.3.2 registers, taken from the `plugin status:` lines in the
+        # gateway log and the `plugin.<name>.<stage>` span names in a real
+        # export. If upstream renames one, the exclusion silently stops
+        # matching and volume grows back — a canary would catch that, but it
+        # needs a live gateway, so this assertion plus that note is the
+        # honest compromise. Re-read the names when BIFROST_IMAGE moves.
+        assert cfg["plugin_span_filter"]["plugins"] == [
+            "telemetry", "prompts", "governance", "otel",
+            "compat", "model-catalog-resolver", "routing",
+        ], "exclusion list drift: confirm each name against the pinned image"
+        # http, not grpc: nginx-free loopback to the sidecar; and the URL is an
+        # env reference so the endpoint is not baked into the tracked config.
+        assert cfg["protocol"] == "http"
+        assert cfg["collector_url"] == "env.BIFROST_OTEL_COLLECTOR_URL"
+
     def test_sqlite_config_store_preexists_in_compose_mount(self):
         store = self.config["config_store"]
         assert store["enabled"] is True
@@ -600,6 +631,53 @@ class TestBifrostConfigValidation:
         assert target["model"] == "clef"
 
 
+class TestOtelCollectorRetention:
+    """The collector writes spans to a file under the data root. Append-only is
+    ~5.5 GB/year at observed traffic, so rotation is a gate: an unbounded
+    collector that fills the data root is worse than no collector at all.
+    Measured firing on the pinned image (docs/services/bifrost.md)."""
+
+    def setup_method(self):
+        self.cfg = yaml.safe_load(
+            (COMPOSE_DIR / "otel-collector" / "config.yaml").read_text()
+        )
+
+    def test_file_exporter_rotates(self):
+        exporter = self.cfg["exporters"]["file"]
+        assert exporter["path"].startswith("/out/")
+        rotation = exporter["rotation"]
+        # All three bounds must be present: size caps a busy week, backups caps
+        # total files, days caps a quiet one that never reaches either.
+        assert rotation["max_megabytes"] > 0
+        assert rotation["max_backups"] >= 1
+        assert rotation["max_days"] >= 1
+        # The ceiling this implies, stated so a bump is a deliberate choice.
+        ceiling_mb = rotation["max_megabytes"] * (rotation["max_backups"] + 1)
+        assert ceiling_mb <= 2048, (
+            f"collector ceiling is {ceiling_mb} MB; over 2 GB in the data root "
+            "needs an explicit retention decision"
+        )
+
+    def test_no_content_reenabling_processor(self):
+        """Guard against a later edit routing spans through a processor that
+        pulls message content back in. The pipeline must stay receiver ->
+        batch -> file."""
+        pipeline = self.cfg["service"]["pipelines"]["traces"]
+        assert pipeline["receivers"] == ["otlp"]
+        assert pipeline["exporters"] == ["file"]
+        # batch is the only allowed processor; anything else needs review.
+        assert pipeline["processors"] == ["batch"]
+
+    def test_collector_has_no_published_port(self):
+        """The receiver is reachable only on the compose network. A published
+        port would make an unauthenticated OTLP ingest reachable off-host."""
+        compose = yaml.safe_load((COMPOSE_DIR / "docker-compose.yml").read_text())
+        svc = compose["services"]["otel-collector"]
+        assert "ports" not in svc, "otel-collector must not publish a port"
+        assert svc["expose"] == ["4318"]
+        assert svc["networks"] == ["default"]
+
+
 class TestBifrostComposeSurface:
     """The compose surface: digest pin, loopback binding, egress sinkhole."""
 
@@ -616,6 +694,27 @@ class TestBifrostComposeSurface:
         assert image == "${BIFROST_IMAGE:-" + BIFROST_PINNED_IMAGE + "}", (
             f"Bifrost image must be the digest-pinned default verbatim: {image}"
         )
+
+    def test_collector_image_is_digest_pinned(self):
+        """A tag-only pin floats. The collector must carry a manifest-list
+        digest in all three places that can supply the default (compose, the
+        pin map, the first-boot .env line), because a live Renovate run
+        moving this image would break it away from the Bifrost it observes."""
+        digest = (
+            "sha256:d2da12c4336a79758826700be9e21ecf4a9f7d945b7f8a58ba55ee3fa45427c8"
+        )
+        image = _load_compose()["services"]["otel-collector"]["image"]
+        assert image == (
+            "${OTEL_COLLECTOR_IMAGE:-"
+            f"otel/opentelemetry-collector-contrib:0.115.1@{digest}" "}"
+        ), f"collector image must carry the full digest, not a bare tag: {image}"
+        # The play vars and the first-boot render are the other two carriers;
+        # a bare tag in either would win on a real converge.
+        bringup = (COMPOSE_DIR / "bringup.yml").read_text()
+        assert bringup.count(f"opentelemetry-collector-contrib:0.115.1@{digest}") == 2, (
+            "both the pin map and the first-boot .env line need the digest"
+        )
+
 
     def test_port_is_loopback_only(self):
         data = _load_compose()

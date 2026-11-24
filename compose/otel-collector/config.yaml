@@ -1,0 +1,54 @@
+# OTel collector for Bifrost metadata spans.
+#
+# Bifrost's `otel` plugin POSTs OTLP/HTTP protobuf to :4318/v1/traces. This
+# collector batches and writes them to /out/spans.jsonl, where a person or a
+# script can answer "which model actually served that turn, and did it
+# substitute" after the fact.
+#
+# Two properties are load-bearing and pinned by tests (cli/tests/test_bifrost.py):
+#
+#   1. No prompt text. Bifrost is configured with disable_content_logging, and
+#      a marker-carrying prompt produced 45 span attributes with zero marker
+#      occurrences and zero span events. Do not add a processor here that
+#      pulls message content back in.
+#   2. Bounded on disk. Without `rotation` the file exporter appends forever;
+#      at roughly 15 MB/day that is about 5.5 GB a year in the data root.
+#      Rotation was measured firing: it archives spans-<timestamp>.jsonl and
+#      starts a fresh file, and the directory stays bounded at
+#      max_megabytes x (max_backups + 1) = 1 GB here.
+#
+# Keep the receiver on the compose network only; nothing publishes a port for
+# it, and the gateway is the only client.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+
+exporters:
+  file:
+    path: /out/spans.jsonl
+    rotation:
+      max_megabytes: 256
+      max_days: 7
+      max_backups: 3
+      localtime: true
+
+service:
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      # No scraper: keep the collector's own metrics out of the way.
+      level: none
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file]

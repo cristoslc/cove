@@ -100,5 +100,11 @@ services:
   bifrost-dns:
     container_name: cove-staging-bifrost-dns
 
+  otel-collector:
+    container_name: cove-staging-otel-collector
+    # No published port in base; kept explicit so the staging collision check
+    # sees a cove-staging-* name for every service.
+    ports: !override []
+
   tunnel:
     container_name: cove-staging-tunnel

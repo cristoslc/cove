@@ -47,6 +47,13 @@ repo_name: "cove"
 
 pod_pull_policy: missing
 
+# Tag AND digest, the same shape as vault_image: a tag alone floats, and a live
+# Renovate run could move it out from under the pinned Bifrost it observes.
+# Digest is the multi-arch manifest list for 0.115.1.
+otel_collector_image_tag: "0.115.1"
+otel_collector_image_digest: "sha256:d2da12c4336a79758826700be9e21ecf4a9f7d945b7f8a58ba55ee3fa45427c8"
+otel_collector_image: "otel/opentelemetry-collector-contrib:{{ otel_collector_image_tag }}@{{ otel_collector_image_digest }}"
+
 # --- Image pin .env contract ---
 # Every image key the compose set interpolates (FORGEJO_IMAGE, NGINX_IMAGE,
 # ...) is authoritative from the wheel and re-synced into the deployed compose

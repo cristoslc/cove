@@ -424,6 +424,8 @@ services:
     depends_on:
       bifrost-dns:
         condition: service_started
+      otel-collector:
+        condition: service_started
     volumes:
       # Governance config is file-seeded (git-tracked, read-only) AND carried
       # in the pre-seeded SQLite runtime store: source_of_truth stays
@@ -449,6 +451,10 @@ services:
       # custody of the ollama-cloud key — the workstation's SOPS role projects
       # it into the deployed compose .env and this line passes it through.
       OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      # Collector endpoint for the `otel` plugin in compose/bifrost/config.json.
+      # By compose service name: the default network's embedded resolver
+      # answers it locally, so it never reaches the egress sink.
+      BIFROST_OTEL_COLLECTOR_URL: ${BIFROST_OTEL_COLLECTOR_URL:-http://otel-collector:4318/v1/traces}
     networks:
       - default
       - bifrost-egress
@@ -466,6 +472,66 @@ services:
       resources:
         limits:
           memory: ${BIFROST_MEM_LIMIT:-512M}
+
+  # OTel collector for Bifrost metadata spans -----------------------------
+  # Operator ruling dec_j29sxrb50arx chose otel-metadata: Bifrost exports
+  # per-request spans so a model substitution stays queryable after the fact.
+  #
+  # Placement: this sidecar, on the default network only. The gateway reaches
+  # it by compose service name, which Docker's embedded resolver answers
+  # locally, so the fail-closed egress sink (172.43.0.10) never sees the name
+  # and compose/bifrost/dnsmasq.conf needs no new allowlist entry. Verified
+  # from inside cove-bifrost: `getent hosts cove-nginx` resolves on
+  # cove_default while that sink is the only configured upstream.
+  #
+  # Content: spans carry model, provider, routing rule, token counts and
+  # session id; they carry no prompt text. Measured with a unique marker in
+  # the prompt: 45 attributes, zero marker occurrences, zero span events,
+  # longest string a UUID. `disable_content_logging` is what keeps it that
+  # way, and the test pins it.
+  #
+  # Retention: the file exporter is append-only by default, so rotation is a
+  # gate, not a follow-up. Measured firing at the threshold: it archives
+  # spans-<timestamp>.jsonl and starts a fresh file, and the directory stays
+  # bounded at max_megabytes x (max_backups + 1).
+  otel-collector:
+    profiles: ["bifrost"]
+    # Digest-pinned (tag AND manifest-list digest, like BIFROST_IMAGE and
+    # VAULT_IMAGE). The digest is declared once in group_vars/all.yml as
+    # otel_collector_image; this literal is the fallback for a bare
+    # `docker compose` run outside Ansible. Bump both together, and never to a
+    # bare tag: a tag floats, and a live Renovate run could move the collector
+    # away from the Bifrost it observes.
+    image: ${OTEL_COLLECTOR_IMAGE:-otel/opentelemetry-collector-contrib:0.115.1@sha256:d2da12c4336a79758826700be9e21ecf4a9f7d945b7f8a58ba55ee3fa45427c8}
+    container_name: ${OTEL_COLLECTOR_CONTAINER_NAME:-cove-otel-collector}
+    restart: unless-stopped
+    # No published port: only the gateway on the default network talks to it.
+    expose:
+      - "4318"
+    volumes:
+      # Config is read-only from the wheel's bundled copy; rotation lives here
+      # rather than in an env var so it is reviewable in one place.
+      - ${OTEL_COLLECTOR_CONF_DIR:-./otel-collector}/config.yaml:/etc/otelcol/config.yaml:ro
+      - ${COVE_DATA_ROOT}/otel-collector/spans:/out
+    networks:
+      - default
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    command: ["--config=/etc/otelcol/config.yaml"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4318/ || exit 1"]
+      interval: 15s
+      start_period: 20s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: ${OTEL_COLLECTOR_MEM_LIMIT:-256M}
 
   # EDGE SECRETS CHECK (observe-only) --------------------------------------
   # Operator ruling dec_8trphpel0p3c: a secrets check in front of Bifrost,

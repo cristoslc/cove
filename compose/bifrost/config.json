@@ -18,6 +18,32 @@
   "logs_store": {
     "enabled": false
   },
+  "plugins": [
+    {
+      "name": "otel",
+      "enabled": true,
+      "config": {
+        "service_name": "cove-bifrost",
+        "collector_url": "env.BIFROST_OTEL_COLLECTOR_URL",
+        "protocol": "http",
+        "trace_type": "genai_extension",
+        "disable_content_logging": true,
+        "export_overhead_spans": false,
+        "plugin_span_filter": {
+          "mode": "exclude",
+          "plugins": [
+            "telemetry",
+            "prompts",
+            "governance",
+            "otel",
+            "compat",
+            "model-catalog-resolver",
+            "routing"
+          ]
+        }
+      }
+    }
+  ],
   "providers": {
     "syn-subscription": {
       "keys": [

@@ -39,6 +39,7 @@
       TOOLHIVE_IMAGE: "{{ toolhive_image | default('ghcr.io/stacklok/toolhive:v0.51.4@sha256:5e1e253610db23188e3cab766949612f8b0c138627ec55fb754562a9610d4f9a') }}"
       BIFROST_IMAGE: "{{ bifrost_image | default('maximhq/bifrost:v2.3.2@sha256:f5b18826349fe9e1c402c10d19f1cbb5567a3c800ad928580d07f72e69106ec7') }}"
       BIFROST_DNS_IMAGE: "{{ bifrost_dns_image | default('cove-bifrost-dns:0.1.0') }}"
+      OTEL_COLLECTOR_IMAGE: "{{ otel_collector_image | default('otel/opentelemetry-collector-contrib:0.115.1@sha256:d2da12c4336a79758826700be9e21ecf4a9f7d945b7f8a58ba55ee3fa45427c8') }}"
       SECRETS_GUARD_IMAGE: "{{ secrets_guard_image | default('cove-secrets-guard:0.1.0') }}"
       FORGEJO_RUNNER_IMAGE: "{{ forgejo_runner_image | default('data.forgejo.org/forgejo/runner:11') }}"
       TUNNEL_IMAGE: "{{ tunnel_image | default('openziti/zrok2:2.0.4') }}"
@@ -841,6 +842,10 @@
           BIFROST_DNS_CONTAINER_NAME={{ bifrost_dns_container_name | default('cove-bifrost-dns') }}
           BIFROST_PORT={{ bifrost_port | default('4002') }}
           BIFROST_MEM_LIMIT={{ bifrost_mem_limit | default('512M') }}
+          OTEL_COLLECTOR_IMAGE={{ otel_collector_image | default('otel/opentelemetry-collector-contrib:0.115.1@sha256:d2da12c4336a79758826700be9e21ecf4a9f7d945b7f8a58ba55ee3fa45427c8') }}
+          OTEL_COLLECTOR_CONTAINER_NAME={{ otel_collector_container_name | default('cove-otel-collector') }}
+          OTEL_COLLECTOR_MEM_LIMIT={{ otel_collector_mem_limit | default('256M') }}
+          BIFROST_OTEL_COLLECTOR_URL={{ bifrost_otel_collector_url | default('http://otel-collector:4318/v1/traces') }}
           SECRETS_GUARD_IMAGE={{ secrets_guard_image | default('cove-secrets-guard:0.1.0') }}
           SECRETS_GUARD_CONTAINER_NAME={{ secrets_guard_container_name | default('cove-secrets-guard') }}
           SECRETS_GUARD_PORT={{ secrets_guard_port | default('4003') }}

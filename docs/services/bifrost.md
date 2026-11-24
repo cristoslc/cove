@@ -492,6 +492,41 @@ any converge.
   false`, `disable_content_logging: true`,
   `allow_per_request_content_storage_override: false`, and `logs_store`
   disabled entirely. Declared in IaC, pinned by tests.
+- **Metadata spans to a local collector** (operator ruling dec_j29sxrb50arx):
+  the `otel` plugin exports one trace per request to the `otel-collector`
+  sidecar over OTLP/HTTP, so a substitution stays queryable after the fact.
+  Spans carry model, provider, routing rule, `fallback_index`, token counts
+  and `session.id` — and **no prompt text**: measured with a marker prompt
+  (45 attributes, zero marker occurrences, zero span events, longest string
+  a UUID). `disable_content_logging: true` on the plugin is what keeps it
+  that way, and a test pins it, because the collector writes to a file on
+  disk and a content leak there is the defect class the adoption gate exists
+  to prevent.
+  Volume is bounded twice: `plugin_span_filter` plus
+  `export_overhead_spans: false` drops the export from 39 spans / 15.5 KB to
+  2 spans / 3.8 KB per request (the rest is plugin hook spans), and the
+  collector's file exporter rotates at 256 MB x (3 backups + 1) = 1 GB, with
+  a 7-day cap. Append-only would be ~5.5 GB/year in the data root, so
+  rotation is a gate pinned by tests, not a follow-up.
+  The sidecar publishes no port and joins only the default network: the
+  gateway reaches it by compose service name, which Docker's embedded
+  resolver answers locally, so the fail-closed egress sink is untouched and
+  `dnsmasq.conf` needs no new allowlist entry.
+  The gateway's `depends_on: service_started` on the collector is deliberate:
+  started is not healthy, so a collector that dies on a bad config leaves the
+  gateway running and exporting into nothing. That is the expected failure
+  shape — inference keeps working, and the gateway logs
+  `[otel] failed to send request to <url>` once per export interval. Read that
+  line as "the collector is down", not "the gateway is broken"; `cove bifrost
+  status` and `docker logs cove-otel-collector` are where to look. It is not a
+  health condition because a collector outage must never gate inference.
+  Two drift notes. The image is digest-pinned in three carriers — the compose
+  literal, the `cove_image_env_pins` map, and the first-boot `.env` line — and
+  a test asserts the digest in all three, because a bare tag floats and a live
+  Renovate run could move it. And the `plugin_span_filter` exclusion list names
+  upstream plugins (`prompts`, `governance`, …) as Bifrost v2.3.2 registers
+  them; a rename upstream would silently stop the exclusion and volume would
+  grow back, so the names are re-read whenever `BIFROST_IMAGE` moves.
 - **Egress allowlist (DNS choke)**: the gateway's `dns:` is pinned to
   `cove-bifrost-dns` (172.43.0.10), a minimal dnsmasq sink on the dedicated
   `bifrost-egress` network (172.43.0.0/24, outside Docker's default pools).
