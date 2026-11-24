@@ -1,92 +1,127 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
-
+  "extends": [
+    "config:recommended"
+  ],
   "timezone": "America/New_York",
-  "schedule": ["before 5am"],
-
+  "schedule": [
+    "before 5am"
+  ],
   "automerge": false,
   "platformAutomerge": false,
   "prConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "separateMajorMinor": true,
-
   "osvVulnerabilityAlerts": true,
   "minimumReleaseAge": "24 hours",
   "minimumReleaseAgeBehaviour": "timestamp-optional",
-
   "pinDigests": true,
-
   "lockFileMaintenance": {
     "enabled": true,
-    "schedule": ["before 5am on monday"]
+    "schedule": [
+      "before 5am on monday"
+    ]
   },
-
-  "labels": ["dependencies"],
-
+  "labels": [
+    "dependencies"
+  ],
   "prBodyNotes": [
     "<!-- cove-age-gate:v1 {{#each upgrades}}datasource={{datasource}} package={{packageName}} version={{newVersion}} type={{updateType}} released={{releaseTimestamp}} vulnerability={{isVulnerabilityAlert}};{{/each}} -->"
   ],
-
   "docker-compose": {
     "managerFilePatterns": [
       "/(^|/)(?:docker-)?compose[^/]*\\.ya?ml$/",
       "/(^|/)tunnel\\.ya?ml$/"
     ]
   },
-
   "vulnerabilityAlerts": {
-    "addLabels": ["security"],
+    "addLabels": [
+      "security"
+    ],
     "minimumReleaseAge": "24 hours"
   },
-
   "packageRules": [
     {
-      "description": "Vault is tag+digest in group_vars/all.yml and the two must move together. Renovate cannot derive a digest from a tag, so a tag-only bump would leave a digest that no longer matches the tag and the pull would fail. Operator-runbook path until the pin collapses to one line.",
-      "matchPackageNames": ["hashicorp/vault"],
+      "description": "The secrets server is OpenBao, not Vault, and its pin is tag+digest in group_vars/all.yml. The rule named hashicorp/vault, the pre-migration package, so it guarded nothing after 2026-11-10. OpenBao supports only the newest minor, and an upgrade needs a release-notes read and an unseal rehearsal, so the pin moves on a quarterly operator cadence rather than in the daily PR stream. See docs/services/openbao.md.",
+      "matchPackageNames": [
+        "openbao/openbao"
+      ],
       "enabled": false
     },
     {
       "description": "Locally built images have no upstream to look up; their build base is covered by the dockerfile manager instead.",
-      "matchPackageNames": ["cove-ade", "cove-bifrost-dns"],
+      "matchPackageNames": [
+        "cove-ade",
+        "cove-bifrost-dns"
+      ],
       "enabled": false
     },
     {
       "description": "forgejo and nginx live in compose/group_vars/all.yml, which has no digest field for forgejo. Digest pinning these two is deferred to docs/musings/digest-pinning-plan.md so the compose default and the Ansible var cannot drift apart.",
-      "matchPackageNames": ["codeberg.org/forgejo/forgejo", "nginx"],
+      "matchPackageNames": [
+        "codeberg.org/forgejo/forgejo",
+        "nginx"
+      ],
       "pinDigests": false
     },
     {
       "description": "One PR per ecosystem's patch-level churn instead of one per package.",
-      "matchUpdateTypes": ["patch", "pin", "digest", "pinDigest"],
+      "matchUpdateTypes": [
+        "patch",
+        "pin",
+        "digest",
+        "pinDigest"
+      ],
       "groupName": "patch dependencies"
     },
     {
       "description": "Minor updates stay separate so a bad minor is one revert away from a known-good patch state.",
-      "matchUpdateTypes": ["minor"],
-      "addLabels": ["minor"]
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "addLabels": [
+        "minor"
+      ]
     },
     {
       "description": "Major updates take the same 24-hour hold as everything else; the label is the human signal to look at the changelog before promoting.",
-      "matchUpdateTypes": ["major"],
-      "addLabels": ["major"]
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "addLabels": [
+        "major"
+      ]
+    },
+    {
+      "description": "Forgejo stays on the 15 LTS line until the 17 move is planned and rehearsed. 16 is end-of-life, so a 16 bump is a downgrade in support terms, and 17 wants its own plan rather than a dependency PR. Ruling: dec_3zkrzkwwdu50. Plan: docs/plans/forgejo-17-upgrade.md.",
+      "matchPackageNames": [
+        "codeberg.org/forgejo/forgejo"
+      ],
+      "allowedVersions": "<16"
     }
   ],
-
   "customManagers": [
     {
       "customType": "regex",
       "description": "Forgejo image tag in the Ansible vars. group_vars/all.yml is what the first-boot compose .env is rendered from, so bumping only the compose default would not reach a fresh install.",
-      "managerFilePatterns": ["/^compose\\/group_vars\\/all\\.yml$/"],
-      "matchStrings": ["forgejo_image_tag:\\s*\"(?<currentValue>[^\"]+)\""],
+      "managerFilePatterns": [
+        "/^compose\\/group_vars\\/all\\.yml$/"
+      ],
+      "matchStrings": [
+        "forgejo_image_tag:\\s*\"(?<currentValue>[^\"]+)\""
+      ],
       "depNameTemplate": "codeberg.org/forgejo/forgejo",
       "datasourceTemplate": "docker"
     },
     {
       "customType": "regex",
       "description": "nginx image in the Ansible vars (same first-boot .env reason as forgejo).",
-      "managerFilePatterns": ["/^compose\\/group_vars\\/all\\.yml$/"],
-      "matchStrings": ["nginx_image:\\s*\"(?<depName>[a-z0-9./_-]+):(?<currentValue>[^\"]+)\""],
+      "managerFilePatterns": [
+        "/^compose\\/group_vars\\/all\\.yml$/"
+      ],
+      "matchStrings": [
+        "nginx_image:\\s*\"(?<depName>[a-z0-9./_-]+):(?<currentValue>[^\"]+)\""
+      ],
       "datasourceTemplate": "docker"
     }
   ]
