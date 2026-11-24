@@ -19,9 +19,11 @@
 # requires the `RENOVATE_TOKEN` secret holding a real bot account's token. See
 # docs/guides/renovate.md for the exact account and where the token lives.
 #
-# Dry by default: `COVE_RENOVATE_MODE` stays `dry-run` until the operator has
-# reviewed the plan in docs/guides/renovate.md. The nightly run then prints the
-# PR plan and changes nothing. Flip that one value to `live` to enable writes.
+# Live since 2026-11-24, per ruling dec_n9mj7dwx1jva (option full-pipe): the
+# operator reviewed the dry-run plans and chose pull-request writes. Automerge
+# stays off in every packageRule, so a PR here still needs the age gate or a
+# person before it lands. `COVE_RENOVATE_MODE=dry-run` remains the safe switch
+# for a day when writes are unwanted.
 #
 # Version pin: Renovate is pinned deliberately. It is the tool that decides what
 # dependency changes get proposed, so a silent major-version jump in Renovate
@@ -42,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      COVE_RENOVATE_MODE: dry-run
+      COVE_RENOVATE_MODE: live
       RENOVATE_VERSION: "44.198.2"
       RENOVATE_PLATFORM: forgejo
       RENOVATE_ENDPOINT: http://forgejo:3000/api/v1

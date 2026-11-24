@@ -484,14 +484,16 @@ def test_renovate_config_covers_tunnel_and_group_vars():
     assert any("group_vars" in str(manager["managerFilePatterns"]) for manager in managers)
 
 
-def test_renovate_workflow_targets_forgejo_and_stays_dry_by_default():
+def test_renovate_workflow_targets_forgejo_and_runs_live():
     workflow = yaml.safe_load((REPO_ROOT / ".forgejo" / "workflows" / "renovate.yml").read_text())
     job = workflow["jobs"]["renovate"]
     env = job["env"]
     assert env["RENOVATE_PLATFORM"] == "forgejo"
     assert env["RENOVATE_ENDPOINT"].endswith("/api/v1")
     assert env["RENOVATE_GIT_URL"] == "endpoint"
-    assert env["COVE_RENOVATE_MODE"] == "dry-run"
+    # Live since ruling dec_n9mj7dwx1jva (full-pipe). Automerge is off in every
+    # packageRule, so live here means pull requests, not merges.
+    assert env["COVE_RENOVATE_MODE"] == "live"
 
 
 def test_renovate_workflow_refuses_the_actions_token():
