@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.12'",
@@ -23,11 +23,11 @@ resolution-markers = [
     "python_full_version < '3.12'",
 ]
 dependencies = [
-    { name = "cryptography", marker = "python_full_version < '3.12'" },
-    { name = "jinja2", marker = "python_full_version < '3.12'" },
-    { name = "packaging", marker = "python_full_version < '3.12'" },
-    { name = "pyyaml", marker = "python_full_version < '3.12'" },
-    { name = "resolvelib", marker = "python_full_version < '3.12'" },
+    { name = "cryptography" },
+    { name = "jinja2" },
+    { name = "packaging" },
+    { name = "pyyaml" },
+    { name = "resolvelib" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c6/c7/e426d9955a69be0c4fd9d62fa756ef0cea6a7aa5467274ed46ea3316e1b3/ansible_core-2.19.14.tar.gz", hash = "sha256:1e7612788eaa6b3c87a3670ce86c64b830eba0ae2b3fcb25a772f276704163b4", size = 3432616, upload-time = "2026-10-05T15:08:31.102Z" }
 wheels = [
@@ -42,11 +42,11 @@ resolution-markers = [
     "python_full_version >= '3.12'",
 ]
 dependencies = [
-    { name = "cryptography", marker = "python_full_version >= '3.12'" },
-    { name = "jinja2", marker = "python_full_version >= '3.12'" },
-    { name = "packaging", marker = "python_full_version >= '3.12'" },
-    { name = "pyyaml", marker = "python_full_version >= '3.12'" },
-    { name = "resolvelib", marker = "python_full_version >= '3.12'" },
+    { name = "cryptography" },
+    { name = "jinja2" },
+    { name = "packaging" },
+    { name = "pyyaml" },
+    { name = "resolvelib" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0b/27/d02c3f75e9f1468b5efbe49667574f68331b17e8a9f2bb99e1d18be70052/ansible_core-2.21.5.tar.gz", hash = "sha256:65bb3148c58ebb843cd5074004c805f404f152114d98476dd823324616c9c6cb", size = 3395026, upload-time = "2026-10-05T15:11:00.15Z" }
 wheels = [
@@ -55,11 +55,11 @@ wheels = [
 
 [[package]]
 name = "certifi"
-version = "2026.4.22"
+version = "2026.10.18"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/25/ee/6caf7a40c36a1220410afe15a1cc64993a1f864871f698c0f93acb72842a/certifi-2026.4.22.tar.gz", hash = "sha256:8d455352a37b71bf76a79caa83a3d6c25afee4a385d632127b6afb3963f1c580", size = 137077, upload-time = "2026-04-22T11:26:11.191Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7e/eb/a2aa1ac3ea30dd3f30ca57f40232138b6b0040719316ecb85daf61167771/certifi-2026.10.18.tar.gz", hash = "sha256:b9995d97b64d0431a5af837d8ca8cd6238104d1f319f04bd93ea43124d6c861e", size = 135227, upload-time = "2026-10-18T16:21:07.655Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/22/30/7cd8fdcdfbc5b869528b079bfb76dcdf6056b1a2097a662e5e8c04f42965/certifi-2026.4.22-py3-none-any.whl", hash = "sha256:3cb2210c8f88ba2318d29b0388d1023c8492ff72ecdde4ebdaddbb13a31b1c4a", size = 135707, upload-time = "2026-04-22T11:26:09.372Z" },
+    { url = "https://files.pythonhosted.org/packages/08/ba/95dd616042484f7c83a06974388b37b837732740ee70bc5dc715b5fcd55a/certifi-2026.10.18-py3-none-any.whl", hash = "sha256:73191c47aaa79da394e8fee2dbc2ec827432cab56311122c9e47abf79e390f62", size = 134093, upload-time = "2026-10-18T16:21:06.276Z" },
 ]
 
 [[package]]
