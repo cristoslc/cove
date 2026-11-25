@@ -61,6 +61,8 @@ export COVE_OP_VAULT="<vault name>"
 
 A vault move is therefore one exported variable plus a converge, not thirteen reference edits. An empty value falls back to `Private` rather than naming a blank vault. Warming the cache afterwards still needs a working read path (a signed-in CLI or `OP_SERVICE_ACCOUNT_TOKEN`), because every reference under the new name is a cache miss by definition.
 
+A scheduled run has no shell, so `cove up` records an exported value in `~/.config/cove/op-vault` (one line, the vault name, no secret). Resolution order is the variable, then that file, then `Private`. Without the file, the daily `cove update` agent and the Renovate merge gate would keep reading `Private` after a move, which a service-account token cannot read. A run with no variable never overwrites what an earlier one recorded.
+
 ## What Cove needs from the vault
 
 References resolve by **item title and field id**, so a vault move has to carry the items whole: moving one and retitling it breaks the reference that names it.

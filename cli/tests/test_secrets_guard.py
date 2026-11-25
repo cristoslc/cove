@@ -297,8 +297,10 @@ def test_docs_page_covers_sees_does_not_see_and_the_blocking_path():
         assert required.lower() in text.lower(), f"docs page never mentions {required!r}"
 
 
-def test_changelog_unreleased_mentions_the_check():
+def test_changelog_mentions_the_check():
+    # The check shipped in 0.15.19, so its entry moved out of "Unreleased".
+    # What matters is that the notes call it observe-only, wherever it lives.
     text = CHANGELOG.read_text()
-    unreleased = text.split("## Unreleased", 1)[1].split("\n## ", 1)[0]
-    assert "secrets" in unreleased.lower()
-    assert "observe-only" in unreleased.lower()
+    entry = [line for line in text.splitlines() if "secrets check in front of Bifrost" in line]
+    assert entry, "no changelog entry for the edge secrets check"
+    assert "observe-only" in entry[0].lower()

@@ -384,6 +384,12 @@ def up(no_provision, no_upgrade, all_, log, non_interactive=False):
     if not no_upgrade:
         maybe_reextract()
     ensure_init()
+    # A scheduled converge starts without a shell. Record an exported vault
+    # name so `cove update` and the merge gate resolve the same vault later.
+    from cove.opvault import record_install_vault, vault_name
+
+    if record_install_vault() is not None and not non_interactive:
+        click.echo(f"  1Password vault:   {vault_name()}")
     compose_dir = resolve_compose_dir()
     # Refuse a compose source that would collapse every ${COVE_DATA_ROOT}/x bind
     # to container-absolute /x, or hijack the live project from a foreign data

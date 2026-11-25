@@ -36,7 +36,9 @@ def _detect_admin_email() -> str:
 
 
 def _detect_op_vault() -> str:
-    return os.environ.get("COVE_OP_VAULT") or "Private"
+    from cove.opvault import vault_name
+
+    return vault_name()
 
 
 def _detect_ts_dns_name() -> str:

@@ -10,7 +10,12 @@ from __future__ import annotations
 import importlib
 from pathlib import Path
 
+import pytest
 import yaml
+
+# A recorded vault name lives under HOME, so every test in this module runs in
+# the sandbox home rather than reading (or writing) the developer's own file.
+pytestmark = pytest.mark.usefixtures("cove_home")
 
 
 def _reload(monkeypatch, value: str | None):
@@ -48,6 +53,46 @@ def test_an_empty_variable_falls_back_rather_than_naming_a_blank_vault(monkeypat
     creds = _reload(monkeypatch, "   ")
     assert creds.OP_VAULT == "Private"
     _reload(monkeypatch, None)
+
+
+def test_a_recorded_vault_serves_runs_that_have_no_shell(monkeypatch, cove_home):
+    """launchd and bb start without the export, so the name must be on disk."""
+    from cove import opvault
+
+    monkeypatch.setenv("COVE_OP_VAULT", "Cove Ops")
+    written = opvault.record_install_vault()
+    assert written == cove_home / ".config" / "cove" / "op-vault"
+    assert written.read_text(encoding="utf-8").strip() == "Cove Ops"
+
+    creds = _reload(monkeypatch, None)
+    assert creds.OP_VAULT == "Cove Ops"
+    assert creds.OP_REFS["cove_admin_password"] == "op://Cove Ops/Cove Admin/password"
+
+
+def test_the_variable_wins_over_the_recorded_vault(monkeypatch, cove_home):
+    from cove import opvault
+
+    monkeypatch.setenv("COVE_OP_VAULT", "Cove Ops")
+    opvault.record_install_vault()
+    monkeypatch.setenv("COVE_OP_VAULT", "Scratch")
+    assert opvault.vault_name() == "Scratch"
+
+
+def test_a_run_without_the_variable_leaves_the_record_alone(monkeypatch, cove_home):
+    from cove import opvault
+
+    monkeypatch.setenv("COVE_OP_VAULT", "Cove Ops")
+    path = opvault.record_install_vault()
+    monkeypatch.delenv("COVE_OP_VAULT", raising=False)
+    assert opvault.record_install_vault() is None
+    assert path.read_text(encoding="utf-8").strip() == "Cove Ops"
+
+
+def test_state_reports_the_vault_the_cli_reads(monkeypatch):
+    from cove import state
+
+    monkeypatch.setenv("COVE_OP_VAULT", "Cove Ops")
+    assert state._detect_op_vault() == "Cove Ops"
 
 
 def test_ansible_reads_the_same_variable():
